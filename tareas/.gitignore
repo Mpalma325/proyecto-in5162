@@ -1,0 +1,32 @@
+# Secrets
+.env
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+.venv/
+*.egg-info/
+
+# Data (generalmente no quieres commitear entregas de alumnos)
+data/entregas/*.html
+data/salidas/*.csv
+data/alumnos.csv
+cache/*.R
+
+# Pero mantener los directorios
+!data/entregas/.gitkeep
+!data/salidas/.gitkeep
+!data/clases/.gitkeep
+!cache/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

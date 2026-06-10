@@ -1,0 +1,33 @@
+# Secrets
+.env
+
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Runtime data
+.message_ids.json
+
+# Datos sensibles de subproyectos
+*/data/alumnos.csv
+*/data/preguntas.csv
+tareas/data/Lista_emails.csv
+*/data/salidas/
+*/data/entregas/
+*/data/clases/
+*/data/resumen_semana_*.txt
+*/cache/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/

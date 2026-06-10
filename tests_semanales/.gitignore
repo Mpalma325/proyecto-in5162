@@ -1,0 +1,29 @@
+# Secrets
+.env
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+.venv/
+*.egg-info/
+
+# Data sensible
+data/alumnos.csv
+data/.message_ids.json
+data/resumen_semana_*.txt
+
+# Mantener directorios y CSV de preguntas (es plantilla)
+!data/.gitkeep
+!data/preguntas.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
