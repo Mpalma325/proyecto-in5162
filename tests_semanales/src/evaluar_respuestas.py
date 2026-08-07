@@ -75,9 +75,6 @@ def main(semana: int, dry_run: bool = False) -> None:
     correos = buscar_respuestas_semana(semana)
     print(f"Módulo {semana} — {len(correos)} respuesta(s) encontrada(s)")
 
-    if not correos:
-        return
-
     template_duplicado = _cargar_template_duplicado()
     asunto_respuesta = _construir_asunto_respuesta(info)
 
@@ -163,12 +160,24 @@ def main(semana: int, dry_run: bool = False) -> None:
         print(f"✓ {nombre}: nota {nota or '?'}, originalidad {originalidad or '?'}")
         procesados.append(corr["uid"])
 
-    if not dry_run:
+    if not dry_run and procesados:
         storage.escribir_alumnos(filas, headers)
         from .correo import marcar_leidos
         marcar_leidos(procesados)
 
-    print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}")
+    if correos:
+        print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}")
+
+    sin_entregar = [
+        f for f in filas
+        if f.get(storage.col_envio(semana), "").strip().upper() == "SI"
+        and f.get("Correo", "").strip()
+        and not f.get(storage.col_respuesta(semana), "").strip()
+    ]
+    if sin_entregar:
+        print()
+        for f in sin_entregar:
+            print(f"→ {f.get('Nombre', '?'):30s}: no entregó")
 
 
 def _parsear_args() -> tuple[int, bool]:

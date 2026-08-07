@@ -40,7 +40,7 @@ def main(semana: int) -> None:
 
     salida = config.DATA / f"resumen_semana_{semana}.txt"
     salida.write_text(resumen, encoding="utf-8")
-    print(f"✓ Guardado en {salida.relative_to(config.ROOT)}")
+    print(f"✓ Guardado en {salida.relative_to(config.PROJECT_ROOT)}")
 
 
 def _parsear_semana() -> int:

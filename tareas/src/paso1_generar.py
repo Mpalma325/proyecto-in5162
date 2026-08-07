@@ -1,7 +1,7 @@
 """
 Paso 1 del flujo: generar preguntas + pautas + resolver correos.
 
-Por cada HTML en data/entregas/:
+Por cada HTML en data/entregas/<TAREA>/:
   1. Limpia el HTML y extrae las 4 preguntas + tabla de roles
   2. Llama a OpenAI para generar (pregunta, pauta) por integrante
   3. Resuelve el correo de cada integrante matcheando contra alumnos.csv
@@ -9,7 +9,7 @@ Por cada HTML en data/entregas/:
   4. Agrega todo al CSV data/salidas/feedback_<TAREA>.csv
 
 Uso:
-    python -m src.paso1_generar              # procesa todo data/entregas/, tarea = config.TAREA_DEFAULT
+    python -m src.paso1_generar              # procesa data/entregas/<TAREA_DEFAULT>/
     python -m src.paso1_generar T1 archivo.html   # tarea específica + archivo específico
 """
 
@@ -89,7 +89,7 @@ def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
 
     if todas_las_filas:
         path_csv = storage.agregar_filas(tarea, todas_las_filas)
-        print(f"\n✓ Guardado en {path_csv.relative_to(config.ROOT)}")
+        print(f"\n✓ Guardado en {path_csv.relative_to(config.PROJECT_ROOT)}")
         print(f"  Total de filas agregadas: {len(todas_las_filas)}")
 
         sin_correo = [f for f in todas_las_filas if not f["alumno_correo"]]
@@ -115,9 +115,10 @@ if __name__ == "__main__":
     if args:
         archivos_arg = [Path(a) for a in args]
     else:
-        archivos_arg = sorted(config.ENTREGAS.glob("*.html"))
+        entregas_tarea = config.ENTREGAS / tarea
+        archivos_arg = sorted(entregas_tarea.glob("*.html"))
         if not archivos_arg:
-            print(f"No hay HTMLs en {config.ENTREGAS}")
+            print(f"No hay HTMLs en {entregas_tarea}")
             sys.exit(1)
 
     main(tarea, archivos_arg, interactivo=interactivo)

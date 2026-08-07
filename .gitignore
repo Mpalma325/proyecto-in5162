@@ -17,15 +17,17 @@ env/
 # Runtime data
 .message_ids.json
 
-# Datos sensibles de subproyectos
-*/data/alumnos.csv
-*/data/preguntas.csv
-tareas/data/Lista_emails.csv
-*/data/salidas/
-*/data/entregas/
-*/data/clases/
-*/data/resumen_semana_*.txt
-*/cache/
+# Datos de cada semestre real: todo lo que cuelga de semestres/<id>/ es
+# potencialmente sensible (alumnos, correos, notas, entregas, y cualquier
+# archivo de análisis suelto que se haya generado ahí). Se ignora la carpeta
+# completa; la única que se versiona es la plantilla _template.
+semestres/*/
+!semestres/_template/
+semestres/activo.txt
+
+# Carpetas de entrega puntual (deliverables para el profesor, no parte del código)
+subir/
+anexo/
 
 # OS / IDE
 .DS_Store

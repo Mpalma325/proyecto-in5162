@@ -2,8 +2,26 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-PROMPTS = ROOT / "prompts"
+PROJECT_ROOT = ROOT.parent
+
+
+# mantener sincronizado con: tareas/src/config.py, app/utils/runner.py
+def _semestre_activo(project_root: Path) -> str:
+    f = project_root / "semestres" / "activo.txt"
+    if not f.exists():
+        raise RuntimeError(
+            f"No encontré {f}. Crea un semestre desde la página "
+            f"Datos y Configuración de la app antes de ejecutar scripts."
+        )
+    valor = f.read_text(encoding="utf-8").strip()
+    if not valor:
+        raise RuntimeError(f"{f} está vacío. Define un semestre activo.")
+    return valor
+
+
+SEMESTRE = _semestre_activo(PROJECT_ROOT)
+DATA = PROJECT_ROOT / "semestres" / SEMESTRE / "tests_semanales" / "data"
+PROMPTS = PROJECT_ROOT / "semestres" / SEMESTRE / "tests_semanales" / "prompts"
 
 ALUMNOS_CSV = DATA / "alumnos.csv"
 PREGUNTAS_CSV = DATA / "preguntas.csv"

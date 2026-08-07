@@ -4,7 +4,8 @@ from pathlib import Path
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.runner import TESTS_DIR, python, run_command
+from utils import runner
+from utils.runner import TESTS_DIR, python, run_command, render_output
 
 st.title("Tests Semanales")
 
@@ -19,14 +20,18 @@ def _run_section(cmd: list[str], out_key: str, rc_key: str) -> None:
     st.session_state[out_key] = None
     st.session_state[rc_key] = None
     area = st.empty()
-    rc, output = run_command(cmd, TESTS_DIR, lambda o: area.code(o, language=None))
+    with st.spinner("Ejecutando..."):
+        rc, output = run_command(
+            cmd, TESTS_DIR,
+            lambda o: area.markdown(render_output(o), unsafe_allow_html=True),
+        )
     st.session_state[out_key] = output
     st.session_state[rc_key] = rc
 
 
 def _show_result(out_key: str, rc_key: str) -> None:
     if st.session_state[out_key]:
-        st.code(st.session_state[out_key], language=None)
+        st.markdown(render_output(st.session_state[out_key]), unsafe_allow_html=True)
     if st.session_state[rc_key] is not None:
         rc = st.session_state[rc_key]
         if rc == 0:
@@ -88,7 +93,7 @@ with tab3:
         cmd = [python(), "-m", "src.resumen_semana", str(semana_res)]
         _run_section(cmd, "ts_resumen_out", "ts_resumen_rc")
 
-        resumen_path = TESTS_DIR / "data" / f"resumen_semana_{semana_res}.txt"
+        resumen_path = runner.tests_data_dir() / f"resumen_semana_{semana_res}.txt"
         if resumen_path.exists():
             st.download_button(
                 label="Descargar resumen .txt",
@@ -100,7 +105,7 @@ with tab3:
     _show_result("ts_resumen_out", "ts_resumen_rc")
 
     if st.session_state.ts_resumen_rc == 0:
-        resumen_path = TESTS_DIR / "data" / f"resumen_semana_{st.session_state.get('ts_semana_res', 1)}.txt"
+        resumen_path = runner.tests_data_dir() / f"resumen_semana_{st.session_state.get('ts_semana_res', 1)}.txt"
         if resumen_path.exists() and st.session_state.ts_resumen_out:
             st.download_button(
                 label="Descargar resumen .txt",

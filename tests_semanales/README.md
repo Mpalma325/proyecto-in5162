@@ -10,7 +10,7 @@ Paso 1: Enviar preguntas  →  (esperar respuestas)
                           →  Paso 3: Resumen de respuestas (opcional)
 ```
 
-El estado de cada semana se escribe en `data/alumnos.csv` (columnas `Envío N`, `Respuesta N`, `Nota Test N`, `Originalidad N`).
+El estado de cada semana se escribe en `alumnos.csv` (columnas `Envío N`, `Respuesta N`, `Nota Test N`, `Originalidad N`), dentro de la carpeta del semestre activo (`semestres/<id>/tests_semanales/data/`).
 
 ## Uso
 
@@ -20,13 +20,15 @@ Cada paso tiene un modo prueba activado por defecto que no envía emails ni guar
 
 ## Datos necesarios
 
-- `data/alumnos.csv` — padrón con columnas `Nombre` y `Correo` (ver `alumnos.example.csv`)
+Se cargan desde **Datos y Configuración → Datos del curso** en la UI (ver [`docs/GUIA_INICIO.md`](../docs/GUIA_INICIO.md)); en disco viven en `semestres/<id>/tests_semanales/`:
+
+- `data/alumnos.csv` — padrón con columnas `Nombre` y `Correo` (ver plantilla en `semestres/_template/`)
 - `data/preguntas.csv` — preguntas y pautas por semana; columnas: `Semana`, `Tema`, `Fecha de Entrega`, `Pregunta 1–3`, `Pauta Pregunta 1–3`
-- `.env` — credenciales (ver `.env.example`); se configuran desde la UI en **Configuración**
+- `.env` (en la raíz de `tests_semanales/`, global para todos los semestres) — credenciales (ver `.env.example`); se configuran desde la UI en **Datos y Configuración → Parámetros de la revisión**
 
 ## Comportamiento relevante
 
 - El paso 1 salta alumnos que ya tienen `SI` en `Envío N` — es seguro de reintentar.
 - El paso 2 busca correos **no leídos** con asunto `Módulo N`. Si un alumno responde dos veces, solo se procesa la primera.
 - El paso 3 genera un resumen en `data/resumen_semana_N.txt` descargable desde la interfaz.
-- Los prompts se editan directamente en `prompts/*.md`.
+- Los prompts se editan directamente en `prompts/*.md` (dentro del semestre activo), o desde la UI en **Datos y Configuración**.

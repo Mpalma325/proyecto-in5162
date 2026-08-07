@@ -59,8 +59,9 @@ def _buscar_tabla_roles(html_limpio: str) -> str:
     Busca la tabla de roles por su caption.
     El template del curso usa siempre: <strong>Tabla N+1:</strong> Roles de los Participantes...
     """
-    # Estrategia 1: encontrar la posición del texto "Roles de los Participantes",
-    idx_caption = html_limpio.find('Roles de los Participantes')
+    # Estrategia 1: encontrar la posición del texto "Roles de los Participantes"
+    # (insensible a mayúsculas: algunos alumnos escriben "participantes" en minúscula)
+    idx_caption = html_limpio.lower().find('roles de los participantes')
     if idx_caption > 0:
         idx_table_open = html_limpio.rfind('<table', 0, idx_caption)
         idx_table_close = html_limpio.find('</table>', idx_caption)

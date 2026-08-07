@@ -12,7 +12,7 @@ HTMLs de U-Cursos → Paso 1: Generar preguntas
                   → Paso 4: Corregir y enviar feedback
 ```
 
-Todo el estado del pipeline vive en `data/salidas/feedback_<TAREA>.csv`.
+Todo el estado del pipeline vive en `data/salidas/feedback_<TAREA>.csv`, dentro de la carpeta del semestre activo (`semestres/<id>/tareas/data/`).
 
 ## Uso
 
@@ -22,9 +22,11 @@ Cada paso tiene un modo prueba que no envía emails ni llama a GPT, activado por
 
 ## Datos necesarios
 
-- `data/alumnos.csv` — padrón con columnas `nombre`, `correo` (ver `alumnos.example.csv`)
-- `data/entregas/` — HTMLs descargados desde U-Cursos
-- `.env` — credenciales (ver `.env.example`); se configuran desde la UI en **Configuración**
+Se cargan desde **Datos y Configuración → Datos del curso** en la UI (ver [`docs/GUIA_INICIO.md`](../docs/GUIA_INICIO.md)); en disco viven en `semestres/<id>/tareas/`:
+
+- `data/alumnos.csv` — padrón con columnas `nombre`, `correo` (ver plantilla en `semestres/_template/`)
+- `data/entregas/` — HTMLs descargados desde U-Cursos; se pueden subir como `.zip` desde la sección **Entregas (Tareas)**
+- `.env` (en la raíz de `tareas/`, global para todos los semestres) — credenciales (ver `.env.example`); se configuran desde la UI en **Datos y Configuración → Parámetros de la revisión**
 
 ## Estructura del CSV de feedback
 
@@ -44,6 +46,6 @@ Cada paso tiene un modo prueba que no envía emails ni llama a GPT, activado por
 
 ## Notas de uso
 
-- El paso 1 resuelve nombres contra `alumnos.csv` con fuzzy matching (≥82% similitud). Los que no matchean quedan con correo vacío; editarlos en **Datos → Feedback Tareas** antes de enviar.
-- El paso 3 identifica respuestas por el header `In-Reply-To`. Si un alumno escribió un correo nuevo en vez de responder, hay que pegar su respuesta manualmente en el CSV.
-- Los prompts se editan directamente en `prompts/*.md`.
+- El paso 1 resuelve nombres contra `alumnos.csv` con fuzzy matching (≥82% similitud). Los que no matchean quedan con correo vacío; editarlos en **Datos y Configuración → Feedback Tareas** antes de enviar.
+- El paso 3 identifica respuestas por el header `In-Reply-To`. Asumiendo que los alumnos responderán el correo que se les envía y no escribirán uno nuevo.
+- Los prompts se editan directamente en `prompts/*.md` (dentro del semestre activo), o desde la UI en **Datos y Configuración**.

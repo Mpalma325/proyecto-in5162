@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.runner import TAREAS_DIR, TESTS_DIR
+from utils import runner
 
 st.set_page_config(
     page_title="IN5162",
@@ -14,13 +14,24 @@ st.set_page_config(
 )
 
 
+def _mtime(path: Path) -> float | None:
+    return path.stat().st_mtime if path.exists() else None
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_csv(path: Path, mtime: float | None) -> pd.DataFrame:
+    if mtime is None:
+        return pd.DataFrame()
+    return pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
+
+
 def _estado_tests() -> dict:
-    path = TESTS_DIR / "data" / "alumnos.csv"
-    if not path.exists():
-        return {"ok": False}
+    path = runner.tests_data_dir() / "alumnos.csv"
     try:
-        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
+        df = _cargar_csv(path, _mtime(path))
     except Exception:
+        return {"ok": False}
+    if df.empty and not path.exists():
         return {"ok": False}
 
     envio_cols = [c for c in df.columns if c.startswith("Envío ")]
@@ -57,7 +68,7 @@ def _estado_tests() -> dict:
 
 
 def _estado_tareas() -> dict:
-    salidas = TAREAS_DIR / "data" / "salidas"
+    salidas = runner.tareas_salidas_dir()
     csvs = list(salidas.glob("feedback_*.csv")) if salidas.exists() else []
     if not csvs:
         return {"ok": False}
@@ -65,7 +76,7 @@ def _estado_tareas() -> dict:
     # La más recientemente modificada es la activa
     latest = max(csvs, key=lambda p: p.stat().st_mtime)
     try:
-        df = pd.read_csv(latest, encoding="utf-8-sig", dtype=str).fillna("")
+        df = _cargar_csv(latest, _mtime(latest))
     except Exception:
         return {"ok": False}
 
@@ -83,12 +94,12 @@ def _estado_tareas() -> dict:
 
 
 def _grafico_tests() -> pd.DataFrame:
-    path = TESTS_DIR / "data" / "alumnos.csv"
-    if not path.exists():
-        return pd.DataFrame()
+    path = runner.tests_data_dir() / "alumnos.csv"
     try:
-        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
+        df = _cargar_csv(path, _mtime(path))
     except Exception:
+        return pd.DataFrame()
+    if df.empty and not path.exists():
         return pd.DataFrame()
 
     rows = []
@@ -121,19 +132,69 @@ def _grafico_tests() -> pd.DataFrame:
     return pd.DataFrame(sorted(rows, key=lambda x: x["Semana"])).set_index("Semana")
 
 
+def _grafico_tareas() -> pd.DataFrame:
+    salidas = runner.tareas_salidas_dir()
+    csvs = sorted(salidas.glob("feedback_*.csv")) if salidas.exists() else []
+    if not csvs:
+        return pd.DataFrame()
+
+    rows = []
+    for path in csvs:
+        try:
+            df = _cargar_csv(path, _mtime(path))
+        except Exception:
+            continue
+        if df.empty:
+            continue
+
+        tarea = path.stem.replace("feedback_", "").upper()
+        enviados = int((df.get("fecha_envio", pd.Series(dtype=str)) != "").sum())
+        respondieron = int((df.get("respuesta", pd.Series(dtype=str)) != "").sum())
+        notas = pd.to_numeric(
+            df.get("nota", pd.Series(dtype=str)).replace("", float("nan")),
+            errors="coerce",
+        ).dropna()
+
+        if enviados == 0 and len(notas) == 0:
+            continue
+
+        rows.append({
+            "Tarea": tarea,
+            "Promedio nota": round(float(notas.mean()), 2) if len(notas) > 0 else None,
+            "Tasa de respuesta (%)": round(respondieron / enviados * 100, 1) if enviados > 0 else 0.0,
+            "Tasa de corrección (%)": round(len(notas) / respondieron * 100, 1) if respondieron > 0 else 0.0,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(sorted(rows, key=lambda x: x["Tarea"])).set_index("Tarea")
+
+
 def _inicio():
-    ts = _estado_tests()
-    tar = _estado_tareas()
+    activo = runner.semestre_activo()
 
     st.title("IN5162 — Panel de control")
+    if activo:
+        st.caption(f"Semestre activo: **{activo}**")
+    else:
+        st.warning(
+            "No hay ningún semestre activo. Crea uno en "
+            "**Datos y Configuración** antes de continuar."
+        )
+        st.page_link("pages/3_Datos_y_Configuracion.py", label="Ir a Datos y Configuración →")
+        return
+
     st.divider()
+
+    ts = _estado_tests()
+    tar = _estado_tareas()
 
     col_ts, col_tar = st.columns(2, gap="large")
 
     with col_ts:
         st.subheader("Tests Semanales")
         if not ts["ok"]:
-            st.warning("No se encontró `alumnos.csv`. Configura el proyecto en Configuración.")
+            st.warning("No se encontró `alumnos.csv`. Cárgalo en Datos y Configuración.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Semana activa", ts["semana_activa"] if ts["semana_activa"] else "—")
@@ -177,58 +238,49 @@ def _inicio():
     st.divider()
 
     # ── Analítica ──────────────────────────────────────────────────────────
-    df_g = _grafico_tests()
-    if not df_g.empty and len(df_g) >= 2:
-        st.subheader("Analítica — Tests Semanales")
-        gc1, gc2 = st.columns(2)
+    df_ts = _grafico_tests()
+    df_tar = _grafico_tareas()
 
-        with gc1:
-            st.markdown("**Promedio de nota por semana**")
-            serie_notas = df_g["Promedio nota"].dropna()
-            if not serie_notas.empty:
-                st.line_chart(serie_notas)
-            else:
-                st.caption("Sin datos de notas todavía.")
+    if (not df_ts.empty and len(df_ts) >= 2) or not df_tar.empty:
+        if not df_ts.empty and len(df_ts) >= 2:
+            st.subheader("Analítica — Tests Semanales")
+            gc1, gc2 = st.columns(2)
 
-        with gc2:
-            st.markdown("**Tasa de respuesta por semana (%)**")
-            st.line_chart(df_g["Tasa de respuesta (%)"])
+            with gc1:
+                st.markdown("**Promedio de nota por semana**")
+                serie_notas = df_ts["Promedio nota"].dropna()
+                if not serie_notas.empty:
+                    st.line_chart(serie_notas)
+                else:
+                    st.caption("Sin datos de notas todavía.")
+
+            with gc2:
+                st.markdown("**Tasa de respuesta por semana (%)**")
+                st.line_chart(df_ts["Tasa de respuesta (%)"])
+
+        if not df_tar.empty:
+            st.subheader("Analítica — Tareas")
+            gc3, gc4 = st.columns(2)
+
+            with gc3:
+                st.markdown("**Promedio de nota por tarea**")
+                serie_notas_tar = df_tar["Promedio nota"].dropna()
+                if not serie_notas_tar.empty:
+                    st.bar_chart(serie_notas_tar)
+                else:
+                    st.caption("Sin datos de notas todavía.")
+
+            with gc4:
+                st.markdown("**Tasa de respuesta y corrección por tarea (%)**")
+                st.bar_chart(df_tar[["Tasa de respuesta (%)", "Tasa de corrección (%)"]])
 
         st.divider()
-
-    # ── Estado del sistema ─────────────────────────────────────────────────
-    st.subheader("Estado del sistema")
-    sc1, sc2 = st.columns(2)
-
-    with sc1:
-        st.caption("Tests Semanales")
-        for nombre, existe in {
-            ".env": (TESTS_DIR / ".env").exists(),
-            "data/alumnos.csv": (TESTS_DIR / "data" / "alumnos.csv").exists(),
-            "data/preguntas.csv": (TESTS_DIR / "data" / "preguntas.csv").exists(),
-        }.items():
-            st.markdown(f"{'✅' if existe else '❌'} `{nombre}`")
-
-    with sc2:
-        st.caption("Tareas")
-        entregas_dir = TAREAS_DIR / "data" / "entregas"
-        n_htmls = len(list(entregas_dir.glob("*.html"))) if entregas_dir.exists() else 0
-        for nombre, existe in {
-            ".env": (TAREAS_DIR / ".env").exists(),
-            "data/alumnos.csv": (TAREAS_DIR / "data" / "alumnos.csv").exists(),
-            f"data/entregas/ ({n_htmls} HTMLs)": entregas_dir.exists(),
-        }.items():
-            st.markdown(f"{'✅' if existe else '❌'} `{nombre}`")
-
-    if not (TESTS_DIR / ".env").exists() or not (TAREAS_DIR / ".env").exists():
-        st.page_link("pages/4_Configuracion.py", label="Configurar credenciales →")
 
 
 pg = st.navigation([
     st.Page(_inicio, title="Inicio"),
     st.Page("pages/1_Tests_Semanales.py", title="Tests Semanales"),
     st.Page("pages/2_Tareas.py", title="Tareas"),
-    st.Page("pages/3_Datos.py", title="Datos"),
-    st.Page("pages/4_Configuracion.py", title="Configuración"),
+    st.Page("pages/3_Datos_y_Configuracion.py", title="Datos y Configuración"),
 ])
 pg.run()

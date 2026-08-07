@@ -10,17 +10,7 @@ env/
 .venv/
 *.egg-info/
 
-# Data (generalmente no quieres commitear entregas de alumnos)
-data/entregas/*.html
-data/salidas/*.csv
-data/alumnos.csv
-cache/*.R
-
-# Pero mantener los directorios
-!data/entregas/.gitkeep
-!data/salidas/.gitkeep
-!data/clases/.gitkeep
-!cache/.gitkeep
+# Los datos del curso viven en semestres/<id>/tareas/ (ver .gitignore raíz)
 
 # IDE
 .vscode/
