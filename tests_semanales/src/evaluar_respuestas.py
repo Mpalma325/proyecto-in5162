@@ -27,7 +27,9 @@ def extraer_nota_y_originalidad(html: str) -> tuple[str, str]:
         nota = m.group(1).replace(".", ",")
 
     originalidad = ""
-    m = re.search(r'ORIGINALIDAD\s*:?\s*([^\n]+)', texto, re.IGNORECASE)
+    # El ":" es obligatorio y debe ir al inicio de línea: si no, cualquier mención
+    # de "originalidad" en el texto de retroalimentación se captura por error.
+    m = re.search(r'^\s*ORIGINALIDAD\s*:\s*([^\n]+)', texto, re.IGNORECASE | re.MULTILINE)
     if m:
         valor = m.group(1).strip()
         for sep in ('.', '\n', '|', '<'):

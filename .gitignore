@@ -29,6 +29,10 @@ semestres/activo.txt
 subir/
 anexo/
 
+# Artefactos generados a partir del README (se regeneran con pandoc)
+README_IN5162.pdf
+README_IN5162.docx
+
 # OS / IDE
 .DS_Store
 Thumbs.db
