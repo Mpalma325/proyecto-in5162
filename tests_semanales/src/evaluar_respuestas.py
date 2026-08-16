@@ -157,6 +157,29 @@ def main(semana: int, dry_run: bool = False) -> None:
         alumno[storage.col_originalidad(semana)] = originalidad
         alumno[storage.col_respuesta(semana)] = respuesta_alumno
 
+        # registro largo con la evaluación completa, para análisis posterior
+        try:
+            storage.registrar_interaccion({
+                "Semestre": config.SEMESTRE,
+                "Nombre": nombre,
+                "Correo": correo_alumno.lower(),
+                "Grupo": grupo,
+                "Semana": semana,
+                "Tema": info.tema,
+                "Pregunta": "\n\n".join(
+                    f"P{i}: {p}" for i, p in enumerate(grupo_info.preguntas, 1)
+                ),
+                "Respuesta": respuesta_alumno,
+                "EvaluacionGPT": html_eval,
+                "NotaGPT": nota,
+                "OriginalidadGPT": originalidad,
+                "NotaFinal": nota,
+                "OriginalidadFinal": originalidad,
+                "FechaRespuesta": corr.get("fecha").isoformat() if corr.get("fecha") else "",
+            })
+        except Exception as e:
+            print(f"     ⚠ No pude registrar la interacción de {nombre}: {e}")
+
         ya_evaluados_en_esta_corrida.add(correo_alumno.lower())
         evaluados += 1
         print(f"✓ {nombre}: nota {nota or '?'}, originalidad {originalidad or '?'}")

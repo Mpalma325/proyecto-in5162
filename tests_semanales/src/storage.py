@@ -116,3 +116,43 @@ def buscar_alumno_por_message_id(message_id: str, semana: int) -> str | None:
         if mid == message_id and key.endswith(sufijo):
             return key.rsplit("|", 1)[0]
     return None
+
+
+# --------------------------------------------------------- interacciones.csv
+# Registro largo (una fila por alumno-semana) con la respuesta del alumno y la
+# evaluación completa del agente. Va aparte de alumnos.csv porque el texto de
+# las evaluaciones lo haría inmanejable; se cruzan por la columna Correo.
+# El histórico se reconstruye con  python -m src.reconstruir_interacciones
+
+INTERACCIONES_COLUMNAS = [
+    "Semestre", "Nombre", "Correo", "Grupo", "Semana", "Tema",
+    "Pregunta", "Respuesta", "EvaluacionGPT",
+    "NotaGPT", "OriginalidadGPT", "NotaFinal", "OriginalidadFinal",
+    "FechaRespuesta",
+]
+
+INTERACCIONES_CSV = config.DATA / "interacciones.csv"
+
+
+def registrar_interaccion(fila: dict) -> Path:
+    """Agrega (o reemplaza) la interacción de un alumno en una semana."""
+    existentes = []
+    if INTERACCIONES_CSV.exists():
+        with INTERACCIONES_CSV.open(encoding="utf-8-sig", newline="") as f:
+            existentes = list(csv.DictReader(f))
+
+    clave = (fila.get("Correo", "").strip().lower(), str(fila.get("Semana", "")))
+    existentes = [
+        f for f in existentes
+        if (f.get("Correo", "").strip().lower(), str(f.get("Semana", ""))) != clave
+    ]
+    existentes.append({c: fila.get(c, "") for c in INTERACCIONES_COLUMNAS})
+
+    existentes.sort(key=lambda f: (f.get("Correo", ""), int(f.get("Semana") or 0)))
+
+    INTERACCIONES_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with INTERACCIONES_CSV.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=INTERACCIONES_COLUMNAS)
+        w.writeheader()
+        w.writerows(existentes)
+    return INTERACCIONES_CSV
