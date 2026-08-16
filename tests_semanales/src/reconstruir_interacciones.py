@@ -36,9 +36,9 @@ from .evaluar_respuestas import extraer_nota_y_originalidad
 PROJECT_ROOT = config.PROJECT_ROOT
 SEMESTRES_DIR = PROJECT_ROOT / "semestres"
 
-# Los dos semestres comparten buzón, así que para los pocos correos que
-# aparecen en ambos rosters (staff) se desambigua por fecha del mensaje.
-CORTE_SEMESTRE = datetime(2026, 7, 15, tzinfo=timezone.utc)
+# Todos los semestres comparten el mismo buzón, así que para los correos que
+# aparecen en más de un roster (típicamente el profesor y los ayudantes) se
+# desambigua por la fecha del mensaje.
 
 LOTE_HEADERS = 200  # las cabeceras son livianas: lotes grandes
 LOTE_CUERPOS = 25   # los cuerpos pesan, lotes chicos para ver avance
@@ -123,6 +123,26 @@ def cargar_preguntas(semestre: str) -> dict:
     return salida
 
 
+def rango_semestre(semestre_id: str) -> tuple[datetime, datetime] | None:
+    """Ventana de fechas de un semestre, deducida de su id (ej. '2026-1').
+
+    En Chile el primer semestre va de marzo a julio y el segundo de agosto a
+    diciembre; se toman márgenes anchos para no dejar correos fuera.
+    """
+    try:
+        anio_txt, periodo = semestre_id.split("-")
+        anio = int(anio_txt)
+    except ValueError:
+        return None
+    if periodo == "1":
+        return (datetime(anio, 1, 1, tzinfo=timezone.utc),
+                datetime(anio, 7, 20, 23, 59, 59, tzinfo=timezone.utc))
+    if periodo == "2":
+        return (datetime(anio, 7, 21, tzinfo=timezone.utc),
+                datetime(anio, 12, 31, 23, 59, 59, tzinfo=timezone.utc))
+    return None
+
+
 def semestre_de(correo: str, fecha: datetime, rosters: dict) -> str | None:
     """A qué semestre pertenece este mensaje."""
     candidatos = [s for s, roster in rosters.items() if correo in roster]
@@ -130,9 +150,26 @@ def semestre_de(correo: str, fecha: datetime, rosters: dict) -> str | None:
         return None
     if len(candidatos) == 1:
         return candidatos[0]
-    # el correo aparece en más de un roster (staff): decidir por fecha
-    antiguos = sorted(candidatos)
-    return antiguos[0] if fecha < CORTE_SEMESTRE else antiguos[-1]
+
+    # el correo está en varios rosters: se queda con el semestre cuya ventana
+    # de fechas contiene el mensaje
+    for sid in sorted(candidatos):
+        rango = rango_semestre(sid)
+        if rango and rango[0] <= fecha <= rango[1]:
+            return sid
+
+    # fuera de toda ventana conocida: el semestre más cercano en el tiempo
+    def distancia(sid: str) -> float:
+        rango = rango_semestre(sid)
+        if not rango:
+            return float("inf")
+        if fecha < rango[0]:
+            return (rango[0] - fecha).total_seconds()
+        if fecha > rango[1]:
+            return (fecha - rango[1]).total_seconds()
+        return 0.0
+
+    return min(sorted(candidatos), key=distancia)
 
 
 # ------------------------------------------------------------------ lectura
