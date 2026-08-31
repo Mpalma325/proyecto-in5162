@@ -1,0 +1,85 @@
+# Módulo `datos`
+
+Las tablas del semestre. Sabe leer y escribir CSV, y nada más.
+
+## Las tres tablas
+
+Viven en la raíz del semestre (`semestres/<id>/`), no dentro de
+`tests_semanales/` o `tareas/`: ahora son compartidas y la columna `Flujo`
+distingue de cuál viene cada fila.
+
+| Archivo | Qué es | Cómo se usa |
+|---|---|---|
+| `alumnos.csv` | Quiénes son | Casi no cambia. Refleja lo que sube el profesor; el sistema solo agrega el grupo. |
+| `notas.csv` | En qué van | Se lee y escribe todo el tiempo. Es lo que se edita a mano para corregir notas. |
+| `log_envios.csv` | Qué pasó | **Append-only.** El flujo solo escribe; se lee para reconstruir o investigar. |
+
+## Qué hace y qué no
+
+**Sí:** leer y escribir esas tres tablas, y responder preguntas de dominio
+(`pendientes_de_envio`, `ya_evaluado`, `grupo_de`).
+
+**No:** mandar correos, llamar a la IA, saber qué es una pauta o un prompt. Si
+una función de acá necesita eso, va en el flujo que la llama.
+
+## Importaciones permitidas
+
+Librería estándar y `modulos.semestre` (que resuelve dónde están los archivos).
+**No importa `mail` ni `ia`**: quien orquesta los tres es el flujo (`tests`,
+`tareas`), no este módulo.
+
+## Cómo se usa
+
+```python
+from modulos import datos
+
+datos.alumnos.correos()                                   # ["ana@x.cl", ...]
+datos.alumnos.asignar_grupos_faltantes(semilla=19)         # solo a los que no tienen
+
+faltan = datos.notas.pendientes_de_envio(correos, datos.TESTS, "3")
+datos.notas.marcar_enviado(correo, datos.TESTS, "3")
+datos.notas.registrar_nota(correo, datos.TESTS, "3", "6,5", "Baja")
+datos.notas.ya_evaluado(correo, datos.TESTS, "3")
+
+datos.log.registrar("envio", datos.TESTS, "3", correo, MessageId=mid)
+```
+
+## Por qué el log es append-only
+
+Cada fila es un **evento** (`envio`, `respuesta`, `evaluacion`, `error`), no una
+interacción. Un mismo alumno en una misma semana deja varias filas.
+
+Eso evita tener que editar algo ya escrito, que es lo que se rompe cuando dos
+personas operan el curso desde equipos distintos: para juntar dos logs basta
+concatenarlos y deduplicar. Con un archivo que se reescribe, gana el último que
+guarda y se pierde lo del otro.
+
+Ya pasó: en 2026-2 la Semana 3 quedó evaluada en un equipo y sin registro de
+envío en el otro, porque el estado vivía en un CSV que cada uno reescribía.
+
+`log.reconstruir_estado()` rearma `notas.csv` desde el log si se desincroniza.
+
+## `interacciones.csv` ya no se mantiene
+
+Antes se guardaba aparte una tabla con la pregunta, la respuesta y la
+evaluación juntas. Ahora esa vista **se deriva del log**:
+
+```python
+datos.log.como_interacciones()            # en memoria
+datos.log.exportar_interacciones()        # a un CSV, cuando se necesite
+```
+
+Se verificó contra los archivos que existían: 511, 457 y 80 filas
+respectivamente, sin una sola diferencia. Mantenerla como archivo propio
+significaba tener dos fuentes del mismo dato, que es exactamente lo que se
+desalinea con el tiempo.
+
+## Cuidado
+
+`log.registrar()` **nunca lanza excepción** hacia el flujo: si el log falla, el
+correo ya salió y perder el envío sería peor que perder la traza. Avisa por
+pantalla y sigue. No cambies eso sin pensarlo.
+
+`asignar_grupos_faltantes()` solo toca a quien no tiene grupo. El grupo de un
+alumno no cambia nunca una vez puesto, porque define qué versión de pregunta le
+tocó y de eso depende el estudio de impacto.

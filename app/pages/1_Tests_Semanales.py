@@ -5,7 +5,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import runner
-from utils.runner import TESTS_DIR, python, run_command, render_output
+from utils.runner import PROJECT_ROOT, python, run_command, render_output
 
 st.title("Tests Semanales")
 
@@ -22,7 +22,7 @@ def _run_section(cmd: list[str], out_key: str, rc_key: str) -> None:
     area = st.empty()
     with st.spinner("Ejecutando..."):
         rc, output = run_command(
-            cmd, TESTS_DIR,
+            cmd, PROJECT_ROOT,
             lambda o: area.markdown(render_output(o), unsafe_allow_html=True),
         )
     st.session_state[out_key] = output
@@ -54,7 +54,7 @@ with tab1:
             st.warning("Modo prueba desactivado — se enviarán emails reales.")
 
     if st.button("Ejecutar", type="primary", key="ts_btn_env"):
-        cmd = [python(), "-m", "src.enviar_preguntas", str(semana_env)]
+        cmd = [python(), "-m", "modulos.tests.enviar", str(semana_env)]
         if dry_env:
             cmd.append("--dry-run")
         _run_section(cmd, "ts_enviar_out", "ts_enviar_rc")
@@ -75,7 +75,7 @@ with tab2:
             st.warning("Modo prueba desactivado — se evaluarán y enviarán emails reales.")
 
     if st.button("Ejecutar", type="primary", key="ts_btn_eval"):
-        cmd = [python(), "-m", "src.evaluar_respuestas", str(semana_eval)]
+        cmd = [python(), "-m", "modulos.tests.evaluar", str(semana_eval)]
         if dry_eval:
             cmd.append("--dry-run")
         _run_section(cmd, "ts_evaluar_out", "ts_evaluar_rc")
@@ -90,7 +90,7 @@ with tab3:
     st.info("No envía emails ni modifica datos — solo genera un archivo de texto.")
 
     if st.button("Ejecutar", type="primary", key="ts_btn_res"):
-        cmd = [python(), "-m", "src.resumen_semana", str(semana_res)]
+        cmd = [python(), "-m", "modulos.tests.resumen", str(semana_res)]
         _run_section(cmd, "ts_resumen_out", "ts_resumen_rc")
 
         resumen_path = runner.tests_data_dir() / f"resumen_semana_{semana_res}.txt"

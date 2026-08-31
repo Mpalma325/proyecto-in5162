@@ -9,8 +9,17 @@ from typing import Callable
 
 APP_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = APP_DIR.parent
-TESTS_DIR = PROJECT_ROOT / "tests_semanales"
-TAREAS_DIR = PROJECT_ROOT / "tareas"
+# Los flujos viven en modulos/ y se invocan desde la raíz del proyecto.
+ENV_FILE = PROJECT_ROOT / ".env"
+
+sys.path.insert(0, str(PROJECT_ROOT))
+from modulos import semestre as _semestre  # noqa: E402
+
+# La app conserva estos nombres; la logica vive en modulos/semestre.
+semestre_activo = _semestre.activo
+listar_semestres = _semestre.listar
+set_semestre_activo = _semestre.activar
+crear_semestre = _semestre.crear
 
 SEMESTRES_DIR = PROJECT_ROOT / "semestres"
 _TEMPLATE_DIR = SEMESTRES_DIR / "_template"
@@ -18,66 +27,23 @@ ACTIVO_FILE = SEMESTRES_DIR / "activo.txt"
 _ID_VALIDO = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-# mantener sincronizado con: tests_semanales/src/config.py, tareas/src/config.py
-def semestre_activo() -> str | None:
-    if not ACTIVO_FILE.exists():
-        return None
-    valor = ACTIVO_FILE.read_text(encoding="utf-8").strip()
-    return valor or None
-
-
-def listar_semestres() -> list[str]:
-    if not SEMESTRES_DIR.exists():
-        return []
-    return sorted(
-        p.name for p in SEMESTRES_DIR.iterdir()
-        if p.is_dir() and p.name != "_template"
-    )
-
-
-def set_semestre_activo(semestre_id: str) -> None:
-    if not (SEMESTRES_DIR / semestre_id).is_dir():
-        raise ValueError(f"El semestre '{semestre_id}' no existe.")
-    ACTIVO_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ACTIVO_FILE.write_text(semestre_id, encoding="utf-8")
-
-
-def crear_semestre(semestre_id: str) -> None:
-    semestre_id = semestre_id.strip()
-    if not semestre_id or not _ID_VALIDO.match(semestre_id):
-        raise ValueError(
-            "El identificador del semestre solo puede contener letras, "
-            "números, puntos, guiones y guiones bajos."
-        )
-    destino = SEMESTRES_DIR / semestre_id
-    if destino.exists():
-        raise ValueError(f"El semestre '{semestre_id}' ya existe.")
-    if not _TEMPLATE_DIR.exists():
-        raise RuntimeError(f"No encontré la plantilla en {_TEMPLATE_DIR}.")
-    shutil.copytree(_TEMPLATE_DIR, destino)
-
-
-def _semestre_dir(semestre: str | None) -> Path:
-    s = semestre or semestre_activo()
-    if not s:
-        raise RuntimeError("No hay un semestre activo. Créalo en Datos y Configuración.")
-    return SEMESTRES_DIR / s
-
-
+# Las rutas las resuelve modulos/semestre: acá solo se les pone el nombre que
+# usa la app. Antes estaban calculadas a mano y había que cambiarlas en dos
+# lugares cada vez.
 def tests_data_dir(semestre: str | None = None) -> Path:
-    return _semestre_dir(semestre) / "tests_semanales" / "data"
+    return _semestre.datos("tests_semanales", semestre)
 
 
 def tests_prompts_dir(semestre: str | None = None) -> Path:
-    return _semestre_dir(semestre) / "tests_semanales" / "prompts"
+    return _semestre.prompts("tests_semanales", semestre)
 
 
 def tareas_data_dir(semestre: str | None = None) -> Path:
-    return _semestre_dir(semestre) / "tareas" / "data"
+    return _semestre.datos("tareas", semestre)
 
 
 def tareas_prompts_dir(semestre: str | None = None) -> Path:
-    return _semestre_dir(semestre) / "tareas" / "prompts"
+    return _semestre.prompts("tareas", semestre)
 
 
 def tareas_entregas_dir(semestre: str | None = None, tarea: str | None = None) -> Path:

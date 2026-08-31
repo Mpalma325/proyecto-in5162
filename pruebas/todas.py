@@ -1,0 +1,24 @@
+"""Corre todas las pruebas y devuelve un código de salida distinto de cero si alguna falla."""
+
+import pathlib
+import subprocess
+import sys
+
+AQUI = pathlib.Path(__file__).resolve().parent
+RAIZ = AQUI.parent
+ARCHIVOS = ["e2e_tests_semanales.py", "e2e_tareas.py", "app_paginas.py"]
+
+fallaron = []
+for nombre in ARCHIVOS:
+    print(f"\n{'=' * 60}\n{nombre}\n{'=' * 60}")
+    r = subprocess.run([sys.executable, str(AQUI / nombre)], cwd=RAIZ,
+                       env={**__import__("os").environ,
+                            "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+    if r.returncode:
+        fallaron.append(nombre)
+
+print(f"\n{'=' * 60}")
+if fallaron:
+    print("FALLARON: " + ", ".join(fallaron))
+    sys.exit(1)
+print("Todo en verde.")

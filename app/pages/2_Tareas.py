@@ -5,7 +5,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import runner
-from utils.runner import TAREAS_DIR, python, run_command, render_output
+from utils.runner import PROJECT_ROOT, python, run_command, render_output
 
 st.title("Tareas")
 
@@ -23,7 +23,7 @@ def _run_section(cmd: list[str], out_key: str, rc_key: str) -> None:
     area = st.empty()
     with st.spinner("Ejecutando..."):
         rc, output = run_command(
-            cmd, TAREAS_DIR,
+            cmd, PROJECT_ROOT,
             lambda o: area.markdown(render_output(o), unsafe_allow_html=True),
         )
     st.session_state[out_key] = output
@@ -82,7 +82,7 @@ with tab1:
     )
 
     if st.button("Ejecutar", type="primary", key="tar_btn_p1", disabled=not archivos_sel):
-        cmd = [python(), "-m", "src.paso1_generar", tarea_p1, "--no-interactivo"]
+        cmd = [python(), "-m", "modulos.tareas.generar", tarea_p1, "--no-interactivo"]
         cmd += [str(p) for p in archivos_sel]
         _run_section(cmd, "tar_p1_out", "tar_p1_rc")
 
@@ -101,7 +101,7 @@ with tab2:
             st.warning("Modo prueba desactivado — se enviarán emails reales.")
 
     if st.button("Ejecutar", type="primary", key="tar_btn_p2"):
-        cmd = [python(), "-m", "src.paso2_enviar", tarea_p2]
+        cmd = [python(), "-m", "modulos.tareas.enviar", tarea_p2]
         if dry_p2:
             cmd.append("--dry-run")
         _run_section(cmd, "tar_p2_out", "tar_p2_rc")
@@ -117,7 +117,7 @@ with tab3:
     st.info("No envía emails — solo lee el inbox y actualiza el CSV.")
 
     if st.button("Ejecutar", type="primary", key="tar_btn_p3"):
-        cmd = [python(), "-m", "src.paso3_recolectar", tarea_p3]
+        cmd = [python(), "-m", "modulos.tareas.recolectar", tarea_p3]
         _run_section(cmd, "tar_p3_out", "tar_p3_rc")
 
     _show_result("tar_p3_out", "tar_p3_rc")
@@ -138,7 +138,7 @@ with tab4:
                                   key="tar_no_enviar_p4")
 
     if st.button("Ejecutar", type="primary", key="tar_btn_p4"):
-        cmd = [python(), "-m", "src.paso4_corregir", tarea_p4]
+        cmd = [python(), "-m", "modulos.tareas.corregir", tarea_p4]
         if dry_p4:
             cmd.append("--dry-run")
         if no_enviar_p4 and not dry_p4:

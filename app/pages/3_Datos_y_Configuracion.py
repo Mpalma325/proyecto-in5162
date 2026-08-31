@@ -6,7 +6,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import runner
-from utils.runner import TAREAS_DIR, TESTS_DIR
+from utils.runner import ENV_FILE
 
 st.title("Datos y Configuración")
 
@@ -60,7 +60,7 @@ def _estado_del_sistema() -> None:
     with sc1:
         st.caption("Tests Semanales")
         for nombre, existe in {
-            ".env (global)": (TESTS_DIR / ".env").exists(),
+            ".env": ENV_FILE.exists(),
             "alumnos.csv": (runner.tests_data_dir() / "alumnos.csv").exists(),
             "preguntas.csv": (runner.tests_data_dir() / "preguntas.csv").exists(),
         }.items():
@@ -72,13 +72,13 @@ def _estado_del_sistema() -> None:
         n_htmls = len(list(entregas_dir.glob("*/*.html"))) if entregas_dir.exists() else 0
         n_tareas = len(runner.tareas_conocidas())
         for nombre, existe in {
-            ".env (global)": (TAREAS_DIR / ".env").exists(),
+            ".env": ENV_FILE.exists(),
             "alumnos.csv": (runner.tareas_data_dir() / "alumnos.csv").exists(),
             f"entregas/ ({n_htmls} HTMLs en {n_tareas} tarea(s))": entregas_dir.exists(),
         }.items():
             st.markdown(f"{'✅' if existe else '❌'} `{nombre}`")
 
-    if not (TESTS_DIR / ".env").exists() or not (TAREAS_DIR / ".env").exists():
+    if not ENV_FILE.exists():
         st.warning("Faltan credenciales — configúralas en la pestaña Parámetros de la revisión.")
 
 
@@ -265,10 +265,6 @@ with tab_datos:
 with tab_config:
     st.caption("Estos parámetros son globales — se comparten entre todos los semestres.")
 
-    ENV_PATHS = {
-        "tests_semanales": TESTS_DIR / ".env",
-        "tareas": TAREAS_DIR / ".env",
-    }
 
     def _leer_env(path: Path) -> dict:
         env = {}
@@ -290,31 +286,28 @@ with tab_config:
             encoding="utf-8",
         )
 
-    # tests_semanales/.env es la fuente de verdad para las variables compartidas
-    env_ts = _leer_env(ENV_PATHS["tests_semanales"])
-    env_tar = _leer_env(ENV_PATHS["tareas"])
+    env = _leer_env(ENV_FILE)
 
     st.subheader("Credenciales")
     st.markdown(
-        "Se guardan en el `.env` de cada subproyecto. "
-        "Idénticas en ambos — al guardar se escribe en los dos."
+        "Se guardan en el archivo `.env` de la raíz del proyecto."
     )
 
     with st.form("form_creds"):
         api_key = st.text_input(
             "OpenAI API Key",
-            value=env_ts.get("OPENAI_API_KEY", ""),
+            value=env.get("OPENAI_API_KEY", ""),
             type="password",
             placeholder="sk-proj-...",
         )
         correo = st.text_input(
             "Correo remitente",
-            value=env_ts.get("CORREO_REMITENTE", ""),
+            value=env.get("CORREO_REMITENTE", ""),
             placeholder="in5162@uchile.cl",
         )
         password = st.text_input(
             "App password de Gmail (16 caracteres)",
-            value=env_ts.get("CORREO_APP_PASSWORD", ""),
+            value=env.get("CORREO_APP_PASSWORD", ""),
             type="password",
             placeholder="xxxx xxxx xxxx xxxx",
         )
@@ -329,8 +322,7 @@ with tab_config:
         if password:
             updates["CORREO_APP_PASSWORD"] = password
         if updates:
-            _escribir_env(ENV_PATHS["tests_semanales"], updates)
-            _escribir_env(ENV_PATHS["tareas"], updates)
+            _escribir_env(ENV_FILE, updates)
             st.success("Credenciales guardadas en ambos proyectos.")
 
     st.divider()
@@ -347,7 +339,7 @@ with tab_config:
         "gpt-4o-mini",
         "gpt-4o",
     ]
-    modelo_actual = env_ts.get("MODELO", "gpt-5.4-mini")
+    modelo_actual = env.get("MODELO", "gpt-5.4-mini")
 
     with st.form("form_modelo"):
         col1, col2 = st.columns(2)
@@ -365,7 +357,7 @@ with tab_config:
                 "Temperatura",
                 min_value=0.0,
                 max_value=1.0,
-                value=float(env_ts.get("TEMPERATURA", "0.2")),
+                value=float(env.get("TEMPERATURA", "0.2")),
                 step=0.05,
             )
         with col2:
@@ -373,7 +365,7 @@ with tab_config:
                 "Max tokens (evaluaciones individuales)",
                 min_value=500,
                 max_value=8000,
-                value=int(env_ts.get("MAX_TOKENS", "3000")),
+                value=int(env.get("MAX_TOKENS", "3000")),
                 step=100,
             )
 
@@ -385,8 +377,7 @@ with tab_config:
             "TEMPERATURA": str(temperatura),
             "MAX_TOKENS": str(max_tokens),
         }
-        _escribir_env(ENV_PATHS["tests_semanales"], updates)
-        _escribir_env(ENV_PATHS["tareas"], updates)
+        _escribir_env(ENV_FILE, updates)
         st.success("Configuración de modelo guardada en ambos proyectos.")
 
     st.divider()
@@ -401,7 +392,7 @@ with tab_config:
                 "Nota mínima",
                 min_value=1.0,
                 max_value=6.9,
-                value=float(env_tar.get("NOTA_MIN", "4.0")),
+                value=float(env.get("NOTA_MIN", "4.0")),
                 step=0.1,
                 format="%.1f",
             )
@@ -410,14 +401,14 @@ with tab_config:
                 "Nota máxima",
                 min_value=nota_min + 0.1,
                 max_value=10.0,
-                value=float(env_tar.get("NOTA_MAX", "7.0")),
+                value=float(env.get("NOTA_MAX", "7.0")),
                 step=0.1,
                 format="%.1f",
             )
         with col3:
             tarea_default = st.text_input(
                 "Tarea por defecto",
-                value=env_tar.get("TAREA_DEFAULT", "T1"),
+                value=env.get("TAREA_DEFAULT", "T1"),
             )
 
         submitted_notas = st.form_submit_button("Guardar", type="primary")
@@ -428,7 +419,7 @@ with tab_config:
             "NOTA_MAX": f"{nota_max:.1f}",
             "TAREA_DEFAULT": tarea_default,
         }
-        _escribir_env(ENV_PATHS["tareas"], updates)
+        _escribir_env(ENV_FILE, updates)
         st.success("Configuración de notas guardada en Tareas.")
 
     st.divider()
@@ -444,14 +435,14 @@ with tab_config:
         with col1:
             grupo_activo = st.toggle(
                 "Activar grupos control/tratamiento",
-                value=env_ts.get("GRUPO_CONTROL_TRATAMIENTO", "true").lower() == "true",
+                value=env.get("GRUPO_CONTROL_TRATAMIENTO", "true").lower() == "true",
             )
         with col2:
             grupo_seed = st.number_input(
                 "Semilla aleatoria (GRUPO_SEED)",
                 min_value=0,
                 max_value=99999,
-                value=int(env_ts.get("GRUPO_SEED", "19")),
+                value=int(env.get("GRUPO_SEED", "19")),
                 step=1,
                 help="Cambiar la semilla reasigna los grupos.",
             )
@@ -463,5 +454,5 @@ with tab_config:
             "GRUPO_CONTROL_TRATAMIENTO": "true" if grupo_activo else "false",
             "GRUPO_SEED": str(grupo_seed),
         }
-        _escribir_env(ENV_PATHS["tests_semanales"], updates)
+        _escribir_env(ENV_FILE, updates)
         st.success("Configuración de grupos guardada en Tests Semanales.")
