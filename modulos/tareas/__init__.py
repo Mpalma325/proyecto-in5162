@@ -14,7 +14,7 @@ from . import config
 
 # Igual que en tests: el flujo le dice a los módulos compartidos de dónde salen
 # las credenciales, antes de que ningún submódulo las necesite.
-mail.configurar(config.cargar_correo_config)
+mail.configurar(config.cargar_correo_config, config.cargar_servidores())
 ia.configurar(config.cargar_api_key, config.MODELO,
               config.TEMPERATURA, config.MAX_TOKENS)
 

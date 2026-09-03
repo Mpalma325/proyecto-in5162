@@ -17,7 +17,8 @@ distingue de cuál viene cada fila.
 ## Qué hace y qué no
 
 **Sí:** leer y escribir esas tres tablas, y responder preguntas de dominio
-(`pendientes_de_envio`, `ya_evaluado`, `grupo_de`).
+(`pendientes_de_envio`, `ya_evaluado`, `grupo_de`). También las agregaciones de
+la reportería, en `reportes.py`.
 
 **No:** mandar correos, llamar a la IA, saber qué es una pauta o un prompt. Si
 una función de acá necesita eso, va en el flujo que la llama.
@@ -26,7 +27,41 @@ una función de acá necesita eso, va en el flujo que la llama.
 
 Librería estándar y `modulos.semestre` (que resuelve dónde están los archivos).
 **No importa `mail` ni `ia`**: quien orquesta los tres es el flujo (`tests`,
-`tareas`), no este módulo.
+`tareas`), no este módulo. Tampoco pandas: la reportería devuelve listas de
+diccionarios y quien quiera un DataFrame lo arma en la app, que es donde pandas
+ya vive. Así estas agregaciones sirven igual desde un script o un servidor.
+
+## Los eventos del log
+
+`envio`, `respuesta`, `evaluacion`, `repregunta`, `tutoria` y `error`. Los dos
+del medio son el ciclo normal; `repregunta` y `tutoria` son las vueltas de
+conversación cuando el alumno pregunta sobre su corrección.
+
+`Ronda` vale 0 en el ciclo normal y 1..N en cada vuelta de tutoría. `MessageId`
+es el id del mensaje que produjo el evento y `RespondeA` el del mensaje al que
+contesta: con esos dos se encadena la conversación y se distingue una
+repregunta de una respuesta atrasada.
+
+Cuando el esquema crece, los archivos que ya existen se amplían solos la
+primera vez que se les escribe (`_csv._ampliar_columnas`), conservando las
+filas. Sin eso las filas nuevas quedarían corridas contra la cabecera vieja.
+
+## La reportería
+
+Todo sale de `reportes.panel()`: una fila por (alumno, ítem). El resto
+—`por_item`, `por_grupo`, `por_alumno`, `ficha`, las distribuciones— son cortes
+de esa misma tabla, así que una métrica se calcula en un solo lugar.
+
+Dos cosas que hay que respetar al tocarla:
+
+- Las notas vienen en formato chileno con coma (`"6,5"`). Pasa por
+  `nota_a_float`; `float()` directo las convierte en nada.
+- `Enviado` y `Respondio` mezclan fecha ISO y el literal `"SI"`, según los haya
+  escrito el flujo o la migración. Solo se mira si están vacíos o no.
+
+El panel infiere el envío cuando hay respuesta o nota. Sin eso la tasa de
+respuesta pasaba de 100% en las semanas enviadas desde otro equipo, donde el
+evento de envío no quedó registrado.
 
 ## Cómo se usa
 

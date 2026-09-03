@@ -64,6 +64,16 @@ Antes de un envío conviene confirmar sobre cuál se está trabajando, porque lo
 python -m modulos.semestre
 ```
 
+## La reportería
+
+La pantalla de inicio de la app es la reportería del curso. Muestra, para el semestre que se elija: los indicadores generales, la evolución semana a semana de la nota media y la tasa de respuesta, la distribución de notas y de originalidad, la comparación entre Control y Tratamiento con la diferencia entre ambos brazos, el listado de alumnos ordenado por nota, la ficha de cada uno con sus textos y las evaluaciones que recibió, y las dos listas accionables: quién no ha respondido y quién respondió sin que se le pusiera nota.
+
+Todo se filtra por semana y por grupo, y el panel completo se descarga en CSV.
+
+Un semestre se mira a la vez y **nunca se mezcla con otro**: los alumnos, los grupos y las preguntas son distintos, así que un promedio entre semestres no significa nada. El selector de arriba cambia solo lo que se ve; el semestre sobre el que corren los envíos se cambia en Datos y Configuración, y la reportería avisa cuando no coinciden.
+
+Las agregaciones viven en `modulos/datos/reportes.py`, no en la app. Todo sale de `panel()`, que arma una fila por alumno e ítem; lo demás son cortes de esa misma tabla, así que una métrica se calcula en un solo lugar y dos vistas no pueden discrepar. La app solo dibuja.
+
 ## Tests Semanales
 
 Cada semana tiene un tema y una o más preguntas abiertas sobre los videos, cada una con su pauta de corrección. Todo eso vive en `preguntas.csv`: una fila por semana, con las versiones de Control y de Tratamiento en columnas separadas (si el curso no usa grupos, quedan iguales).
@@ -73,6 +83,7 @@ python -m modulos.tests.chequeo 4      # qué pasaría al evaluar, sin enviar na
 python -m modulos.tests.enviar 4       # envía la pregunta de la semana
 python -m modulos.tests.evaluar 4      # evalúa y devuelve el feedback
 python -m modulos.tests.resumen 4      # resume cómo le fue al curso
+python -m modulos.tests.tutoria        # responde las dudas sobre las correcciones
 ```
 
 **Enviar** le manda a cada alumno la versión que le corresponde según su grupo. A quien no tiene grupo se lo asigna en ese momento, mitad y mitad, con una semilla fija para que sea reproducible; una vez puesto no cambia nunca, porque define qué versión de pregunta le tocó.
@@ -80,6 +91,12 @@ python -m modulos.tests.resumen 4      # resume cómo le fue al curso
 **Evaluar** busca en el inbox los correos no leídos del módulo de esa semana, identifica de quién es cada uno (por el remitente, o por el Message-ID al que responde si escribió desde otra cuenta), limpia el texto y se lo pasa al modelo junto con la pauta de su grupo. Devuelve una nota y una evaluación de originalidad, manda el feedback y marca el correo como leído. A quien ya tiene nota no se le re-evalúa: se le avisa.
 
 La nota se guarda **apenas se corrige a cada alumno**, no al final. Si el proceso muere a mitad, el correo ya salió y la API ya se gastó, así que perder ese registro obligaría a repetir todo.
+
+**Tutoría.** Un alumno recibe su nota y responde preguntando por qué un 6 y no un 7, qué tendría que haber puesto, o qué significa algún concepto que le quedó dando vueltas. Eso lo atiende `tutoria`, que corre aparte del ciclo del curso: cuando uno quiera, sin fecha, y si nunca se corre no pasa nada.
+
+La nota **no se modifica**. El agente explica la corrección y enseña; recorregir sería otra cosa. Si el alumno insiste en apelar, se le dice que por esa vía no se cambian notas y que lo converse con el equipo docente.
+
+Estos correos se reconocen porque responden al feedback y no a la pregunta original, lo que se sabe por el Message-ID al que contestan. `evaluar` los deja sin leer para que los tome `tutoria`. La conversación se corta a las cuatro vueltas por alumno y semana.
 
 ## Tareas
 
@@ -106,6 +123,24 @@ Antes de tocar el código conviene correr las pruebas: recorren el ciclo complet
 python pruebas/todas.py
 ```
 
+## Forkear el proyecto
+
+Está pensado para que otra persona lo tome y pruebe cosas encima sin editar código.
+
+Se cambian por `.env`: el modelo, la temperatura y el tope de tokens; los servidores de correo, que vienen apuntando a Gmail; si el curso usa dos grupos y con qué semilla se reparten; y la escala de notas de las tareas.
+
+Se cambian editando archivos, no código: los prompts, que viven en `semestres/<id>/<flujo>/prompts/*.md` y son propios de cada semestre. Ahí está la política pedagógica completa —la escala, los criterios, el tono, qué se le dice a quien copió—, así que probar otra forma de evaluar es editar un `.md`. Un semestre nuevo los copia desde `semestres/_template/`.
+
+Lo que sí requiere tocar código: cambiar de proveedor de IA. La interfaz está aislada en `modulos/ia/cliente.py` detrás de una sola función, `completar(system, user) -> Respuesta`, así que es un archivo, pero hay que escribirlo.
+
+Un detalle a tener presente: el prompt de evaluación y el que lee la nota están acoplados por las etiquetas `NOTA FINAL:` y `ORIGINALIDAD:`. Si se cambian en el prompt hay que cambiarlas también en `modulos/tests/evaluar.py`, o la nota deja de extraerse en silencio.
+
+Para trabajar sobre un semestre sin cambiar el activo:
+
+```bash
+IN5162_SEMESTRE=2026-1 python -m modulos.tests.resumen 3
+```
+
 ## Si algo se pierde
 
 El historial completo se puede reconstruir leyendo el buzón:
@@ -114,4 +149,6 @@ El historial completo se puede reconstruir leyendo el buzón:
 python -m modulos.tests.reconstruir
 ```
 
-Abre el correo en modo lectura —no marca ni envía nada— y vuelca al log lo que encuentre. Tarda un par de minutos y muestra el avance. Sirve cuando se perdió el registro local, cuando los envíos se hicieron desde otro equipo, o para traer un semestre entero que se llevó fuera del sistema.
+Abre el correo en modo lectura —no marca ni envía nada— y vuelca al log lo que encuentre: los envíos con su Message-ID, las respuestas de los alumnos y las evaluaciones, cada uno con la fecha real del correo. Tarda un par de minutos y muestra el avance. Sirve cuando se perdió el registro local, cuando los envíos se hicieron desde otro equipo, o para traer un semestre entero que se llevó fuera del sistema.
+
+Se puede correr las veces que haga falta: antes de escribir mira lo que el log ya tiene y solo agrega lo que falta. Con `--simular` dice cuánto agregaría sin escribir nada.

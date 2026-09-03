@@ -50,6 +50,18 @@ mail.buscar_respuestas(message_ids)       # por In-Reply-To        (tareas)
 mail.marcar_leidos(uids)
 ```
 
+## Configuración inyectada
+
+Igual que las credenciales, los servidores se los pasa el flujo:
+
+```python
+mail.configurar(config.cargar_correo_config, config.cargar_servidores())
+```
+
+Los valores de `credenciales.py` son solo el default de Gmail. Estaban además
+escritos en `modulos/config.py`, pero solo se usaban los de acá: cambiar los
+del config no tenía ningún efecto.
+
 ## Cuidado con la limpieza de cuerpos
 
 `_limpiar_respuesta` es la parte más delicada: decide qué parte del correo

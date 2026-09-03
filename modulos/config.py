@@ -47,10 +47,15 @@ TEMPERATURA = float(_env.get("TEMPERATURA", "0.2"))
 MAX_TOKENS = int(_env.get("MAX_TOKENS", "3000"))
 
 # --- correo ---
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-IMAP_HOST = "imap.gmail.com"
-IMAP_PORT = 993
+# Por defecto Gmail, que es lo que usa el curso. Se pueden cambiar por .env
+# para correr sobre otro proveedor sin tocar código.
+SMTP_HOST = _env.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(_env.get("SMTP_PORT", "587"))
+IMAP_HOST = _env.get("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(_env.get("IMAP_PORT", "993"))
+# Dominio de los Message-ID que generamos. No tiene que existir; solo
+# identifica de dónde salió el mensaje.
+MSGID_DOMINIO = _env.get("MSGID_DOMINIO", "in5162.local")
 
 # --- tests semanales ---
 GRUPO_CONTROL_TRATAMIENTO = _flag("GRUPO_CONTROL_TRATAMIENTO", "true")
@@ -60,7 +65,16 @@ GRUPO_SEED = int(_env.get("GRUPO_SEED", "19"))
 TAREA_DEFAULT = _env.get("TAREA_DEFAULT", "T1")
 NOTA_MIN = float(_env.get("NOTA_MIN", "4.0"))
 NOTA_MAX = float(_env.get("NOTA_MAX", "7.0"))
-INCLUIR_CONTEXTO_CLASES = True
+INCLUIR_CONTEXTO_CLASES = _flag("INCLUIR_CONTEXTO_CLASES", "true")
+
+
+def cargar_servidores() -> dict:
+    """Servidores de correo, para inyectarlos en el módulo mail."""
+    return {
+        "SMTP_HOST": SMTP_HOST, "SMTP_PORT": SMTP_PORT,
+        "IMAP_HOST": IMAP_HOST, "IMAP_PORT": IMAP_PORT,
+        "MSGID_DOMINIO": MSGID_DOMINIO,
+    }
 
 
 def _obtener(var: str, descripcion: str) -> str:

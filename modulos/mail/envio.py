@@ -24,7 +24,7 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str,
     alumno, que llega con ese valor en su header In-Reply-To.
     """
     c = credenciales.obtener(creds)
-    message_id = make_msgid(domain="in5162.local")
+    message_id = make_msgid(domain=credenciales.MSGID_DOMINIO)
 
     msg = MIMEMultipart("alternative")
     msg["From"] = c["remitente"]

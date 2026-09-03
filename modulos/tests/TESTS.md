@@ -20,6 +20,7 @@ tres: es un flujo, y orquestar es justamente su trabajo.
 | `evaluar.py` | Lee las respuestas del buzón, las evalúa y devuelve el feedback |
 | `resumen.py` | Resume cómo le fue al curso esa semana |
 | `chequeo.py` | Dice qué pasaría al evaluar, **sin enviar nada** |
+| `tutoria.py` | Responde las dudas del alumno sobre su corrección. **No cambia la nota.** |
 | `reconstruir.py` | Rearma el historial leyendo el buzón, cuando el registro local se perdió |
 
 Auxiliares: `preguntas.py` (lee `preguntas.csv`), `storage.py` (el formato
@@ -39,6 +40,31 @@ python -m modulos.tests.resumen 4
 
 La app invoca exactamente estos mismos comandos como subprocesos, así que
 correrlos a mano o desde la interfaz hace lo mismo.
+
+## La tutoría
+
+El alumno recibe su nota y escribe de vuelta preguntando por qué. Eso no es una
+respuesta atrasada y no debe tratarse como tal: se reconoce porque su
+`In-Reply-To` apunta al Message-ID de una evaluación o una tutoría nuestra.
+
+Por eso `evaluar` guarda el Message-ID del feedback que envía. Antes lo
+generaba y lo descartaba, y sin ese ancla una repregunta era indistinguible de
+una respuesta fuera de plazo: el alumno recibía un "ya respondiste, no se te
+puede evaluar en una segunda ocasión" y su texto se perdía.
+
+`evaluar` detecta esos correos y los deja **sin leer** para que los recoja
+`tutoria`, que corre aparte y cuando uno quiera.
+
+Reglas que no hay que romper al tocarlo:
+
+- **La nota no se modifica nunca.** El prompt lo prohíbe explícitamente y el
+  flujo no llama a `notas.registrar_nota`. Si alguna vez se quisiera permitir
+  recorregir, es otra funcionalidad y merece su propio comando.
+- Se corta a `MAX_RONDAS` vueltas por alumno y semana, para que una duda no se
+  convierta en una negociación indefinida.
+- El modelo recibe la pregunta, la pauta, lo que respondió el alumno, la
+  corrección que se le mandó y el historial. Sin ese contexto no puede explicar
+  por qué le faltó puntaje.
 
 ## Cuidado
 
