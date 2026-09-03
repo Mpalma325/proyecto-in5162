@@ -14,6 +14,7 @@ Ambas venían duplicadas con implementaciones distintas; acá conviven.
 import email
 import email.utils
 import imaplib
+import re
 from datetime import datetime
 from email.utils import parseaddr
 
@@ -21,7 +22,15 @@ from . import credenciales
 from .limpieza import _decodificar_header, _extraer_cuerpo, _limpiar_respuesta
 
 
-def buscar_respuestas_semana(semana: int, asunto_contiene: str = "Módulo") -> list[dict]:
+def buscar_no_leidos(filtro_asunto=None) -> list[dict]:
+    """Los correos sin leer del INBOX, ya parseados y limpios.
+
+    `filtro_asunto` es una función que recibe el asunto y dice si interesa. Se
+    aplica acá, en Python, y no en el servidor: la búsqueda IMAP por asunto con
+    acentos es poco confiable y la cantidad de no leídos siempre es chica.
+
+    Leer no marca nada: se usa BODY.PEEK.
+    """
     creds = credenciales.obtener()
     resultado = []
 
@@ -29,53 +38,54 @@ def buscar_respuestas_semana(semana: int, asunto_contiene: str = "Módulo") -> l
         imap.login(creds["remitente"], creds["password"])
         imap.select("INBOX")
 
-        patron_asunto = f'Módulo {semana}'
-        try:
-            asunto_bytes = patron_asunto.encode('utf-8')
-            status, data = imap.search('UTF-8', 'UNSEEN', 'SUBJECT', asunto_bytes)
-        except (imaplib.IMAP4.error, UnicodeEncodeError):
-            status, data = imap.search(None, 'UNSEEN')
-
+        status, data = imap.search(None, "UNSEEN")
         if status != "OK" or not data or not data[0]:
             return resultado
 
-        ids_mensajes = data[0].split()
-        patrones_asunto = [f'módulo {semana}', f'modulo {semana}']
-
-        for msg_id in ids_mensajes:
-            status, data = imap.fetch(msg_id, "(BODY.PEEK[])")
-            if status != "OK" or not data or not data[0]:
+        for msg_id in data[0].split():
+            status, partes = imap.fetch(msg_id, "(BODY.PEEK[])")
+            if status != "OK" or not partes or not partes[0]:
                 continue
 
-            raw = data[0][1]
-            msg = email.message_from_bytes(raw)
-
+            msg = email.message_from_bytes(partes[0][1])
             asunto = _decodificar_header(msg.get("Subject", ""))
-            asunto_lower = asunto.lower()
-            if not any(p in asunto_lower for p in patrones_asunto):
+            if filtro_asunto is not None and not filtro_asunto(asunto):
                 continue
-            in_reply_to = (msg.get("In-Reply-To") or "").strip()
+
             _, remitente = parseaddr(msg.get("From", ""))
-            fecha_hdr = msg.get("Date", "")
             try:
-                fecha = email.utils.parsedate_to_datetime(fecha_hdr)
+                fecha = email.utils.parsedate_to_datetime(msg.get("Date", ""))
             except Exception:
                 fecha = datetime.now()
-
-            cuerpo = _limpiar_respuesta(_extraer_cuerpo(msg))
 
             resultado.append({
                 "uid": msg_id.decode() if isinstance(msg_id, bytes) else msg_id,
                 "remitente": remitente.lower(),
                 "asunto": asunto,
-                "in_reply_to": in_reply_to,
+                "message_id": (msg.get("Message-ID") or "").strip(),
+                "in_reply_to": (msg.get("In-Reply-To") or "").strip(),
+                "referencias": (msg.get("References") or "").strip(),
                 "fecha": fecha,
-                "texto": cuerpo,
+                "texto": _limpiar_respuesta(_extraer_cuerpo(msg)),
             })
 
         resultado.sort(key=lambda r: r["fecha"])
 
     return resultado
+
+
+def es_del_modulo(asunto: str, semana: int) -> bool:
+    """Si el asunto corresponde a esa semana y no a otra que empiece igual.
+
+    Con una comparación por subcadena, "Módulo 1" también encuentra "Módulo 10"
+    y "Módulo 13". El límite de palabra al final lo evita.
+    """
+    return re.search(rf"m[oó]dulo\s*0*{int(semana)}\b", asunto or "", re.IGNORECASE) is not None
+
+
+def buscar_respuestas_semana(semana: int, asunto_contiene: str = "Módulo") -> list[dict]:
+    """Los correos sin leer que responden a la pregunta de esa semana."""
+    return buscar_no_leidos(lambda asunto: es_del_modulo(asunto, semana))
 
 
 def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:

@@ -18,7 +18,7 @@ mail.configurar(config.cargar_correo_config)
 ia.configurar(config.cargar_api_key, config.MODELO,
               config.TEMPERATURA, config.MAX_TOKENS)
 
-__all__ = ["enviar", "evaluar", "resumen", "chequeo", "config"]
+__all__ = ["enviar", "evaluar", "resumen", "chequeo", "tutoria", "reconstruir", "config"]
 
 # Los submódulos NO se importan acá. Si se importaran, `python -m modulos.X.Y`
 # ejecutaría Y dos veces: una al cargar el paquete y otra como __main__.

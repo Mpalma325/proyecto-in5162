@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from modulos import semestre as _semestre
 
 from . import _csv
+from . import esquema as _esquema
 from .esquema import COLUMNAS_LOG, EVENTOS, LOG
 
 
@@ -85,6 +86,32 @@ def reconstruir_estado(semestre_id: str | None = None) -> dict:
     return estado
 
 
+def _mismo_id(a: str, b: str) -> bool:
+    """Compara Message-IDs ignorando los <ángulos>, que van y vienen."""
+    a, b = (a or "").strip(), (b or "").strip()
+    return bool(a) and bool(b) and (a == b or a.strip("<>") == b.strip("<>"))
+
+
+def fila_por_message_id(message_id: str, semestre_id: str | None = None,
+                        eventos: tuple | None = None) -> dict | None:
+    """El evento que produjo el mensaje con ese Message-ID.
+
+    Sirve para saber a qué está contestando un correo entrante: si el id
+    corresponde a un 'envio' es la respuesta a la pregunta de la semana, y si
+    corresponde a una 'evaluacion' o a una 'tutoria' es una repregunta sobre el
+    feedback que ya se le mandó.
+    """
+    mid = (message_id or "").strip()
+    if not mid:
+        return None
+    for fila in leer(semestre_id):
+        if eventos and fila.get("Evento") not in eventos:
+            continue
+        if _mismo_id(fila.get("MessageId", ""), mid):
+            return fila
+    return None
+
+
 def correo_de_message_id(message_id: str, flujo: str, item: str,
                          semestre_id: str | None = None) -> str | None:
     """A quién se le envió un correo, según su Message-ID.
@@ -97,12 +124,39 @@ def correo_de_message_id(message_id: str, flujo: str, item: str,
     mid = (message_id or "").strip()
     if not mid:
         return None
-    sin_angulos = mid.strip("<>")
     for fila in leer(semestre_id, flujo=flujo, item=str(item), evento="envio"):
-        guardado = (fila.get("MessageId") or "").strip()
-        if guardado and (guardado == mid or guardado.strip("<>") == sin_angulos):
+        if _mismo_id(fila.get("MessageId", ""), mid):
             return fila.get("Correo") or None
     return None
+
+
+def ultima_ronda(correo: str, flujo: str, item: str,
+                 semestre_id: str | None = None) -> int:
+    """Cuántas vueltas de tutoría lleva ese alumno en ese ítem."""
+    correo = (correo or "").strip().lower()
+    rondas = [
+        int(f.get("Ronda") or 0)
+        for f in leer(semestre_id, flujo=flujo, item=str(item))
+        if f.get("Correo", "").strip().lower() == correo and str(f.get("Ronda") or "").strip().isdigit()
+    ]
+    return max(rondas) if rondas else 0
+
+
+def conversacion(correo: str, flujo: str, item: str,
+                 semestre_id: str | None = None) -> list[dict]:
+    """Los mensajes intercambiados con un alumno sobre un ítem, en orden.
+
+    Es lo que se le da al modelo como historial cuando responde una repregunta:
+    sin esto cada duda se contestaría sin saber qué se le dijo antes.
+    """
+    correo = (correo or "").strip().lower()
+    de_interes = _esquema.DEL_ALUMNO + _esquema.DEL_AGENTE
+    filas = [
+        f for f in leer(semestre_id, flujo=flujo, item=str(item))
+        if f.get("Correo", "").strip().lower() == correo
+        and f.get("Evento") in de_interes
+    ]
+    return sorted(filas, key=lambda f: (int(f.get("Ronda") or 0), f.get("Timestamp", "")))
 
 
 def como_interacciones(semestre_id: str | None = None) -> list[dict]:

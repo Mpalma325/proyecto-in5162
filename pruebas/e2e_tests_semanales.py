@@ -8,14 +8,17 @@ La segunda parte reproduce lo que pasa de verdad al operar el curso entre dos
 personas: los envíos se hicieron en otro equipo, el proceso se cae a mitad, la
 red se corta justo al final. Cada uno de esos casos corresponde a algo que ya
 ocurrió.
+
+La tercera cubre la tutoría: el alumno responde al feedback preguntando por qué
+le fue así, y hay que atenderlo sin tocarle la nota.
 """
 
 import sys
 from unittest.mock import patch
 
 sys.path.insert(0, "pruebas")
-from comun import (check, enviados, nota_ia, resultado, respuestas_falsas,
-                   semestre_desechable, sin_red, titulo)
+from comun import (check, correo_entrante, enviados, nota_ia, resultado,
+                   respuestas_falsas, semestre_desechable, sin_red, titulo)
 
 TRES_TABLAS = ("alumnos.csv", "notas.csv", "log_envios.csv")
 
@@ -158,6 +161,95 @@ def fallos_y_recuperacion():
               sum(1 for f in datos.notas.leer(sid, datos.TESTS, str(SEM)) if f["Nota"]) == 11)
 
 
+def tutoria_sobre_el_feedback():
+    """El alumno pregunta sobre su corrección. Se le responde; la nota no se mueve."""
+    with semestre_desechable(sid="_tmp_tutoria", vaciar=TRES_TABLAS) as (sid, tmp), sin_red():
+        from modulos import datos
+        from modulos.tests import enviar, evaluar, tutoria
+
+        enviar.main(5, dry_run=False)
+        correos = datos.alumnos.correos(sid)[:1]
+        alumno = correos[0]
+
+        titulo("10. al evaluar se guarda el id del feedback")
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana",
+                   return_value=respuestas_falsas(correos, 5)),              patch("modulos.tests.evaluar.evaluar_respuesta",
+                   return_value=nota_ia("6,0", "Media")):
+            evaluar.main(5, dry_run=False)
+        evaluacion = datos.log.leer(sid, evento="evaluacion", item="5")
+        check("la evaluacion quedo con MessageId",
+              bool(evaluacion and evaluacion[0]["MessageId"]), evaluacion[:1])
+        check("la evaluacion quedo con el modelo",
+              bool(evaluacion[0]["Modelo"]), evaluacion[0]["Modelo"])
+        id_feedback = evaluacion[0]["MessageId"]
+        nota_inicial = datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"]
+        check("la nota inicial es 6,0", nota_inicial == "6,0", nota_inicial)
+
+        titulo("11. una duda sobre el feedback NO es una respuesta atrasada")
+        duda = correo_entrante(alumno, 5,
+                               "Por que un 6 y no un 7? Que me falto exactamente?",
+                               in_reply_to=id_feedback)
+        enviados.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[duda]),              patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("7,0")):
+            evaluar.main(5, dry_run=False)
+        check("evaluar no le mando el 'ya respondiste'", len(enviados) == 0, enviados)
+        check("evaluar no le toco la nota",
+              datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0")
+
+        titulo("12. la tutoria si la atiende")
+        enviados.clear()
+        llamadas = []
+        with patch("modulos.tests.tutoria.buscar_no_leidos", return_value=[duda]),              patch("modulos.tests.tutoria.responder_duda",
+                   side_effect=lambda *a, **k: (llamadas.append(k.get("historial")),
+                                                "<p>Te falto mencionar X.</p>")[1]):
+            tutoria.main(5, dry_run=False)
+        check("le respondio la duda", len(enviados) == 1, enviados)
+        check("llamo al modelo una vez", len(llamadas) == 1, len(llamadas))
+        check("el modelo recibio el historial", bool(llamadas and llamadas[0]), llamadas[:1])
+        check("quedo registrada la repregunta",
+              len(datos.log.leer(sid, evento="repregunta", item="5")) == 1)
+        check("quedo registrada la tutoria",
+              len(datos.log.leer(sid, evento="tutoria", item="5")) == 1)
+
+        titulo("13. LA NOTA NO CAMBIA")
+        check("sigue siendo 6,0",
+              datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0",
+              datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"])
+        check("sigue habiendo una sola evaluacion",
+              len(datos.log.leer(sid, evento="evaluacion", item="5")) == 1)
+
+        titulo("14. una segunda vuelta se numera como ronda 2")
+        tut = datos.log.leer(sid, evento="tutoria", item="5")[0]
+        check("la primera vuelta fue ronda 1", tut["Ronda"] == "1", tut["Ronda"])
+        duda2 = correo_entrante(alumno, 5, "Gracias! Y como se interpreta el parametro?",
+                                in_reply_to=tut["MessageId"], uid="901")
+        enviados.clear()
+        with patch("modulos.tests.tutoria.buscar_no_leidos", return_value=[duda2]),              patch("modulos.tests.tutoria.responder_duda", return_value="<p>Se interpreta asi.</p>"):
+            tutoria.main(5, dry_run=False)
+        rondas = [t["Ronda"] for t in datos.log.leer(sid, evento="tutoria", item="5")]
+        check("ahora hay ronda 1 y 2", sorted(rondas) == ["1", "2"], rondas)
+        check("la nota sigue intacta",
+              datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0")
+
+        titulo("15. se corta despues de MAX_RONDAS")
+        ultimo = [t for t in datos.log.leer(sid, evento="tutoria", item="5")
+                  if t["Ronda"] == "2"][0]["MessageId"]
+        for n in range(3, tutoria.MAX_RONDAS + 3):
+            d = correo_entrante(alumno, 5, f"Otra duda mas ({n})",
+                                in_reply_to=ultimo, uid=f"9{n:02d}")
+            with patch("modulos.tests.tutoria.buscar_no_leidos", return_value=[d]),                  patch("modulos.tests.tutoria.responder_duda", return_value="<p>ok</p>"):
+                tutoria.main(5, dry_run=False)
+            hechas = datos.log.leer(sid, evento="tutoria", item="5")
+            nuevo = [t for t in hechas if t["Ronda"] == str(n)]
+            if nuevo:
+                ultimo = nuevo[0]["MessageId"]
+        total = len(datos.log.leer(sid, evento="tutoria", item="5"))
+        check(f"no pasa de {tutoria.MAX_RONDAS} vueltas", total <= tutoria.MAX_RONDAS, total)
+        check("y la nota nunca se movio",
+              datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0")
+
+
 ciclo_completo()
 fallos_y_recuperacion()
+tutoria_sobre_el_feedback()
 sys.exit(resultado())

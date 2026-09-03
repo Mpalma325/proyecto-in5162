@@ -37,11 +37,35 @@ def _cliente() -> OpenAI:
     return OpenAI(api_key=_api_key_provider())
 
 
+class Texto(str):
+    """El texto que devolvió el modelo, que además recuerda qué costó producirlo.
+
+    Es un `str` de verdad, así que quien solo quiera el texto lo usa sin
+    enterarse. Existe para que un flujo pueda registrar el modelo y los tokens
+    sin obligar a cambiar la firma de las funciones que lo devuelven, ni los
+    llamadores que ya tratan el resultado como una cadena.
+
+    Quien reciba esto desde fuera debe leerlo como `getattr(x, "meta", {})`:
+    puede venir un `str` pelado (por ejemplo desde una prueba con mocks).
+    """
+
+    meta: dict
+
+    def __new__(cls, texto: str, meta: dict | None = None):
+        obj = super().__new__(cls, texto)
+        obj.meta = meta or {}
+        return obj
+
+
 @dataclass
 class Respuesta:
     """Lo que devolvió el modelo, más el detalle de consumo."""
     texto: str
     meta: dict = field(default_factory=dict)
+
+    def con_meta(self) -> Texto:
+        """El texto, cargando su propia metadata."""
+        return Texto(self.texto, self.meta)
 
     @property
     def datos(self) -> dict:

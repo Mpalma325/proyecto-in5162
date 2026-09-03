@@ -31,19 +31,35 @@ COLUMNAS_NOTAS = [
 # al final. Eso lo hace seguro cuando dos personas trabajan en paralelo (basta
 # concatenar los archivos y deduplicar) y permite reconstruir la historia
 # completa, incluidos los reintentos y los errores.
-EVENTOS = ("envio", "respuesta", "evaluacion", "error")
+EVENTOS = (
+    "envio",        # se le mandó la pregunta de la semana
+    "respuesta",    # el alumno contestó
+    "evaluacion",   # el agente la corrigió y le mandó el feedback
+    "repregunta",   # el alumno preguntó algo sobre ese feedback
+    "tutoria",      # el agente le respondió la duda, sin tocar la nota
+    "error",
+)
 
 COLUMNAS_LOG = [
     "Timestamp",      # cuándo se registró el evento
     "Semestre", "Flujo", "Item", "Correo",
     "Evento",         # uno de EVENTOS
-    "MessageId",      # en 'envio': el id que permite reconocer la respuesta
-    "Modelo",         # en 'evaluacion': qué modelo la produjo
+    "MessageId",      # id del mensaje que produjo este evento, para reconocer
+                      # después lo que responda el alumno
+    "RespondeA",      # id del mensaje al que este contesta; encadena la conversación
+    "Ronda",          # 0 el ciclo normal, 1..N cada vuelta de tutoría
+    "Modelo",         # qué modelo lo produjo
+    "TokensEntrada",  # lo que costó la llamada, para poder medirlo después
+    "TokensSalida",
     "Nota", "Originalidad",
-    "Respuesta",      # en 'respuesta': lo que escribió el alumno
-    "EvaluacionIA",   # en 'evaluacion': lo que devolvió el modelo
+    "Respuesta",      # lo que escribió el alumno ('respuesta' y 'repregunta')
+    "EvaluacionIA",   # lo que devolvió el modelo ('evaluacion' y 'tutoria')
     "Detalle",        # en 'error': el mensaje
 ]
+
+# Eventos que son un mensaje del alumno, y su contraparte del agente.
+DEL_ALUMNO = ("respuesta", "repregunta")
+DEL_AGENTE = ("evaluacion", "tutoria")
 
 # Los dos flujos del curso
 TESTS = "test"

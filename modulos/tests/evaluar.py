@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 
 
 from modulos import datos as _datos
+from modulos.datos import esquema as _esquema
 
 from . import config
 from modulos.mail import enviar_correo, buscar_respuestas_semana, marcar_leido
@@ -104,6 +105,21 @@ def _anunciar_semestre() -> str:
     return sid
 
 
+def _es_repregunta(corr: dict) -> bool:
+    """Si el correo contesta a un feedback nuestro en vez de a la pregunta.
+
+    Se decide por el In-Reply-To: si apunta al Message-ID de una evaluación o de
+    una tutoría que ya mandamos, el alumno está preguntando sobre su corrección.
+    Solo funciona para feedback enviado después de que se empezó a guardar ese
+    id; lo anterior no es distinguible y sigue tratándose como respuesta.
+    """
+    irt = (corr.get("in_reply_to") or "").strip()
+    if not irt:
+        return False
+    origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE)
+    return origen is not None
+
+
 def main(semana: int, dry_run: bool = False) -> None:
     _anunciar_semestre()
     info = cargar_semana(semana)
@@ -121,8 +137,17 @@ def main(semana: int, dry_run: bool = False) -> None:
     sin_alumno = 0
     fallidos = 0
     ya_evaluados_en_esta_corrida = set()
+    repreguntas = 0
 
     for corr in correos:
+        # Si contesta a un feedback que ya le mandamos, no es una respuesta
+        # atrasada: es una duda sobre su corrección. Se deja sin leer para que
+        # la recoja `python -m modulos.tests.tutoria`. Sin esto el alumno
+        # recibía un "ya respondiste, no se te puede evaluar de nuevo".
+        if _es_repregunta(corr):
+            repreguntas += 1
+            continue
+
         alumno = _identificar_alumno(corr, semana, filas)
 
         if not alumno:
@@ -177,9 +202,13 @@ def main(semana: int, dry_run: bool = False) -> None:
             continue
 
         nota, originalidad = extraer_nota_y_originalidad(html_eval)
+        # El texto del modelo trae encima lo que costó producirlo. Puede venir
+        # un str pelado (una prueba con mocks), así que se pide con getattr.
+        meta = getattr(html_eval, "meta", {}) or {}
 
+        id_feedback = None
         try:
-            enviar_correo(
+            id_feedback = enviar_correo(
                 correo_alumno,
                 asunto_respuesta,
                 html_eval,
@@ -198,10 +227,19 @@ def main(semana: int, dry_run: bool = False) -> None:
             _datos.notas.marcar_respondio(_c, _datos.TESTS, semana, _fecha)
             _datos.notas.registrar_nota(_c, _datos.TESTS, semana, nota, originalidad)
             _datos.log.registrar("respuesta", _datos.TESTS, semana, _c,
-                                 Respuesta=respuesta_alumno)
+                                 Ronda=0, Respuesta=respuesta_alumno)
+            # El MessageId del feedback es lo que después permite reconocer una
+            # repregunta del alumno sobre esta corrección. Antes se generaba y
+            # se descartaba, y por eso una repregunta era indistinguible de una
+            # respuesta atrasada.
             _datos.log.registrar("evaluacion", _datos.TESTS, semana, _c,
-                                 Modelo=config.MODELO, Nota=nota,
-                                 Originalidad=originalidad, EvaluacionIA=html_eval)
+                                 Ronda=0,
+                                 MessageId=id_feedback or "",
+                                 Modelo=meta.get("modelo") or config.MODELO,
+                                 TokensEntrada=meta.get("prompt_tokens") or "",
+                                 TokensSalida=meta.get("completion_tokens") or "",
+                                 Nota=nota, Originalidad=originalidad,
+                                 EvaluacionIA=html_eval)
         except Exception as _e:  # noqa: BLE001
             print(f"     ⚠ no pude registrar en el esquema nuevo: {_e}")
 
@@ -228,6 +266,8 @@ def main(semana: int, dry_run: bool = False) -> None:
 
     if correos:
         print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}")
+        if repreguntas:
+            print(f"Repreguntas sobre el feedback: {repreguntas} (sin leer; las atiende: python -m modulos.tests.tutoria {semana})")
 
     estados = {e["Correo"]: e for e in _datos.notas.leer(flujo=_datos.TESTS, item=semana)}
     sin_entregar = [

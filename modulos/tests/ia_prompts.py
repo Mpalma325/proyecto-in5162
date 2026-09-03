@@ -22,7 +22,7 @@ def _bloque(items: list[str]) -> str:
 
 
 def evaluar_respuesta(preguntas: list[str], pautas: list[str],
-                      respuesta_alumno: str) -> str:
+                      respuesta_alumno: str) -> ia.Texto:
     plantilla = (config.PROMPTS / "evaluar_respuesta.md").read_text(encoding="utf-8")
     system_prompt = (
         plantilla
@@ -37,7 +37,40 @@ def evaluar_respuesta(preguntas: list[str], pautas: list[str],
         "<<<FIN_RESPUESTA>>>"
     )
 
-    return ia.completar(system_prompt, user_msg).texto
+    return ia.completar(system_prompt, user_msg).con_meta()
+
+
+def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: str,
+                   evaluacion_html: str, consulta: str, nombre: str,
+                   historial: list[dict] | None = None) -> ia.Texto:
+    """Contesta la duda de un alumno sobre su corrección. No toca la nota.
+
+    Recibe todo el contexto —la pregunta, la pauta, lo que respondió y lo que se
+    le corrigió— porque sin eso el modelo no puede explicar por qué le faltó
+    puntaje. El `historial` son las vueltas anteriores, si las hubo.
+    """
+    plantilla = (config.PROMPTS / "tutoria.md").read_text(encoding="utf-8")
+    system_prompt = plantilla.replace("{NOMBRE}", (nombre or "").split()[0] if nombre else "")
+
+    partes = [
+        f"=== PREGUNTA DE LA SEMANA ===\n{_bloque(preguntas)}",
+        f"=== PAUTA ESPERADA ===\n{_bloque(pautas)}",
+        f"=== LO QUE RESPONDIÓ EL ESTUDIANTE ===\n{respuesta_alumno}",
+        f"=== LA CORRECCIÓN QUE SE LE ENVIÓ ===\n{evaluacion_html}",
+    ]
+    for turno in historial or []:
+        quien = "ESTUDIANTE" if turno.get("Evento") == "repregunta" else "AYUDANTE"
+        texto = turno.get("Respuesta") or turno.get("EvaluacionIA") or ""
+        if texto.strip():
+            partes.append(f"=== {quien} (ronda {turno.get('Ronda', '?')}) ===\n{texto}")
+
+    partes.append(
+        "=== CONSULTA ACTUAL DEL ESTUDIANTE ===\n"
+        "<<<INICIO_MENSAJE>>>\n"
+        f"{consulta}\n"
+        "<<<FIN_MENSAJE>>>"
+    )
+    return ia.completar(system_prompt, "\n\n".join(partes)).con_meta()
 
 
 def generar_resumen(preguntas: list[str], pautas: list[str],

@@ -65,8 +65,12 @@ def semestre_desechable(base: str = "2026-2", sid: str = "_tmp_prueba", vaciar=(
     previo = os.environ.get("IN5162_SEMESTRE")
     os.environ["IN5162_SEMESTRE"] = sid
     # Los módulos calculan sus rutas al importarse, así que hay que soltarlos
-    # para que las recalculen apuntando a la copia.
-    for m in [k for k in sys.modules if k.startswith("modulos.")]:
+    # para que las recalculen apuntando a la copia. Se borra también el paquete
+    # `modulos` en sí: si queda, conserva como atributos los submódulos viejos,
+    # y entonces `from modulos import mail` devuelve el de antes mientras
+    # `from modulos.mail import enviar_correo` importa uno nuevo. Las
+    # credenciales terminan puestas en un objeto y el envío usando el otro.
+    for m in [k for k in sys.modules if k == "modulos" or k.startswith("modulos.")]:
         del sys.modules[m]
     try:
         yield sid, tmp
@@ -126,3 +130,22 @@ def respuestas_falsas(correos, item, desde=0, cantidad=None):
 
 def nota_ia(nota="6,0", originalidad="Media"):
     return f"<p>NOTA FINAL: {nota}</p><p>ORIGINALIDAD: {originalidad}</p>"
+
+
+def correo_entrante(remitente, item, texto, in_reply_to="", uid="900",
+                    message_id=None):
+    """Un correo del alumno, como lo entregaría la lectura del inbox.
+
+    A diferencia de `respuestas_falsas`, deja fijar el In-Reply-To: es lo que
+    distingue una duda sobre el feedback de una respuesta a la pregunta.
+    """
+    return {
+        "uid": str(uid).encode() if isinstance(uid, str) else uid,
+        "remitente": remitente,
+        "asunto": f"Re: Evaluación de Progreso Individual Módulo {item}: Tema",
+        "message_id": message_id or f"<alumno-{uid}@correo.test>",
+        "in_reply_to": in_reply_to,
+        "referencias": in_reply_to,
+        "fecha": datetime.now(timezone.utc),
+        "texto": texto,
+    }

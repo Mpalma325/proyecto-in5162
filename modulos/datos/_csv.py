@@ -32,6 +32,41 @@ def escribir(nombre: str, filas: list[dict], columnas: list[str],
     return p
 
 
+def cabecera(p: Path) -> list[str]:
+    """Los nombres de columna del archivo, sin leerlo entero."""
+    if not p.exists():
+        return []
+    with p.open(encoding="utf-8-sig", newline="") as f:
+        return next(csv.reader(f), [])
+
+
+def _ampliar_columnas(p: Path, columnas: list[str]) -> None:
+    """Agrega al archivo las columnas que le falten, conservando las filas.
+
+    Cuando el esquema crece, los archivos que ya existen siguen con la cabecera
+    vieja. Escribir filas nuevas contra esa cabecera correría los valores de
+    columna sin avisar, así que el archivo se reescribe una vez con las
+    columnas nuevas vacías. Es idempotente: si no falta ninguna, no toca nada.
+    """
+    actuales = cabecera(p)
+    if not actuales:
+        return
+    faltan = [c for c in columnas if c not in actuales]
+    if not faltan:
+        return
+
+    with p.open(encoding="utf-8-sig", newline="") as f:
+        filas = list(csv.DictReader(f))
+    nuevas = actuales + faltan
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=nuevas, extrasaction="ignore")
+        w.writeheader()
+        for fila in filas:
+            w.writerow({c: (fila.get(c) or "") for c in nuevas})
+    tmp.replace(p)
+
+
 def agregar(nombre: str, fila: dict, columnas: list[str],
             semestre_id: str | None = None) -> Path:
     """Agrega una fila al final, sin leer ni reescribir lo que ya está.
@@ -42,9 +77,15 @@ def agregar(nombre: str, fila: dict, columnas: list[str],
     p = ruta(nombre, semestre_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     nuevo = not p.exists()
+    if not nuevo:
+        _ampliar_columnas(p, columnas)
+    # Se escribe contra la cabecera real del archivo, no contra la lista que
+    # pide el llamador: si alguien agregó una columna a mano, respetarla evita
+    # correr todos los valores una posición.
+    campos = columnas if nuevo else (cabecera(p) or columnas)
     with p.open("a", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=campos, extrasaction="ignore")
         if nuevo:
             w.writeheader()
-        w.writerow({c: fila.get(c, "") for c in columnas})
+        w.writerow({c: fila.get(c, "") for c in campos})
     return p

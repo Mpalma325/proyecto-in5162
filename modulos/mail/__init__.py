@@ -20,6 +20,7 @@ from .credenciales import (
 from .envio import enviar_correo
 from .lectura import (
     buscar_respuestas,
+    buscar_no_leidos,
     buscar_respuestas_semana,
     marcar_leido,
     marcar_leidos,
@@ -35,6 +36,7 @@ from .limpieza import (
 __all__ = [
     "configurar",
     "enviar_correo",
+    "buscar_no_leidos",
     "buscar_respuestas_semana",
     "buscar_respuestas",
     "marcar_leido",
