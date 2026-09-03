@@ -31,6 +31,34 @@ class _Estado(dict):
         self[nombre] = valor
 
 
+class _Pagina:
+    """Lo que devuelve st.Page: recuerda la función para poder ejecutarla."""
+
+    def __init__(self, destino, **k):
+        self.destino = destino
+
+    def correr(self):
+        if callable(self.destino):
+            self.destino()
+
+
+class _Navegacion:
+    """st.navigation(...).run() ejecuta de verdad las páginas que son función.
+
+    Sin esto la prueba solo comprobaba que el archivo importara: el cuerpo del
+    dashboard vive dentro de una función registrada con st.Page, así que nunca
+    llegaba a correr y cualquier error ahí pasaba inadvertido.
+    """
+
+    def __init__(self, paginas):
+        self.paginas = paginas
+
+    def run(self):
+        for p in self.paginas:
+            if isinstance(p, _Pagina):
+                p.correr()
+
+
 def falso_streamlit():
     st = MagicMock()
     st.button.return_value = False
@@ -46,11 +74,21 @@ def falso_streamlit():
         return opciones[index or 0] if opciones else None
 
     st.selectbox.side_effect = _selectbox
+    # multiselect devuelve su default, como el de verdad cuando nadie lo toca
+    st.multiselect.side_effect = lambda label, opciones, *a, default=None, **k: (
+        list(default) if default is not None else list(opciones))
     st.file_uploader.return_value = None
+    st.Page.side_effect = _Pagina
+    st.navigation.side_effect = _Navegacion
     st.session_state = _Estado()
+    # Las columnas y las pestañas devuelven el propio st. En Streamlit real
+    # `col.metric(...)` es equivalente a `st.metric(...)` dentro de esa columna;
+    # si acá se devolvieran MagicMocks pelados, los widgets escritos como
+    # `col.multiselect(...)` no pasarían por la lógica de arriba y devolverían
+    # basura, dejando sin ejercitar la mitad del dashboard.
     st.columns.side_effect = lambda n, **k: [
-        MagicMock() for _ in range(n if isinstance(n, int) else len(n))]
-    st.tabs.side_effect = lambda nombres: [MagicMock() for _ in nombres]
+        st for _ in range(n if isinstance(n, int) else len(n))]
+    st.tabs.side_effect = lambda nombres: [st for _ in nombres]
     for ctx in ("spinner", "expander", "container", "form", "status", "sidebar", "empty"):
         getattr(st, ctx).return_value.__enter__ = lambda *a: MagicMock()
         getattr(st, ctx).return_value.__exit__ = lambda *a: False
@@ -81,14 +119,18 @@ _activo_previo = _ANTES.read_text(encoding="utf-8") if _ANTES.exists() else None
 
 paginas = ["app/main.py"] + sorted(str(p) for p in pathlib.Path("app/pages").glob("*.py"))
 
+falsos = {}
+
 for ruta in paginas:
     modulo = types.ModuleType("pagina")
     modulo.__file__ = ruta
     guardas = _sin_escrituras()
+    st = falso_streamlit()
+    falsos[ruta] = st
     try:
         for g in guardas:
             g.__enter__()
-        with patch.dict(sys.modules, {"streamlit": falso_streamlit()}):
+        with patch.dict(sys.modules, {"streamlit": st}):
             exec(compile(pathlib.Path(ruta).read_text(encoding="utf-8"), ruta, "exec"),
                  modulo.__dict__)
         check(ruta, True)
@@ -97,6 +139,18 @@ for ruta in paginas:
     finally:
         for g in reversed(guardas):
             g.__exit__(None, None, None)
+
+# La reportería tiene que haber dibujado algo. Comprobar solo que el archivo
+# corra no sirve: si un filtro deja la tabla vacía o una métrica se cae, la
+# página termina sin error y en pantalla no queda nada.
+st = falsos.get("app/main.py")
+if st is not None:
+    errores = [str(a) for a in st.error.call_args_list]
+    check("la reportería no reportó errores", not errores, errores[:2])
+    check("la reportería dibujó KPIs", st.metric.call_count >= 5, st.metric.call_count)
+    check("la reportería dibujó gráficos", st.altair_chart.call_count >= 3,
+          st.altair_chart.call_count)
+    check("la reportería armó sus pestañas", st.tabs.call_count >= 1, st.tabs.call_count)
 
 _activo_ahora = _ANTES.read_text(encoding="utf-8") if _ANTES.exists() else None
 check("las páginas no cambiaron el semestre activo",

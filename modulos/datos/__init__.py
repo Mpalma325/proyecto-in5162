@@ -6,7 +6,7 @@ llama a la IA y no sabe qué es una semana o una tarea. Son los flujos (tests,
 tareas) los que orquestan las tres cosas.
 """
 
-from . import alumnos, log, notas
+from . import alumnos, log, notas, reportes
 from .esquema import TAREAS, TESTS
 
-__all__ = ["alumnos", "notas", "log", "TESTS", "TAREAS"]
+__all__ = ["alumnos", "notas", "log", "reportes", "TESTS", "TAREAS"]

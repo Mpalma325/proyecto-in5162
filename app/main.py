@@ -1,10 +1,13 @@
 import sys
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from modulos import datos
 from utils import runner
 
 st.set_page_config(
@@ -13,170 +16,264 @@ st.set_page_config(
     layout="wide",
 )
 
-
-def _mtime(path: Path) -> float | None:
-    return path.stat().st_mtime if path.exists() else None
+# Altura común de los gráficos, para que la grilla quede pareja.
+ALTO = 260
 
 
 @st.cache_data(show_spinner=False)
-def _cargar_csv(path: Path, mtime: float | None) -> pd.DataFrame:
-    if mtime is None:
-        return pd.DataFrame()
-    return pd.read_csv(path, encoding="utf-8-sig", dtype=str).fillna("")
+def _panel(semestre: str, flujo: str, firma: tuple) -> pd.DataFrame:
+    """El panel del semestre como DataFrame.
+
+    `firma` son los mtime de los CSV: no se usa dentro, está para que la caché
+    se invalide sola cuando los datos cambian en disco.
+    """
+    return pd.DataFrame(datos.reportes.panel(semestre, flujo))
 
 
-def _estado_tests() -> dict:
-    path = runner.tests_data_dir() / "alumnos.csv"
-    try:
-        df = _cargar_csv(path, _mtime(path))
-    except Exception:
-        return {"ok": False}
-    if df.empty and not path.exists():
-        return {"ok": False}
-
-    envio_cols = [c for c in df.columns if c.startswith("Envío ")]
-    semanas_con_envios = []
-    for col in envio_cols:
-        try:
-            n = int(col.replace("Envío ", ""))
-            if (df[col] == "SI").any():
-                semanas_con_envios.append(n)
-        except ValueError:
-            pass
-
-    if not semanas_con_envios:
-        return {"ok": True, "total": len(df), "semana_activa": None,
-                "enviados": 0, "respondieron": 0, "sin_responder": 0, "evaluados": 0}
-
-    s = max(semanas_con_envios)
-    col_resp = f"Respuesta {s}"
-    col_nota = f"Nota Test {s}"
-
-    enviados = int((df[f"Envío {s}"] == "SI").sum())
-    respondieron = int((df[col_resp] != "").sum()) if col_resp in df.columns else 0
-    evaluados = int((df[col_nota] != "").sum()) if col_nota in df.columns else 0
-
-    return {
-        "ok": True,
-        "total": len(df),
-        "semana_activa": s,
-        "enviados": enviados,
-        "respondieron": respondieron,
-        "sin_responder": enviados - respondieron,
-        "evaluados": evaluados,
-    }
+def _firma(semestre: str) -> tuple:
+    raiz = runner.SEMESTRES_DIR / semestre if hasattr(runner, "SEMESTRES_DIR") else None
+    if raiz is None:
+        from modulos import semestre as _sem
+        raiz = _sem.raiz(semestre)
+    return tuple(
+        (p.stat().st_mtime if p.exists() else 0)
+        for p in (raiz / "alumnos.csv", raiz / "notas.csv", raiz / "log_envios.csv")
+    )
 
 
-def _estado_tareas() -> dict:
-    salidas = runner.tareas_salidas_dir()
-    csvs = list(salidas.glob("feedback_*.csv")) if salidas.exists() else []
-    if not csvs:
-        return {"ok": False}
-
-    # La más recientemente modificada es la activa
-    latest = max(csvs, key=lambda p: p.stat().st_mtime)
-    try:
-        df = _cargar_csv(latest, _mtime(latest))
-    except Exception:
-        return {"ok": False}
-
-    def _count(col: str) -> int:
-        return int((df[col] != "").sum()) if col in df.columns else 0
-
-    return {
-        "ok": True,
-        "tarea": latest.stem.replace("feedback_", "").upper(),
-        "total": len(df),
-        "enviados": _count("fecha_envio"),
-        "respondidos": _count("respuesta"),
-        "corregidos": _count("nota"),
-    }
+def _kpi(col, etiqueta: str, valor, sufijo: str = "", ayuda: str | None = None):
+    col.metric(etiqueta, "—" if valor is None else f"{valor}{sufijo}", help=ayuda)
 
 
-def _grafico_tests() -> pd.DataFrame:
-    path = runner.tests_data_dir() / "alumnos.csv"
-    try:
-        df = _cargar_csv(path, _mtime(path))
-    except Exception:
-        return pd.DataFrame()
-    if df.empty and not path.exists():
-        return pd.DataFrame()
+def _linea(df: pd.DataFrame, y: str, titulo: str, dominio=None):
+    """Serie por ítem. Devuelve None si no hay nada que dibujar."""
+    datos_y = df.dropna(subset=[y])
+    if datos_y.empty:
+        return None
+    escala = alt.Scale(domain=dominio) if dominio else alt.Scale(zero=False)
+    return (
+        alt.Chart(datos_y, height=ALTO, title=titulo)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("Item:O", title="Semana", sort=list(df["Item"])),
+            y=alt.Y(f"{y}:Q", title=titulo, scale=escala),
+            tooltip=list(df.columns),
+        )
+    )
 
-    rows = []
-    for col in df.columns:
-        if not col.startswith("Nota Test "):
+
+def _seccion_curso(df: pd.DataFrame):
+    filas = df.to_dict("records")
+    por_item = pd.DataFrame(datos.reportes.por_item(filas))
+    if por_item.empty:
+        st.info("Todavía no hay datos para graficar.")
+        return
+
+    c1, c2 = st.columns(2)
+    g = _linea(por_item, "NotaMedia", "Nota media por semana", dominio=[1.0, 7.0])
+    if g is not None:
+        c1.altair_chart(g, use_container_width=True)
+    else:
+        c1.caption("Sin notas todavía.")
+
+    g = _linea(por_item, "TasaRespuesta", "Tasa de respuesta por semana (%)", dominio=[0, 100])
+    if g is not None:
+        c2.altair_chart(g, use_container_width=True)
+    else:
+        c2.caption("Sin envíos todavía.")
+
+    c3, c4 = st.columns(2)
+
+    dist = pd.DataFrame(datos.reportes.distribucion_notas(filas))
+    if not dist.empty:
+        c3.altair_chart(
+            alt.Chart(dist, height=ALTO, title="Distribución de notas")
+            .mark_bar()
+            .encode(
+                x=alt.X("Etiqueta:O", title="Nota", sort=list(dist["Etiqueta"])),
+                y=alt.Y("Alumnos:Q", title="Evaluaciones"),
+                tooltip=["Etiqueta", "Alumnos"],
+            ),
+            use_container_width=True,
+        )
+    else:
+        c3.caption("Sin notas para distribuir.")
+
+    orig = pd.DataFrame(datos.reportes.distribucion_originalidad(filas))
+    if not orig.empty:
+        c4.altair_chart(
+            alt.Chart(orig, height=ALTO, title="Originalidad según el modelo")
+            .mark_bar()
+            .encode(
+                x=alt.X("Originalidad:O", title="", sort=list(orig["Originalidad"])),
+                y=alt.Y("Evaluaciones:Q"),
+                tooltip=["Originalidad", "Evaluaciones"],
+            ),
+            use_container_width=True,
+        )
+    else:
+        c4.caption("Sin datos de originalidad.")
+
+    with st.expander("Ver la tabla por semana"):
+        st.dataframe(por_item, use_container_width=True, hide_index=True)
+
+
+def _seccion_grupos(df: pd.DataFrame):
+    filas = df.to_dict("records")
+    pg = pd.DataFrame(datos.reportes.por_grupo(filas))
+    if pg.empty or pg["Grupo"].nunique() < 2:
+        st.info(
+            "Este semestre no tiene dos grupos comparables. La división "
+            "Control / Tratamiento se activa con `GRUPO_CONTROL_TRATAMIENTO`."
+        )
+        if not pg.empty:
+            st.dataframe(pg, use_container_width=True, hide_index=True)
+        return
+
+    st.caption(
+        "Control y Tratamiento reciben preguntas distintas sobre el mismo tema. "
+        "El grupo de cada alumno se fija una sola vez y no cambia."
+    )
+
+    c1, c2 = st.columns(2)
+    for col, campo, titulo, dominio in (
+        (c1, "NotaMedia", "Nota media por grupo", [1.0, 7.0]),
+        (c2, "TasaRespuesta", "Tasa de respuesta por grupo (%)", [0, 100]),
+    ):
+        sub = pg.dropna(subset=[campo])
+        if sub.empty:
+            col.caption("Sin datos.")
             continue
-        try:
-            n = int(col.replace("Nota Test ", ""))
-        except ValueError:
-            continue
+        col.altair_chart(
+            alt.Chart(sub, height=ALTO, title=titulo)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("Item:O", title="Semana", sort=list(pg["Item"].unique())),
+                y=alt.Y(f"{campo}:Q", title=titulo, scale=alt.Scale(domain=dominio)),
+                color=alt.Color("Grupo:N", title="Grupo"),
+                tooltip=["Item", "Grupo", "NotaMedia", "TasaRespuesta", "Evaluados"],
+            ),
+            use_container_width=True,
+        )
 
-        notas = pd.to_numeric(df[col].replace("", float("nan")), errors="coerce").dropna()
-        col_envio = f"Envío {n}"
-        col_resp = f"Respuesta {n}"
-        enviados = int((df.get(col_envio, pd.Series([""] * len(df))) == "SI").sum())
-        respondieron = int((df.get(col_resp, pd.Series([""] * len(df))) != "").sum())
+    # La diferencia entre brazos es el número que interesa del estudio.
+    pivote = pg.pivot_table(index="Item", columns="Grupo", values="NotaMedia")
+    if {"control", "tratamiento"}.issubset(pivote.columns):
+        pivote = pivote.reset_index()
+        pivote["Diferencia"] = (pivote["tratamiento"] - pivote["control"]).round(2)
+        st.altair_chart(
+            alt.Chart(pivote.dropna(subset=["Diferencia"]), height=200,
+                      title="Diferencia de nota (Tratamiento − Control)")
+            .mark_bar()
+            .encode(
+                x=alt.X("Item:O", title="Semana", sort=list(pivote["Item"])),
+                y=alt.Y("Diferencia:Q", title="Puntos de nota"),
+                color=alt.condition(
+                    alt.datum.Diferencia > 0,
+                    alt.value("#2e7d32"), alt.value("#c62828"),
+                ),
+                tooltip=["Item", "control", "tratamiento", "Diferencia"],
+            ),
+            use_container_width=True,
+        )
 
-        if enviados == 0 and len(notas) == 0:
-            continue
-
-        rows.append({
-            "Semana": n,
-            "Promedio nota": round(float(notas.mean()), 2) if len(notas) > 0 else None,
-            "Tasa de respuesta (%)": round(respondieron / enviados * 100, 1) if enviados > 0 else 0.0,
-            "Evaluados": int(len(notas)),
-        })
-
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(sorted(rows, key=lambda x: x["Semana"])).set_index("Semana")
+    with st.expander("Ver la tabla por grupo"):
+        st.dataframe(pg, use_container_width=True, hide_index=True)
 
 
-def _grafico_tareas() -> pd.DataFrame:
-    salidas = runner.tareas_salidas_dir()
-    csvs = sorted(salidas.glob("feedback_*.csv")) if salidas.exists() else []
-    if not csvs:
-        return pd.DataFrame()
+def _seccion_alumnos(df: pd.DataFrame):
+    filas = df.to_dict("records")
+    pa = pd.DataFrame(datos.reportes.por_alumno(filas))
+    if pa.empty:
+        st.info("Sin alumnos que mostrar con estos filtros.")
+        return
 
-    rows = []
-    for path in csvs:
-        try:
-            df = _cargar_csv(path, _mtime(path))
-        except Exception:
-            continue
-        if df.empty:
-            continue
+    st.caption("Ordenado de la nota media más baja a la más alta.")
+    st.dataframe(
+        pa[["Nombre", "Grupo", "NotaMedia", "TasaRespuesta", "Respondieron",
+            "Evaluados", "SinResponder", "NotaMin", "NotaMax", "Correo"]],
+        use_container_width=True, hide_index=True,
+    )
 
-        tarea = path.stem.replace("feedback_", "").upper()
-        enviados = int((df.get("fecha_envio", pd.Series(dtype=str)) != "").sum())
-        respondieron = int((df.get("respuesta", pd.Series(dtype=str)) != "").sum())
-        notas = pd.to_numeric(
-            df.get("nota", pd.Series(dtype=str)).replace("", float("nan")),
-            errors="coerce",
-        ).dropna()
+    st.divider()
+    st.markdown("#### Ficha individual")
+    opciones = {f"{r['Nombre']}  ·  {r['Correo']}": r["Correo"] for r in pa.to_dict("records")}
+    elegido = st.selectbox("Alumno", list(opciones.keys()), key="rep_alumno")
+    if not elegido:
+        return
 
-        if enviados == 0 and len(notas) == 0:
-            continue
+    ficha = datos.reportes.ficha(opciones[elegido], filas)
+    if not ficha:
+        return
 
-        rows.append({
-            "Tarea": tarea,
-            "Promedio nota": round(float(notas.mean()), 2) if len(notas) > 0 else None,
-            "Tasa de respuesta (%)": round(respondieron / enviados * 100, 1) if enviados > 0 else 0.0,
-            "Tasa de corrección (%)": round(len(notas) / respondieron * 100, 1) if respondieron > 0 else 0.0,
-        })
+    r = ficha["Resumen"]
+    k = st.columns(5)
+    _kpi(k[0], "Nota media", r["NotaMedia"])
+    _kpi(k[1], "Respondió", f"{r['Respondieron']}/{r['Enviados']}")
+    _kpi(k[2], "Evaluadas", r["Evaluados"])
+    _kpi(k[3], "Sin responder", r["SinResponder"])
+    _kpi(k[4], "Grupo", ficha["Grupo"] or "—")
 
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(sorted(rows, key=lambda x: x["Tarea"])).set_index("Tarea")
+    casillas = pd.DataFrame(ficha["Casillas"])
+    serie = casillas.dropna(subset=["Nota"])
+    if len(serie) >= 2:
+        st.altair_chart(
+            alt.Chart(serie, height=220, title=f"Notas de {ficha['Nombre']}")
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("Item:O", title="Semana", sort=list(casillas["Item"])),
+                y=alt.Y("Nota:Q", scale=alt.Scale(domain=[1.0, 7.0])),
+                tooltip=["Item", "Nota", "Originalidad"],
+            ),
+            use_container_width=True,
+        )
+
+    for casilla in ficha["Casillas"]:
+        estado = (f"nota {casilla['NotaTexto']}" if casilla["NotaTexto"]
+                  else "respondió, sin evaluar" if casilla["Respondio"]
+                  else "sin responder")
+        with st.expander(f"Semana {casilla['Item']} — {estado}"):
+            if casilla["Respuesta"]:
+                st.markdown("**Lo que respondió**")
+                st.text(casilla["Respuesta"])
+            else:
+                st.caption("No hay texto de respuesta guardado.")
+            if casilla["EvaluacionIA"]:
+                st.markdown("**Lo que le respondió el agente**")
+                st.markdown(casilla["EvaluacionIA"], unsafe_allow_html=True)
+            if casilla["Modelo"]:
+                st.caption(f"Modelo: {casilla['Modelo']}")
+
+
+def _seccion_pendientes(df: pd.DataFrame):
+    filas = df.to_dict("records")
+    cols = ["Nombre", "Item", "Grupo", "Correo"]
+
+    sin_resp = datos.reportes.sin_responder(filas)
+    st.markdown(f"#### Sin responder — {len(sin_resp)}")
+    if sin_resp:
+        st.dataframe(pd.DataFrame(sin_resp)[cols], use_container_width=True, hide_index=True)
+    else:
+        st.success("Todos respondieron lo que se les envió.")
+
+    st.divider()
+    pend = datos.reportes.pendientes_de_evaluar(filas)
+    st.markdown(f"#### Respondieron pero no tienen nota — {len(pend)}")
+    if pend:
+        st.caption(
+            "Puede ser que respondieran después de la fecha de revisión, en cuyo "
+            "caso no corresponde evaluarlos."
+        )
+        st.dataframe(pd.DataFrame(pend)[cols], use_container_width=True, hide_index=True)
+    else:
+        st.success("No hay respuestas pendientes de evaluación.")
 
 
 def _inicio():
     activo = runner.semestre_activo()
+    st.title("IN5162 — Reportería")
 
-    st.title("IN5162 — Panel de control")
-    if activo:
-        st.caption(f"Semestre activo: **{activo}**")
-    else:
+    if not activo:
         st.warning(
             "No hay ningún semestre activo. Crea uno en "
             "**Datos y Configuración** antes de continuar."
@@ -184,101 +281,90 @@ def _inicio():
         st.page_link("pages/3_Datos_y_Configuracion.py", label="Ir a Datos y Configuración →")
         return
 
+    disponibles = runner.listar_semestres() or [activo]
+    cab1, cab2 = st.columns([1, 3])
+    with cab1:
+        semestre = st.selectbox(
+            "Semestre", disponibles,
+            index=disponibles.index(activo) if activo in disponibles else 0,
+            key="rep_semestre",
+            help="Solo cambia lo que se ve acá. El semestre sobre el que operan "
+                 "los envíos se cambia en Datos y Configuración.",
+        )
+    with cab2:
+        if semestre != activo:
+            st.warning(
+                f"Estás viendo **{semestre}**, pero el semestre activo —sobre el "
+                f"que corren los envíos— es **{activo}**.",
+                icon="👁️",
+            )
+
+    try:
+        df = _panel(semestre, datos.TESTS, _firma(semestre))
+    except Exception as e:
+        st.error(f"No pude leer los datos de {semestre}: {e}")
+        return
+
+    if df.empty:
+        st.info(f"El semestre {semestre} todavía no tiene datos de tests semanales.")
+        return
+
+    df = df[df["EnRoster"]]
+    todas = datos.reportes.items(df.to_dict("records"))
+    todos_grupos = datos.reportes.grupos(df.to_dict("records"))
+
+    f1, f2 = st.columns([3, 2])
+    semanas = f1.multiselect("Semanas", todas, default=todas, key="rep_semanas")
+    grupos_sel = f2.multiselect("Grupos", todos_grupos, default=todos_grupos, key="rep_grupos")
+
+    filas = datos.reportes.filtrar(df.to_dict("records"), items=semanas, grupos=grupos_sel)
+    if not filas:
+        st.warning("Los filtros no dejan ninguna fila.")
+        return
+
+    vista = pd.DataFrame(filas)
+    r = datos.reportes.resumen(filas)
+
+    k = st.columns(6)
+    _kpi(k[0], "Alumnos", r["Alumnos"])
+    _kpi(k[1], "Semanas", r["Items"])
+    _kpi(k[2], "Tasa de respuesta", r["TasaRespuesta"], "%",
+         "Respondieron sobre los que recibieron la pregunta.")
+    _kpi(k[3], "Nota media", r["NotaMedia"])
+    _kpi(k[4], "Evaluadas", r["Evaluados"])
+    _kpi(k[5], "Sin responder", r["SinResponder"])
+
+    if r["EnviosSinRegistro"]:
+        st.caption(
+            f"⚠ {r['EnviosSinRegistro']} casilla(s) sin registro de envío: se dan "
+            f"por enviadas porque hay respuesta o nota. Pasa cuando el envío se "
+            f"hizo desde otro equipo."
+        )
+    if r["Modelos"]:
+        st.caption(f"Modelos registrados: {', '.join(r['Modelos'])}")
+
     st.divider()
-
-    ts = _estado_tests()
-    tar = _estado_tareas()
-
-    col_ts, col_tar = st.columns(2, gap="large")
-
-    with col_ts:
-        st.subheader("Tests Semanales")
-        if not ts["ok"]:
-            st.warning("No se encontró `alumnos.csv`. Cárgalo en Datos y Configuración.")
-        else:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Semana activa", ts["semana_activa"] if ts["semana_activa"] else "—")
-            c2.metric("Respondieron", ts["respondieron"])
-            c3.metric("Sin responder", ts["sin_responder"])
-            c4.metric("Evaluados", ts["evaluados"])
-
-            if ts["semana_activa"]:
-                if ts["sin_responder"] > 0:
-                    st.info(
-                        f"{ts['sin_responder']} alumno(s) recibieron la pregunta "
-                        f"de la semana {ts['semana_activa']} pero aún no han respondido."
-                    )
-                elif ts["respondieron"] > ts["evaluados"]:
-                    st.info(
-                        f"{ts['respondieron'] - ts['evaluados']} respuesta(s) "
-                        f"de la semana {ts['semana_activa']} pendientes de evaluación."
-                    )
-                else:
-                    st.success(f"Semana {ts['semana_activa']} completamente evaluada.")
-
-        st.page_link("pages/1_Tests_Semanales.py", label="Ir a Tests Semanales →")
-
-    with col_tar:
-        st.subheader("Tareas")
-        if not tar["ok"]:
-            st.info("Sin tareas activas. Se crean al ejecutar el Paso 1.")
-        else:
-            st.caption(f"Tarea activa: **{tar['tarea']}**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Enviados", tar["enviados"])
-            c2.metric("Respondieron", tar["respondidos"])
-            c3.metric("Corregidos", tar["corregidos"])
-
-            paso_actual = sum([tar["enviados"] > 0, tar["respondidos"] > 0, tar["corregidos"] > 0])
-            pasos = ["Generar", "Enviar", "Recolectar", "Corregir"]
-            st.progress(paso_actual / 4, text=f"{tar['tarea']} — siguiente paso: {pasos[paso_actual]}")
-
-        st.page_link("pages/2_Tareas.py", label="Ir a Tareas →")
+    t1, t2, t3, t4 = st.tabs(["Curso", "Grupos", "Alumnos", "Pendientes"])
+    with t1:
+        _seccion_curso(vista)
+    with t2:
+        _seccion_grupos(vista)
+    with t3:
+        _seccion_alumnos(vista)
+    with t4:
+        _seccion_pendientes(vista)
 
     st.divider()
-
-    # ── Analítica ──────────────────────────────────────────────────────────
-    df_ts = _grafico_tests()
-    df_tar = _grafico_tareas()
-
-    if (not df_ts.empty and len(df_ts) >= 2) or not df_tar.empty:
-        if not df_ts.empty and len(df_ts) >= 2:
-            st.subheader("Analítica — Tests Semanales")
-            gc1, gc2 = st.columns(2)
-
-            with gc1:
-                st.markdown("**Promedio de nota por semana**")
-                serie_notas = df_ts["Promedio nota"].dropna()
-                if not serie_notas.empty:
-                    st.line_chart(serie_notas)
-                else:
-                    st.caption("Sin datos de notas todavía.")
-
-            with gc2:
-                st.markdown("**Tasa de respuesta por semana (%)**")
-                st.line_chart(df_ts["Tasa de respuesta (%)"])
-
-        if not df_tar.empty:
-            st.subheader("Analítica — Tareas")
-            gc3, gc4 = st.columns(2)
-
-            with gc3:
-                st.markdown("**Promedio de nota por tarea**")
-                serie_notas_tar = df_tar["Promedio nota"].dropna()
-                if not serie_notas_tar.empty:
-                    st.bar_chart(serie_notas_tar)
-                else:
-                    st.caption("Sin datos de notas todavía.")
-
-            with gc4:
-                st.markdown("**Tasa de respuesta y corrección por tarea (%)**")
-                st.bar_chart(df_tar[["Tasa de respuesta (%)", "Tasa de corrección (%)"]])
-
-        st.divider()
+    st.download_button(
+        "Descargar el panel en CSV",
+        vista.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"panel_{semestre}_tests.csv",
+        mime="text/csv",
+    )
 
 
 pg = st.navigation([
-    st.Page(_inicio, title="Inicio"),
+    st.Page(_inicio, title="Reportería"),
     st.Page("pages/1_Tests_Semanales.py", title="Tests Semanales"),
     st.Page("pages/2_Tareas.py", title="Tareas"),
     st.Page("pages/3_Datos_y_Configuracion.py", title="Datos y Configuración"),
