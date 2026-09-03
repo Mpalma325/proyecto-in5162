@@ -11,7 +11,8 @@ st.title("Tests Semanales")
 
 for key in ["ts_enviar_out", "ts_enviar_rc",
             "ts_evaluar_out", "ts_evaluar_rc",
-            "ts_resumen_out", "ts_resumen_rc"]:
+            "ts_resumen_out", "ts_resumen_rc",
+            "ts_tutoria_out", "ts_tutoria_rc"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -40,7 +41,8 @@ def _show_result(out_key: str, rc_key: str) -> None:
             st.error(f"El proceso terminó con código {rc}")
 
 
-tab1, tab2, tab3 = st.tabs(["1 · Enviar preguntas", "2 · Evaluar respuestas", "3 · Resumen semana"])
+tab1, tab2, tab3, tab4 = st.tabs(["1 · Enviar preguntas", "2 · Evaluar respuestas",
+                                  "3 · Resumen semana", "Tutoría"])
 
 with tab1:
     st.markdown("Envía la pregunta de la semana a todos los alumnos pendientes.")
@@ -114,3 +116,40 @@ with tab3:
                 mime="text/plain",
                 key="ts_dl_res_2",
             )
+
+
+with tab4:
+    st.markdown(
+        "Responde las dudas que los alumnos mandan sobre su corrección: por qué "
+        "esa nota, qué se esperaba, o algún concepto que les quedó dando vueltas."
+    )
+    st.info(
+        "**La nota no se modifica.** Acá el agente explica y enseña; corregir de "
+        "nuevo sería otra cosa.",
+        icon="🔒",
+    )
+    st.caption(
+        "Va aparte del ciclo del curso: córrelo cuando quieras. Si nunca lo "
+        "corres, no pasa nada — los correos quedan sin leer esperando."
+    )
+
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        todas_sem = st.checkbox("Todas las semanas", value=True, key="ts_tut_todas")
+        semana_tut = st.number_input("Número de semana", min_value=1, max_value=52,
+                                     value=1, step=1, key="ts_semana_tut",
+                                     disabled=todas_sem)
+    with col_b:
+        dry_tut = st.toggle("Modo prueba — no envía emails", value=True, key="ts_dry_tut")
+        if not dry_tut:
+            st.warning("Modo prueba desactivado — se enviarán respuestas reales.")
+
+    if st.button("Ejecutar", type="primary", key="ts_btn_tut"):
+        cmd = [python(), "-m", "modulos.tests.tutoria"]
+        if not todas_sem:
+            cmd.append(str(semana_tut))
+        if dry_tut:
+            cmd.append("--dry-run")
+        _run_section(cmd, "ts_tutoria_out", "ts_tutoria_rc")
+
+    _show_result("ts_tutoria_out", "ts_tutoria_rc")
