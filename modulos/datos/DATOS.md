@@ -63,6 +63,24 @@ El panel infiere el envío cuando hay respuesta o nota. Sin eso la tasa de
 respuesta pasaba de 100% en las semanas enviadas desde otro equipo, donde el
 evento de envío no quedó registrado.
 
+### La originalidad
+
+El modelo la escribe en texto libre y el prompt le pide una de cinco
+categorías, de "Muy Baja" a "Muy Alta". `nivel_originalidad()` las lleva a la
+escala 1–5, que es lo que permite promediarlas y correlacionarlas con la nota;
+la etiqueta original se conserva para mostrarla tal como vino.
+
+Lo que no calza con ninguna de las cinco devuelve `None` y queda fuera de los
+promedios. Pasa: en 2025-2 hay seis casillas con `-` y en 2026-1 hay tres donde
+la extracción se comió un pedazo de la retroalimentación. Siguen apareciendo en
+las tablas, con nivel vacío.
+
+`correlacion_originalidad_nota()` es un Pearson entre el nivel y la nota. Como
+la originalidad es ordinal y toma cinco valores, por ese lado equivale a una
+correlación de rangos: dice la dirección y la fuerza, y no se puede leer como
+una regresión. Con menos de tres pares, o si todas las casillas cayeron en la
+misma categoría, devuelve `R` en `None` antes que un número sin sentido.
+
 ## Cómo se usa
 
 ```python

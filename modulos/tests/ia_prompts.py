@@ -22,8 +22,16 @@ def _bloque(items: list[str]) -> str:
 
 
 def evaluar_respuesta(preguntas: list[str], pautas: list[str],
-                      respuesta_alumno: str) -> ia.Texto:
-    plantilla = (config.PROMPTS / "evaluar_respuesta.md").read_text(encoding="utf-8")
+                      respuesta_alumno: str,
+                      plantilla: str | None = None) -> ia.Texto:
+    """Corrige una respuesta con el prompt de evaluación del semestre.
+
+    `plantilla` deja pasar otro prompt en vez del que está en disco, sin tocar
+    el archivo del semestre. Lo usa `experimento.py` para reevaluar respuestas
+    viejas con un prompt candidato; el flujo del curso nunca la pasa.
+    """
+    if plantilla is None:
+        plantilla = (config.PROMPTS / "evaluar_respuesta.md").read_text(encoding="utf-8")
     system_prompt = (
         plantilla
         .replace("{{PREGUNTAS}}", _bloque(preguntas))

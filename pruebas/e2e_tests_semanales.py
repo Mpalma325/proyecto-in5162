@@ -11,6 +11,9 @@ ocurrió.
 
 La tercera cubre la tutoría: el alumno responde al feedback preguntando por qué
 le fue así, y hay que atenderlo sin tocarle la nota.
+
+La cuarta cubre el ensayo de prompts: reevaluar respuestas viejas con otro
+prompt sin que eso toque la nota de nadie ni salga un correo.
 """
 
 import sys
@@ -249,7 +252,91 @@ def tutoria_sobre_el_feedback():
               datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0")
 
 
+PROMPT_CANDIDATO = """Evalúa la respuesta.
+Preguntas: {{PREGUNTAS}}
+Pautas: {{PAUTAS}}
+Termina con NOTA FINAL: y ORIGINALIDAD:
+"""
+
+
+def ensayo_de_prompt():
+    """Reevaluar con otro prompt no le mueve la nota a nadie ni manda correo."""
+    with semestre_desechable(sid="_tmp_experimento") as (sid, tmp), sin_red():
+        from modulos import datos
+        from modulos.tests import experimento
+
+        archivo = tmp / "prompt_candidato.md"
+        archivo.write_text(PROMPT_CANDIDATO, encoding="utf-8")
+
+        notas_antes = datos.notas.leer(sid, flujo=datos.TESTS)
+        eventos_antes = len(datos.log.leer(sid))
+        disponibles = experimento.candidatas(semestre_id=sid)
+
+        titulo("16. la muestra sale de lo que ya se evaluó")
+        check("hay respuestas reevaluables", len(disponibles) >= 3, len(disponibles))
+        check("todas tienen texto y nota",
+              all(f["Respuesta"].strip() and f["Nota"] is not None for f in disponibles))
+
+        titulo("17. la misma semilla elige la misma muestra")
+        a = experimento.muestrear(disponibles, 3, semilla=7)
+        b = experimento.muestrear(disponibles, 3, semilla=7)
+        c = experimento.muestrear(disponibles, 3, semilla=8)
+        check("dos corridas con semilla 7 coinciden",
+              [x["Correo"] for x in a] == [x["Correo"] for x in b])
+        check("con otra semilla cambia",
+              [x["Correo"] for x in a] != [x["Correo"] for x in c],
+              "puede coincidir por azar con muestras chicas")
+
+        titulo("18. reevalúa con el prompt candidato, no con el del semestre")
+        recibidos = []
+        enviados.clear()
+
+        def ia_falsa(preguntas, pautas, respuesta, plantilla=None):
+            recibidos.append(plantilla)
+            return nota_ia("7,0", "Muy Alta")
+
+        with patch("modulos.tests.experimento.evaluar_respuesta", side_effect=ia_falsa):
+            resultados = experimento.main(archivo, n=3, semilla=7)
+
+        check("reevaluó 3", len(resultados) == 3, len(resultados))
+        check("el modelo recibió el prompt candidato",
+              all(p == PROMPT_CANDIDATO for p in recibidos), recibidos[:1])
+        check("leyó la nota nueva",
+              all(r["NotaDespues"] == 7.0 for r in resultados),
+              [r["NotaDespues"] for r in resultados])
+        check("calculó el delta contra la nota original",
+              all(r["DeltaNota"] == round(7.0 - r["NotaAntes"], 2) for r in resultados))
+
+        titulo("19. NO TOCA NADA del curso")
+        check("no salió ningún correo", len(enviados) == 0, enviados)
+        check("notas.csv quedó igual",
+              datos.notas.leer(sid, flujo=datos.TESTS) == notas_antes)
+        check("el log no creció", len(datos.log.leer(sid)) == eventos_antes,
+              len(datos.log.leer(sid)) - eventos_antes)
+
+        titulo("20. deja el detalle en un CSV")
+        csvs = list((tmp / "tests_semanales" / "data").glob("experimento_*.csv"))
+        check("escribió el CSV", len(csvs) == 1, [p.name for p in csvs])
+        if csvs:
+            import csv as _csv
+            with csvs[0].open(encoding="utf-8-sig", newline="") as f:
+                filas = list(_csv.DictReader(f))
+            check("una fila por respuesta reevaluada", len(filas) == 3, len(filas))
+            check("trae el antes y el después",
+                  all(f["OriginalidadAntes"] is not None and f["OriginalidadDespues"] == "Muy Alta"
+                      for f in filas), filas[:1])
+
+        titulo("21. el modo prueba no llama al modelo")
+        llamadas = []
+        with patch("modulos.tests.experimento.evaluar_respuesta",
+                   side_effect=lambda *a, **k: llamadas.append(1)):
+            vacio = experimento.main(archivo, n=3, semilla=7, dry_run=True)
+        check("no llamó a la IA", len(llamadas) == 0, len(llamadas))
+        check("no devolvió resultados", vacio == [], vacio)
+
+
 ciclo_completo()
 fallos_y_recuperacion()
 tutoria_sobre_el_feedback()
+ensayo_de_prompt()
 sys.exit(resultado())

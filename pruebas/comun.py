@@ -56,9 +56,19 @@ def semestre_desechable(base: str = "2026-2", sid: str = "_tmp_prueba", vaciar=(
     """
     from modulos import semestre
 
+    origen = semestre.SEMESTRES_DIR / base
+    if not origen.is_dir():
+        # Las carpetas de semestre no están en git: llevan nombres y correos
+        # reales. Quien clone el repo tiene que traer una antes de correr esto,
+        # y sin este aviso se encontraba con un traceback de shutil.
+        print(f"\nNo existe el semestre '{base}', que es sobre el que corre esta prueba.")
+        print(f"Ponlo en {semestre.SEMESTRES_DIR} o pásale otro con base=...")
+        print("Las carpetas de semestre no se versionan; el README explica cómo conseguir una.")
+        raise SystemExit(2)
+
     tmp = semestre.SEMESTRES_DIR / sid
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.copytree(semestre.SEMESTRES_DIR / base, tmp)
+    shutil.copytree(origen, tmp)
     for nombre in vaciar:
         (tmp / nombre).unlink(missing_ok=True)
 

@@ -120,7 +120,65 @@ for sem, filas in paneles.items():
     check(f"{sem}: originalidad no supera los evaluados",
           sum(x["Evaluaciones"] for x in orig) <= total["Evaluados"])
 
-titulo("9. las listas accionables son consistentes")
+titulo("9. la originalidad se lee como escala ordenada")
+check("'Muy Baja' -> 1", reportes.nivel_originalidad("Muy Baja") == 1)
+check("'media' -> 3", reportes.nivel_originalidad("media") == 3)
+check("'MUY ALTA' -> 5", reportes.nivel_originalidad("MUY ALTA") == 5)
+check("vacío -> None", reportes.nivel_originalidad("") is None)
+check("una categoría inventada -> None", reportes.nivel_originalidad("regular") is None)
+
+titulo("10. los cortes de originalidad cuadran entre sí")
+for sem, filas in paneles.items():
+    dist = reportes.distribucion_originalidad(filas)
+    if not dist:
+        continue
+    total = sum(x["Evaluaciones"] for x in dist)
+    check(f"{sem}: los porcentajes suman 100",
+          abs(sum(x["Porcentaje"] for x in dist) - 100) < 0.5,
+          sum(x["Porcentaje"] for x in dist))
+    check(f"{sem}: van de menor a mayor nivel",
+          [x["Nivel"] for x in dist if x["Nivel"]] ==
+          sorted(x["Nivel"] for x in dist if x["Nivel"]))
+
+    por_item = reportes.originalidad_por_item(filas)
+    check(f"{sem}: por semana suma lo mismo que el acumulado",
+          sum(x["Evaluaciones"] for x in por_item) == total,
+          f"{sum(x['Evaluaciones'] for x in por_item)} vs {total}")
+
+    vs_nota = reportes.originalidad_vs_nota(filas)
+    check(f"{sem}: contra nota no cuenta más de lo que hay",
+          sum(x["Evaluaciones"] for x in vs_nota) <= total)
+    check(f"{sem}: las notas medias están en escala",
+          all(1.0 <= x["NotaMedia"] <= 7.0 for x in vs_nota),
+          [x["NotaMedia"] for x in vs_nota])
+
+    corr = reportes.correlacion_originalidad_nota(filas)
+    check(f"{sem}: la correlación está entre -1 y 1",
+          corr["R"] is None or -1 <= corr["R"] <= 1, corr["R"])
+    # Solo las categorías reconocidas entran a la correlación. Hay etiquetas
+    # basura en los semestres viejos ("-", un pedazo de la retroalimentación),
+    # que salieron de una extracción que después se arregló: se siguen mostrando
+    # en las tablas, pero no se pueden ubicar en la escala 1–5.
+    reconocidas = sum(x["Evaluaciones"] for x in vs_nota if x["Nivel"])
+    check(f"{sem}: la correlación usa las casillas con las dos cosas",
+          corr["N"] == reconocidas, f"{corr['N']} vs {reconocidas}")
+
+titulo("11. correlaciones construidas a mano")
+perfecta = [{"Originalidad": o, "Nota": n} for o, n in
+            [("Muy Baja", 1.0), ("Baja", 2.0), ("Media", 3.0),
+             ("Alta", 4.0), ("Muy Alta", 5.0)]]
+check("una relación perfecta da R = 1",
+      reportes.correlacion_originalidad_nota(perfecta)["R"] == 1.0)
+invertida = [{"Originalidad": f["Originalidad"], "Nota": 6.0 - f["Nota"]} for f in perfecta]
+check("invertida da R = -1",
+      reportes.correlacion_originalidad_nota(invertida)["R"] == -1.0)
+plana = [{"Originalidad": f["Originalidad"], "Nota": 5.0} for f in perfecta]
+check("sin variación en la nota, R es None",
+      reportes.correlacion_originalidad_nota(plana)["R"] is None)
+check("con menos de tres pares, R es None",
+      reportes.correlacion_originalidad_nota(perfecta[:2])["R"] is None)
+
+titulo("12. las listas accionables son consistentes")
 for sem, filas in paneles.items():
     total = reportes.resumen(filas)
     check(f"{sem}: sin responder cuadra con el KPI",

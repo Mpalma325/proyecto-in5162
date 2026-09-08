@@ -24,6 +24,19 @@ CORREO_APP_PASSWORD=xxxxxxxxxxxxxxxx
 
 El app password se genera en `myaccount.google.com/apppasswords` y **requiere 2FA activado** en esa cuenta. Google lo muestra separado en grupos de cuatro; esos espacios no son parte de la clave.
 
+### Al clonar por primera vez
+
+El repo no trae ningún semestre: las carpetas de `semestres/` llevan nombres, correos y respuestas de alumnos reales, así que están fuera de git. Hasta que haya uno, la app abre pidiendo que se cree y los comandos de terminal cortan con ese mismo mensaje.
+
+Hay dos formas de tener uno. Crear uno vacío desde **Datos y Configuración** en la app, que lo copia de `semestres/_template/` y deja listos los prompts y los CSV de ejemplo; sirve para operar un curso nuevo, pero la reportería sale en blanco porque no hay nada que reportar. O recibir la carpeta de un semestre ya corrido y dejarla tal cual en `semestres/`; eso llega aparte del repo, por su contenido. Con eso funcionan la reportería, el ensayo de prompts y las pruebas.
+
+```bash
+python -m modulos.semestre     # sobre cuál se está trabajando
+python pruebas/todas.py        # el ciclo completo, sin red ni API
+```
+
+Las pruebas corren sobre una copia desechable del semestre `2026-2` y avisan si no lo encuentran.
+
 ## Cómo está organizado
 
 ```
@@ -70,6 +83,10 @@ La pantalla de inicio de la app es la reportería del curso. Muestra, para el se
 
 Todo se filtra por semana y por grupo, y el panel completo se descarga en CSV.
 
+La pestaña **Originalidad** mira aparte lo que el modelo califica como tal. El acumulado del semestre con su porcentaje, cómo se reparten las cinco categorías dentro de cada semana, el nivel medio semana a semana, y la nota media que sacó cada categoría. Arriba va la correlación entre el nivel de originalidad y la nota: son dos juicios del mismo prompt sobre el mismo texto, y ese número dice cuánto se mueven juntos. Va entre −1 y 1; es una correlación de rangos, sirve para la dirección y la fuerza y no se puede leer como una regresión.
+
+Las cinco categorías van de "Muy Baja" a "Muy Alta" y se pintan con un solo tono de claro a oscuro, porque están ordenadas. Lo que el modelo escribió y no calza con ninguna aparece en las tablas con el nivel vacío y queda fuera de los promedios.
+
 Un semestre se mira a la vez y **nunca se mezcla con otro**: los alumnos, los grupos y las preguntas son distintos, así que un promedio entre semestres no significa nada. El selector de arriba cambia solo lo que se ve; el semestre sobre el que corren los envíos se cambia en Datos y Configuración, y la reportería avisa cuando no coinciden.
 
 Las agregaciones viven en `modulos/datos/reportes.py`, no en la app. Todo sale de `panel()`, que arma una fila por alumno e ítem; lo demás son cortes de esa misma tabla, así que una métrica se calcula en un solo lugar y dos vistas no pueden discrepar. La app solo dibuja.
@@ -84,6 +101,7 @@ python -m modulos.tests.enviar 4       # envía la pregunta de la semana
 python -m modulos.tests.evaluar 4      # evalúa y devuelve el feedback
 python -m modulos.tests.resumen 4      # resume cómo le fue al curso
 python -m modulos.tests.tutoria        # responde las dudas sobre las correcciones
+python -m modulos.tests.experimento --prompt candidato.md -n 20   # prueba otro prompt
 ```
 
 **Enviar** le manda a cada alumno la versión que le corresponde según su grupo. A quien no tiene grupo se lo asigna en ese momento, mitad y mitad, con una semilla fija para que sea reproducible; una vez puesto no cambia nunca, porque define qué versión de pregunta le tocó.
@@ -97,6 +115,26 @@ La nota se guarda **apenas se corrige a cada alumno**, no al final. Si el proces
 La nota **no se modifica**. El agente explica la corrección y enseña; recorregir sería otra cosa. Si el alumno insiste en apelar, se le dice que por esa vía no se cambian notas y que lo converse con el equipo docente.
 
 Estos correos se reconocen porque responden al feedback y no a la pregunta original, lo que se sabe por el Message-ID al que contestan. `evaluar` los deja sin leer para que los tome `tutoria`. La conversación se corta a las cuatro vueltas por alumno y semana.
+
+## Probar un prompt antes de cambiarlo
+
+La política pedagógica completa vive en el prompt de evaluación, así que cambiarlo mueve las notas y las categorías de originalidad de todo el curso. Para verlo antes de aplicarlo está la pestaña **Probar un prompt** de Tests Semanales, y el mismo comando por terminal.
+
+Se le da el prompt candidato y cuántas respuestas probar. Toma esa cantidad al azar entre las que ya tienen nota, las vuelve a pasar por el modelo con el prompt nuevo, y devuelve la comparación una a una: qué nota tenía cada una y cuál le pone el candidato, qué originalidad le veía y cuál le ve ahora, cuántas subieron y cuántas bajaron, y cómo queda la distribución de originalidad antes y después.
+
+```bash
+python -m modulos.tests.experimento --prompt candidato.md -n 20
+python -m modulos.tests.experimento --prompt candidato.md -n 30 --semana 4
+python -m modulos.tests.experimento --prompt candidato.md -n 10 --dry-run
+```
+
+`--dry-run` muestra qué respuestas tomaría sin llamar al modelo. Sirve para ver el tamaño de la muestra antes de gastar la API, que es lo único que gasta esto: una llamada por respuesta.
+
+La muestra se elige con semilla (`--semilla`, 19 por defecto). Dejarla fija entre dos corridas hace que los dos prompts se prueben sobre las mismas respuestas, que es la única forma de que la comparación signifique algo.
+
+**No manda correos, no cambia ninguna nota y no escribe en el log.** El alumno ya recibió su feedback y esa nota es la que vale; lo que sale de acá va a un CSV aparte, `experimento_<fecha>.csv`, en la carpeta de datos del semestre. Tampoco toca el archivo del prompt: la evaluación real sigue usando el de siempre hasta que alguien lo edite a mano.
+
+Un aviso que conviene leer si aparece: si el prompt candidato no menciona `NOTA FINAL:` ni `ORIGINALIDAD:`, no hay de dónde sacar el resultado y la comparación sale vacía igual.
 
 ## Tareas
 

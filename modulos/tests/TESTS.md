@@ -22,6 +22,7 @@ tres: es un flujo, y orquestar es justamente su trabajo.
 | `chequeo.py` | Dice qué pasaría al evaluar, **sin enviar nada** |
 | `tutoria.py` | Responde las dudas del alumno sobre su corrección. **No cambia la nota.** |
 | `reconstruir.py` | Rearma el historial leyendo el buzón, cuando el registro local se perdió |
+| `experimento.py` | Reevalúa respuestas viejas con otro prompt, para comparar. **No manda nada** |
 
 Auxiliares: `preguntas.py` (lee `preguntas.csv`), `storage.py` (el formato
 viejo, en retirada), `ia_prompts.py` (los prompts de este flujo),
@@ -36,6 +37,7 @@ python -m modulos.tests.chequeo 4        # no manda nada
 python -m modulos.tests.enviar 4
 python -m modulos.tests.evaluar 4
 python -m modulos.tests.resumen 4
+python -m modulos.tests.experimento --prompt candidato.md -n 20
 ```
 
 La app invoca exactamente estos mismos comandos como subprocesos, así que
@@ -65,6 +67,37 @@ Reglas que no hay que romper al tocarlo:
 - El modelo recibe la pregunta, la pauta, lo que respondió el alumno, la
   corrección que se le mandó y el historial. Sin ese contexto no puede explicar
   por qué le faltó puntaje.
+
+## El ensayo de prompts
+
+`experimento.py` contesta una pregunta que antes había que responder a ojo: si
+se cambia el prompt de evaluación, ¿cómo se mueve lo que el modelo califica?
+
+Toma N respuestas al azar entre las que ya tienen nota, las vuelve a pasar por
+el modelo con un prompt candidato y compara casilla por casilla contra la nota
+y la originalidad que se les puso en su momento. La muestra sale del mismo
+`reportes.panel()` que alimenta los gráficos, así que "lo que se evaluó"
+significa lo mismo acá que allá.
+
+El muestreo va con semilla. Dos corridas con la misma semilla eligen las mismas
+respuestas, que es lo que permite comparar dos prompts entre sí en vez de
+comparar dos muestras distintas.
+
+Las tres cosas que no hace, y que conviene dejar así:
+
+- **No manda correos.** El alumno ya recibió su feedback; esto es un ensayo.
+- **No toca `notas.csv`.** La nota comunicada es la que vale.
+- **No escribe en el log.** El log es la historia del curso, y una prueba de
+  laboratorio no es un evento del curso. El resultado va a un CSV propio,
+  `experimento_<fecha>.csv`, en la carpeta de datos del semestre.
+
+El prompt candidato se le pasa como archivo y llega a `evaluar_respuesta()` por
+el parámetro `plantilla`. El archivo del semestre no se toca: la evaluación real
+sigue usando el de siempre hasta que alguien lo edite a mano.
+
+Si el prompt candidato no menciona `NOTA FINAL:` ni `ORIGINALIDAD:`, avisa
+antes de empezar. Sin esas etiquetas `extraer_nota_y_originalidad` no encuentra
+nada y la comparación sale vacía después de haber gastado la API.
 
 ## Cuidado
 

@@ -19,6 +19,24 @@ st.set_page_config(
 # Altura común de los gráficos, para que la grilla quede pareja.
 ALTO = 260
 
+# La originalidad es una escala ordenada (Muy Baja → Muy Alta), no categorías
+# sueltas, así que se pinta con un solo tono que va de claro a oscuro. Un color
+# distinto por categoría sugeriría que no hay orden entre ellas.
+RAMPA_ORIGINALIDAD = ["#d6e4f5", "#a9c7ea", "#6ea8db", "#3d82c4", "#1a5490"]
+
+
+def _escala_originalidad(etiquetas: list[str]) -> alt.Scale:
+    """Asigna el tono según el nivel, no según el orden de aparición.
+
+    Si se filtra a dos semanas y desaparece una categoría, las que quedan
+    conservan su color: el tono va pegado al nivel, no al puesto en la lista.
+    """
+    rango = []
+    for e in etiquetas:
+        nivel = datos.reportes.nivel_originalidad(e)
+        rango.append(RAMPA_ORIGINALIDAD[nivel - 1] if nivel else "#9e9e9e")
+    return alt.Scale(domain=etiquetas, range=rango)
+
 
 @st.cache_data(show_spinner=False)
 def _panel(semestre: str, flujo: str, firma: tuple) -> pd.DataFrame:
@@ -115,6 +133,109 @@ def _seccion_curso(df: pd.DataFrame):
         c4.caption("Sin datos de originalidad.")
 
     with st.expander("Ver la tabla por semana"):
+        st.dataframe(por_item, use_container_width=True, hide_index=True)
+
+
+def _seccion_originalidad(df: pd.DataFrame):
+    """Cómo se reparte la originalidad y qué relación tiene con la nota.
+
+    Son dos juicios del mismo prompt sobre el mismo texto. Verlos juntos es lo
+    que permite saber si la originalidad está midiendo algo propio o si viene
+    pegada a la nota.
+    """
+    filas = df.to_dict("records")
+    acumulado = pd.DataFrame(datos.reportes.distribucion_originalidad(filas))
+    if acumulado.empty:
+        st.info(
+            "Ninguna evaluación de este corte trae categoría de originalidad. "
+            "La escribe el prompt de evaluación en la línea `ORIGINALIDAD:`."
+        )
+        return
+
+    etiquetas = list(acumulado["Originalidad"])
+    escala = _escala_originalidad(etiquetas)
+    corr = datos.reportes.correlacion_originalidad_nota(filas)
+
+    k = st.columns(4)
+    _kpi(k[0], "Evaluaciones con categoría", int(acumulado["Evaluaciones"].sum()))
+    _kpi(k[1], "Nivel medio", corr["NivelMedio"],
+         ayuda="Promedio en la escala 1 (Muy Baja) a 5 (Muy Alta).")
+    _kpi(k[2], "Nota media de esas casillas", corr["NotaMedia"])
+    _kpi(k[3], "Correlación con la nota", corr["R"],
+         ayuda="Entre −1 y 1. Cerca de 0, la originalidad y la nota se mueven "
+               "por separado; cerca de 1, el modelo le pone mejor nota a quien "
+               "le ve más originalidad. Es una correlación de rangos: sirve "
+               "para la dirección y la fuerza, no para leerla como regresión.")
+
+    c1, c2 = st.columns(2)
+
+    por_item = pd.DataFrame(datos.reportes.originalidad_por_item(filas))
+    nivel_medio = por_item[["Item", "NivelMedio"]].drop_duplicates().dropna()
+    if len(nivel_medio) >= 2:
+        c1.altair_chart(
+            alt.Chart(nivel_medio, height=ALTO, title="Nivel medio de originalidad por semana")
+            .mark_line(point=True, strokeWidth=2, color=RAMPA_ORIGINALIDAD[-1])
+            .encode(
+                x=alt.X("Item:O", title="Semana", sort=list(nivel_medio["Item"])),
+                y=alt.Y("NivelMedio:Q", title="Nivel (1 a 5)",
+                        scale=alt.Scale(domain=[1, 5])),
+                tooltip=["Item", "NivelMedio"],
+            ),
+            use_container_width=True,
+        )
+    else:
+        c1.caption("Hace falta más de una semana para ver la evolución.")
+
+    if not por_item.empty:
+        c2.altair_chart(
+            alt.Chart(por_item, height=ALTO, title="Composición por semana (%)")
+            .mark_bar(stroke="white", strokeWidth=2)
+            .encode(
+                x=alt.X("Item:O", title="Semana", sort=list(por_item["Item"].unique())),
+                y=alt.Y("Porcentaje:Q", title="% de las evaluadas esa semana",
+                        stack="normalize", axis=alt.Axis(format="%")),
+                color=alt.Color("Originalidad:N", scale=escala,
+                                sort=etiquetas, title="Originalidad"),
+                order=alt.Order("Nivel:Q"),
+                tooltip=["Item", "Originalidad", "Evaluaciones", "Porcentaje"],
+            ),
+            use_container_width=True,
+        )
+
+    vs_nota = pd.DataFrame(datos.reportes.originalidad_vs_nota(filas))
+    if not vs_nota.empty:
+        st.altair_chart(
+            alt.Chart(vs_nota, height=240, title="Nota media según la originalidad que se le vio")
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                x=alt.X("Originalidad:O", title="", sort=etiquetas),
+                y=alt.Y("NotaMedia:Q", title="Nota media",
+                        scale=alt.Scale(domain=[1.0, 7.0])),
+                color=alt.Color("Originalidad:N", scale=escala, sort=etiquetas,
+                                legend=None),
+                tooltip=["Originalidad", "Evaluaciones", "NotaMedia", "NotaMin", "NotaMax"],
+            ),
+            use_container_width=True,
+        )
+        st.caption(
+            "Cada barra es el promedio de las notas que sacaron las respuestas de "
+            "esa categoría. La cantidad de evaluaciones detrás de cada una está en "
+            "la tabla; una categoría con tres casos no dice lo mismo que una con cien."
+        )
+
+    st.divider()
+    t1, t2 = st.columns(2)
+    with t1:
+        st.markdown("**Acumulado del corte**")
+        st.dataframe(acumulado[["Originalidad", "Evaluaciones", "Porcentaje"]],
+                     use_container_width=True, hide_index=True)
+    with t2:
+        st.markdown("**Originalidad contra nota**")
+        st.dataframe(vs_nota[["Originalidad", "Evaluaciones", "NotaMedia",
+                              "NotaMin", "NotaMax"]],
+                     use_container_width=True, hide_index=True)
+
+    with st.expander("Ver el detalle por semana"):
         st.dataframe(por_item, use_container_width=True, hide_index=True)
 
 
@@ -344,14 +465,17 @@ def _inicio():
         st.caption(f"Modelos registrados: {', '.join(r['Modelos'])}")
 
     st.divider()
-    t1, t2, t3, t4 = st.tabs(["Curso", "Grupos", "Alumnos", "Pendientes"])
+    t1, t2, t3, t4, t5 = st.tabs(["Curso", "Originalidad", "Grupos", "Alumnos",
+                                  "Pendientes"])
     with t1:
         _seccion_curso(vista)
     with t2:
-        _seccion_grupos(vista)
+        _seccion_originalidad(vista)
     with t3:
-        _seccion_alumnos(vista)
+        _seccion_grupos(vista)
     with t4:
+        _seccion_alumnos(vista)
+    with t5:
         _seccion_pendientes(vista)
 
     st.divider()

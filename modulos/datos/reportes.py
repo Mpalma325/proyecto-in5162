@@ -243,21 +243,138 @@ def distribucion_notas(filas: list[dict], ancho: float = 0.5) -> list[dict]:
             for piso, n in sorted(cubos.items())]
 
 
+def nivel_originalidad(texto: str | None) -> int | None:
+    """La categoría de originalidad como número de 1 a 5, o None si no se reconoce.
+
+    El modelo la escribe en texto libre ("Muy Baja", "media", "ALTA"), así que
+    se compara en minúscula y sin acentos de más. Tener un número es lo que
+    permite promediarla y correlacionarla con la nota; el texto se conserva
+    igual para mostrarlo tal como vino.
+    """
+    clave = (texto or "").strip().lower()
+    if clave in ORDEN_ORIGINALIDAD:
+        return ORDEN_ORIGINALIDAD.index(clave) + 1
+    return None
+
+
+def _pares_originalidad_nota(filas: list[dict]) -> list[tuple[int, float]]:
+    """Las casillas que tienen las dos cosas: nivel de originalidad y nota."""
+    pares = []
+    for f in filas:
+        nivel = nivel_originalidad(f.get("Originalidad"))
+        nota = f.get("Nota")
+        if nivel is not None and nota is not None:
+            pares.append((nivel, float(nota)))
+    return pares
+
+
 def distribucion_originalidad(filas: list[dict]) -> list[dict]:
-    """Cuántas evaluaciones cayeron en cada categoría de originalidad."""
+    """Cuántas evaluaciones cayeron en cada categoría de originalidad.
+
+    `Porcentaje` es sobre el total de evaluaciones que tienen categoría, no
+    sobre todas las casillas: comparar dos semanas con distinta cantidad de
+    respuestas usando cuentas absolutas no dice nada.
+    """
     cuenta: dict[str, int] = {}
     for f in filas:
-        etiqueta = f["Originalidad"].strip()
+        etiqueta = (f.get("Originalidad") or "").strip()
         if etiqueta:
             cuenta[etiqueta] = cuenta.get(etiqueta, 0) + 1
+
+    total = sum(cuenta.values())
 
     def orden(etiqueta: str):
         clave = etiqueta.lower()
         return (ORDEN_ORIGINALIDAD.index(clave)
                 if clave in ORDEN_ORIGINALIDAD else len(ORDEN_ORIGINALIDAD), clave)
 
-    return [{"Originalidad": k, "Evaluaciones": v}
+    return [{"Originalidad": k,
+             "Nivel": nivel_originalidad(k),
+             "Evaluaciones": v,
+             "Porcentaje": round(v / total * 100, 1) if total else None}
             for k, v in sorted(cuenta.items(), key=lambda kv: orden(kv[0]))]
+
+
+def originalidad_por_item(filas: list[dict]) -> list[dict]:
+    """Cómo se reparte la originalidad en cada semana.
+
+    Una fila por (ítem, categoría) con su porcentaje **dentro de esa semana**,
+    que es lo que hace comparable una semana con otra. `NivelMedio` es el
+    promedio de la escala 1–5 de esa semana: sirve para ver de un vistazo si la
+    distribución se está corriendo hacia arriba o hacia abajo.
+    """
+    por_item: dict[str, list] = {}
+    for f in filas:
+        por_item.setdefault(f["Item"], []).append(f)
+
+    salida = []
+    for item, sub in sorted(por_item.items(), key=lambda kv: _orden_item(kv[0])):
+        niveles = [nivel_originalidad(f.get("Originalidad")) for f in sub]
+        niveles = [n for n in niveles if n is not None]
+        medio = round(sum(niveles) / len(niveles), 2) if niveles else None
+        for fila in distribucion_originalidad(sub):
+            salida.append({"Item": item, "NivelMedio": medio, **fila})
+    return salida
+
+
+def originalidad_vs_nota(filas: list[dict]) -> list[dict]:
+    """La nota que sacó cada categoría de originalidad.
+
+    Es la tabla que responde "¿a quien el modelo le ve menos originalidad, le
+    pone además peor nota?". Son dos juicios distintos del mismo prompt, así
+    que verlos juntos es lo que permite saber si están midiendo lo mismo.
+    """
+    celdas: dict[str, list] = {}
+    for f in filas:
+        etiqueta = (f.get("Originalidad") or "").strip()
+        if etiqueta and f.get("Nota") is not None:
+            celdas.setdefault(etiqueta, []).append(float(f["Nota"]))
+
+    def orden(etiqueta: str):
+        nivel = nivel_originalidad(etiqueta)
+        return (nivel if nivel is not None else 99, etiqueta.lower())
+
+    return [{"Originalidad": etiqueta,
+             "Nivel": nivel_originalidad(etiqueta),
+             "Evaluaciones": len(notas),
+             "NotaMedia": round(sum(notas) / len(notas), 2),
+             "NotaMin": min(notas),
+             "NotaMax": max(notas)}
+            for etiqueta, notas in sorted(celdas.items(), key=lambda kv: orden(kv[0]))]
+
+
+def correlacion_originalidad_nota(filas: list[dict]) -> dict:
+    """Cuánto se mueven juntas la originalidad y la nota.
+
+    Pearson entre el nivel 1–5 y la nota. Como la originalidad es ordinal y
+    solo toma cinco valores, esto equivale a una correlación de rangos por ese
+    lado: sirve para ver la dirección y la fuerza, no para leerlo como una
+    regresión. Con menos de tres pares devuelve `R` en None en vez de un número
+    que no significaría nada.
+    """
+    pares = _pares_originalidad_nota(filas)
+    n = len(pares)
+    base = {"N": n, "R": None, "NivelMedio": None, "NotaMedia": None}
+    if n < 3:
+        return base
+
+    niveles = [p[0] for p in pares]
+    notas = [p[1] for p in pares]
+    mx = sum(niveles) / n
+    my = sum(notas) / n
+    base["NivelMedio"] = round(mx, 2)
+    base["NotaMedia"] = round(my, 2)
+
+    cov = sum((x - mx) * (y - my) for x, y in pares)
+    varx = sum((x - mx) ** 2 for x in niveles)
+    vary = sum((y - my) ** 2 for y in notas)
+    if varx == 0 or vary == 0:
+        # Todas las respuestas cayeron en la misma categoría, o todas sacaron
+        # la misma nota: no hay variación que correlacionar.
+        return base
+
+    base["R"] = round(cov / (varx ** 0.5 * vary ** 0.5), 3)
+    return base
 
 
 def sin_responder(filas: list[dict]) -> list[dict]:
