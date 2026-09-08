@@ -18,6 +18,15 @@ sys.path.insert(0, "pruebas")
 from comun import check, resultado
 
 
+class _Detenida(Exception):
+    """Lo que hace st.stop(): corta la página sin que sea un error.
+
+    El streamlit real levanta su propia excepción para esto. Sin imitarlo, una
+    página que se detiene a propósito seguiría ejecutando el resto del archivo
+    y la prueba mediría algo que en pantalla nunca pasa.
+    """
+
+
 class _Estado(dict):
     """streamlit permite session_state["x"] y session_state.x indistintamente."""
 
@@ -78,6 +87,7 @@ def falso_streamlit():
     st.multiselect.side_effect = lambda label, opciones, *a, default=None, **k: (
         list(default) if default is not None else list(opciones))
     st.file_uploader.return_value = None
+    st.stop.side_effect = _Detenida
     st.Page.side_effect = _Pagina
     st.navigation.side_effect = _Navegacion
     st.session_state = _Estado()
@@ -134,6 +144,8 @@ for ruta in paginas:
             exec(compile(pathlib.Path(ruta).read_text(encoding="utf-8"), ruta, "exec"),
                  modulo.__dict__)
         check(ruta, True)
+    except _Detenida:
+        check(ruta, True)
     except Exception as e:
         check(ruta, False, f"{type(e).__name__}: {e}")
     finally:
@@ -151,6 +163,37 @@ if st is not None:
     check("la reportería dibujó gráficos", st.altair_chart.call_count >= 3,
           st.altair_chart.call_count)
     check("la reportería armó sus pestañas", st.tabs.call_count >= 1, st.tabs.call_count)
+
+# Y tienen que abrir también cuando todavía no hay semestre elegido, que es
+# como se ve el sistema recién clonado: el semestre se elige desde la app, así
+# que una página que revienta antes de eso deja sin salida a quien recién llega.
+def _sin_semestre_activo():
+    from modulos.semestre import gestion as _gestion
+    return [
+        patch.object(_gestion, "ACTIVO_FILE", pathlib.Path("semestres/_no_existe.txt")),
+        patch.dict("os.environ", {"IN5162_SEMESTRE": ""}),
+    ]
+
+
+for ruta in paginas:
+    modulo = types.ModuleType("pagina")
+    modulo.__file__ = ruta
+    guardas = _sin_escrituras() + _sin_semestre_activo()
+    st = falso_streamlit()
+    try:
+        for g in guardas:
+            g.__enter__()
+        with patch.dict(sys.modules, {"streamlit": st}):
+            exec(compile(pathlib.Path(ruta).read_text(encoding="utf-8"), ruta, "exec"),
+                 modulo.__dict__)
+        check(f"{ruta} abre sin semestre activo", True)
+    except _Detenida:
+        check(f"{ruta} abre sin semestre activo", True)
+    except Exception as e:
+        check(f"{ruta} abre sin semestre activo", False, f"{type(e).__name__}: {e}")
+    finally:
+        for g in reversed(guardas):
+            g.__exit__(None, None, None)
 
 _activo_ahora = _ANTES.read_text(encoding="utf-8") if _ANTES.exists() else None
 check("las páginas no cambiaron el semestre activo",

@@ -13,6 +13,12 @@ from utils.runner import PROJECT_ROOT, python, run_command, render_output
 
 st.title("Tests Semanales")
 
+# Todo lo de esta página trabaja sobre el semestre activo. Sin uno elegido no
+# hay nada que hacer acá, y pedir sus rutas lanza excepción.
+if not runner.semestre_activo():
+    st.warning("Elige un semestre en **Datos y Configuración** para operar los tests.")
+    st.stop()
+
 for key in ["ts_enviar_out", "ts_enviar_rc",
             "ts_evaluar_out", "ts_evaluar_rc",
             "ts_resumen_out", "ts_resumen_rc",

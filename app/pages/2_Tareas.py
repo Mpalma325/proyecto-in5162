@@ -9,6 +9,11 @@ from utils.runner import PROJECT_ROOT, python, run_command, render_output
 
 st.title("Tareas")
 
+# Igual que en Tests Semanales: sin semestre elegido no hay carpetas que mirar.
+if not runner.semestre_activo():
+    st.warning("Elige un semestre en **Datos y Configuración** para operar las tareas.")
+    st.stop()
+
 for key in ["tar_p1_out", "tar_p1_rc",
             "tar_p2_out", "tar_p2_rc",
             "tar_p3_out", "tar_p3_rc",
