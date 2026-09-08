@@ -12,6 +12,14 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+# pandas se importa acá, antes de tocar sys.modules. `patch.dict(sys.modules)`
+# restaura el diccionario al salir, y con eso saca lo que se haya importado
+# dentro: la primera página que use pandas lo dejaría fuera al terminar, y la
+# siguiente lo reimportaría. numpy no admite cargarse dos veces en un mismo
+# proceso, así que eso reventaba con un ImportError que no tiene nada que ver
+# con la página.
+import pandas  # noqa: F401
+
 sys.path.insert(0, ".")
 sys.path.insert(0, "app")
 sys.path.insert(0, "pruebas")
