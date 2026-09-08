@@ -157,12 +157,20 @@ for ruta in paginas:
 # página termina sin error y en pantalla no queda nada.
 st = falsos.get("app/main.py")
 if st is not None:
+    from modulos import semestre as _sem
+
     errores = [str(a) for a in st.error.call_args_list]
     check("la reportería no reportó errores", not errores, errores[:2])
-    check("la reportería dibujó KPIs", st.metric.call_count >= 5, st.metric.call_count)
-    check("la reportería dibujó gráficos", st.altair_chart.call_count >= 3,
-          st.altair_chart.call_count)
-    check("la reportería armó sus pestañas", st.tabs.call_count >= 1, st.tabs.call_count)
+    if _sem.activo():
+        check("la reportería dibujó KPIs", st.metric.call_count >= 5, st.metric.call_count)
+        check("la reportería dibujó gráficos", st.altair_chart.call_count >= 3,
+              st.altair_chart.call_count)
+        check("la reportería armó sus pestañas", st.tabs.call_count >= 1, st.tabs.call_count)
+    else:
+        # Recién clonado no hay semestre elegido y no hay nada que dibujar. Lo
+        # que sí tiene que pasar es que avise, en vez de quedar en blanco.
+        check("sin semestre activo, la reportería lo avisa",
+              st.warning.call_count >= 1, st.warning.call_count)
 
 # Y tienen que abrir también cuando todavía no hay semestre elegido, que es
 # como se ve el sistema recién clonado: el semestre se elige desde la app, así
