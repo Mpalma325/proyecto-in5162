@@ -25,6 +25,11 @@ semestres/*/
 !semestres/_template/
 semestres/activo.txt
 
+# Copias de una carpeta de semestre que se dejan aparte antes de reemplazarla.
+# Tienen el mismo contenido sensible que el original, y viven fuera de
+# semestres/ porque todo lo que cuelga de ahi la app lo lista como un semestre.
+respaldos/
+
 # Carpetas de entrega puntual (deliverables para el profesor, no parte del código)
 subir/
 anexo/
