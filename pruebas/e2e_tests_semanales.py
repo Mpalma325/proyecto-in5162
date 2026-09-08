@@ -14,6 +14,9 @@ le fue así, y hay que atenderlo sin tocarle la nota.
 
 La cuarta cubre el ensayo de prompts: reevaluar respuestas viejas con otro
 prompt sin que eso toque la nota de nadie ni salga un correo.
+
+La quinta, completar el estado desde el log, que es como se recupera lo que se
+hizo desde el otro equipo.
 """
 
 import sys
@@ -335,8 +338,95 @@ def ensayo_de_prompt():
         check("no devolvió resultados", vacio == [], vacio)
 
 
+def _desalinear_estado(carpeta, quitar=5, vaciar=4):
+    """Deja notas.csv incompleto respecto del log, como cuando se opera en dos equipos.
+
+    La prueba se fabrica su propio desajuste en vez de esperar que el semestre
+    de partida lo traiga. Antes dependía de que los datos reales estuvieran
+    desalineados, y empezó a fallar el día que se sincronizaron.
+    """
+    import csv as _csv
+
+    notas = carpeta / "notas.csv"
+    with notas.open(encoding="utf-8-sig", newline="") as f:
+        lector = _csv.DictReader(f)
+        campos, filas = lector.fieldnames, list(lector)
+
+    # Solo se tocan casillas que el log conozca: son las que la sincronización
+    # tiene con qué recomponer.
+    conocidas = {(c, fl, it) for (c, fl, it) in _estado_del_log(carpeta)}
+    elegibles = [f for f in filas
+                 if (f["Correo"], f["Flujo"], f["Item"]) in conocidas]
+
+    quitadas = elegibles[:quitar]
+    for f in elegibles[quitar:quitar + vaciar]:
+        f["Enviado"] = ""
+    filas = [f for f in filas if f not in quitadas]
+
+    with notas.open("w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=campos)
+        w.writeheader()
+        w.writerows(filas)
+    return len(quitadas), vaciar
+
+
+def _estado_del_log(carpeta):
+    """Las casillas (correo, flujo, item) que el log describe."""
+    import csv as _csv
+
+    log = carpeta / "log_envios.csv"
+    if not log.exists():
+        return set()
+    with log.open(encoding="utf-8-sig", newline="") as f:
+        return {(x["Correo"], x["Flujo"], x["Item"]) for x in _csv.DictReader(f)
+                if x.get("Evento") in ("envio", "respuesta", "evaluacion")}
+
+
+def estado_desde_el_log():
+    """Lo que el log sabe y la tabla de estado no, se pasa sin pisar nada."""
+    with semestre_desechable(sid="_tmp_sync") as (sid, tmp), sin_red():
+        from modulos import datos
+
+        quitadas, vaciadas = _desalinear_estado(tmp)
+        antes = datos.notas.leer(sid)
+        indice_antes = {(f["Correo"], f["Flujo"], f["Item"]): f for f in antes}
+
+        titulo("22. simular no escribe")
+        sim = datos.notas.sincronizar_desde_log(sid, simular=True)
+        check("ve las filas que faltan", sim["FilasNuevas"] == quitadas,
+              f"{sim['FilasNuevas']} vs {quitadas}")
+        check("ve los envios sin marcar", sim["Enviado"] >= vaciadas,
+              f"{sim['Enviado']} vs {vaciadas}")
+        check("pero no toco el archivo", len(datos.notas.leer(sid)) == len(antes))
+
+        titulo("23. aplicar completa lo que faltaba")
+        hecho = datos.notas.sincronizar_desde_log(sid)
+        check("hizo lo mismo que dijo que haria", hecho == sim, f"{hecho} vs {sim}")
+        despues = datos.notas.leer(sid)
+        check("aparecieron las filas nuevas",
+              len(despues) == len(antes) + sim["FilasNuevas"],
+              f"{len(despues)} vs {len(antes)}+{sim['FilasNuevas']}")
+
+        titulo("24. NO PISA NI BORRA lo que ya estaba")
+        indice = {(f["Correo"], f["Flujo"], f["Item"]): f for f in despues}
+        perdidas = [k for k in indice_antes if k not in indice]
+        check("no se perdio ninguna fila", not perdidas, perdidas[:3])
+        pisados = [
+            k for k, vieja in indice_antes.items()
+            for c in ("Enviado", "Respondio", "Nota", "Originalidad")
+            if (vieja.get(c) or "").strip() and vieja[c] != indice[k].get(c)
+        ]
+        check("no se piso ningun valor escrito", not pisados, pisados[:3])
+
+        titulo("25. correrlo dos veces no cambia nada")
+        otra = datos.notas.sincronizar_desde_log(sid)
+        check("la segunda pasada no hace nada", not any(otra.values()), otra)
+        check("y la tabla quedo igual", len(datos.notas.leer(sid)) == len(despues))
+
+
 ciclo_completo()
 fallos_y_recuperacion()
 tutoria_sobre_el_feedback()
 ensayo_de_prompt()
+estado_desde_el_log()
 sys.exit(resultado())

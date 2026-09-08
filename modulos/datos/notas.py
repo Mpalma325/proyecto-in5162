@@ -11,6 +11,7 @@ columnas por semana dentro de alumnos.csv, que llegaba a 55 columnas.
 from datetime import datetime, timezone
 
 from . import _csv
+from . import log as _log
 from . import migracion as _migracion
 from .esquema import COLUMNAS_NOTAS, NOTAS
 
@@ -102,3 +103,58 @@ def pendientes_de_envio(correos: list[str], flujo: str, item: str,
         if f.get("Enviado", "").strip()
     }
     return [c for c in correos if c.strip().lower() not in enviados]
+
+
+def sincronizar_desde_log(semestre_id: str | None = None,
+                          simular: bool = False) -> dict:
+    """Completa esta tabla con lo que el log sabe y a ella le falta.
+
+    El log es append-only y guarda todo lo que ocurrió; `notas.csv` es el
+    estado y se reescribe. Cuando el curso se opera desde dos equipos, el log
+    de cada uno se puede juntar sin conflicto, pero el estado no: quedan
+    envíos, respuestas y notas registradas como evento y sin reflejo en la
+    tabla, y entonces la reportería no las muestra y el flujo cree que están
+    pendientes.
+
+    **Solo agrega.** Crea la fila que falte y llena el campo que esté vacío;
+    nunca borra una fila ni pisa un valor ya escrito. Las dos razones: la tabla
+    también se edita a mano cuando el equipo docente corrige una nota, y los
+    semestres que vienen del esquema viejo tienen filas que el log no conoce
+    porque son anteriores a él.
+
+    Con `simular` dice cuánto cambiaría sin escribir nada.
+    """
+    _migracion.asegurar(semestre_id)
+    filas = _csv.leer(NOTAS, semestre_id)
+    indice = {_clave(f): f for f in filas}
+
+    resumen = {"FilasNuevas": 0, "Enviado": 0, "Respondio": 0, "Nota": 0}
+
+    for clave, desde_log in _log.reconstruir_estado(semestre_id).items():
+        correo, flujo, item = clave
+        if not correo:
+            continue
+        fila = indice.get(clave)
+        if fila is None:
+            fila = {"Correo": correo, "Flujo": flujo, "Item": str(item),
+                    "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": ""}
+            filas.append(fila)
+            indice[clave] = fila
+            resumen["FilasNuevas"] += 1
+
+        for campo in ("Enviado", "Respondio", "Nota"):
+            valor = (desde_log.get(campo) or "").strip()
+            if valor and not (fila.get(campo) or "").strip():
+                fila[campo] = valor
+                resumen[campo] += 1
+                # La originalidad viaja pegada a la nota: se escribieron juntas
+                # y por separado no significan nada.
+                if campo == "Nota":
+                    fila["Originalidad"] = desde_log.get("Originalidad", "")
+
+    if not simular and any(resumen.values()):
+        filas.sort(key=lambda f: (f.get("Flujo", ""), str(f.get("Item", "")),
+                                  f.get("Correo", "")))
+        _csv.escribir(NOTAS, filas, COLUMNAS_NOTAS, semestre_id)
+
+    return resumen

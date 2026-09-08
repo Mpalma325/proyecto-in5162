@@ -110,7 +110,19 @@ guarda y se pierde lo del otro.
 Ya pasó: en 2026-2 la Semana 3 quedó evaluada en un equipo y sin registro de
 envío en el otro, porque el estado vivía en un CSV que cada uno reescribía.
 
-`log.reconstruir_estado()` rearma `notas.csv` desde el log si se desincroniza.
+Cuando eso pasa, `notas.sincronizar_desde_log()` completa la tabla de estado con
+lo que el log tenga y a ella le falte:
+
+```bash
+python -m modulos.tests.reconstruir --solo-estado --simular   # dice cuanto
+python -m modulos.tests.reconstruir --solo-estado             # lo aplica
+```
+
+**Solo agrega.** Crea la fila que falte y llena el campo vacío; no borra ninguna
+fila ni pisa un valor ya escrito. Las dos razones: `notas.csv` también se edita a
+mano cuando el equipo docente corrige una nota, y los semestres que vienen del
+esquema viejo tienen filas anteriores al log, que el log no conoce y que un
+volcado completo borraría.
 
 ## `interacciones.csv` ya no se mantiene
 

@@ -26,6 +26,9 @@ Uso:
     python -m modulos.tests.reconstruir 2026-2         # uno en particular
     python -m modulos.tests.reconstruir --sin-envios   # omite recorrer Enviados
     python -m modulos.tests.reconstruir --simular      # dice que haria, sin escribir
+    python -m modulos.tests.reconstruir --solo-estado  # no abre el correo; solo
+                                                       # completa notas.csv con lo
+                                                       # que el log ya sabe
 """
 
 import csv
@@ -303,13 +306,43 @@ def _ya_en_el_log(semestre_id: str) -> set:
     }
 
 
+def sincronizar_estado(semestre_id: str, simular: bool = False) -> None:
+    """Pasa al estado lo que quedó en el log y todavía no estaba en la tabla.
+
+    El log guarda cada evento, pero quien decide qué está pendiente es
+    `notas.csv`. Si los envíos o las correcciones se hicieron en otro equipo,
+    llegan por acá como eventos y hay que reflejarlos en la tabla; si no, la
+    reportería no los muestra y el flujo los cree sin hacer.
+    """
+    from modulos import datos
+
+    r = datos.notas.sincronizar_desde_log(semestre_id, simular=simular)
+    if not any(r.values()):
+        log(f"{semestre_id}: el estado ya estaba al dia")
+        return
+    prefijo = "[simulacion] " if simular else ""
+    log(f"{prefijo}{semestre_id}: estado completado con "
+        f"{r['FilasNuevas']} casilla(s) nueva(s), {r['Enviado']} envio(s), "
+        f"{r['Respondio']} respuesta(s), {r['Nota']} nota(s)")
+
+
 def main(filtro: str | None = None, incluir_envios: bool = True,
-         simular: bool = False) -> None:
+         simular: bool = False, solo_estado: bool = False) -> None:
     # Se cargan SIEMPRE todos los rosters, aunque se pida uno solo: los
     # semestres comparten buzón y hay gente que aparece en varios (el profesor,
     # los ayudantes, quien recursa). Con un solo roster cargado no hay contra
     # qué desambiguar y sus correos de otros años terminan atribuidos al
     # semestre pedido. El filtro decide qué se escribe, no qué se mira.
+    if solo_estado:
+        # No se abre el correo: se completa la tabla de estado con lo que el log
+        # ya tiene. Sirve cuando el log llegó de otro equipo, o después de una
+        # reconstrucción, y no hace falta credencial de buzón.
+        from modulos import semestre as _sem
+        for sid in ([filtro] if filtro else _sem.listar()):
+            sincronizar_estado(sid, simular)
+        log("\nListo.")
+        return
+
     rosters = cargar_semestres(None)
     if not rosters:
         log("No encontré semestres con alumnos.")
@@ -481,12 +514,14 @@ def main(filtro: str | None = None, incluir_envios: bool = True,
 
 
 if __name__ == "__main__":
-    _filtro, _envios, _sim = None, True, False
+    _filtro, _envios, _sim, _solo = None, True, False, False
     for a in sys.argv[1:]:
         if a == "--sin-envios":
             _envios = False
         elif a in ("--simular", "--dry-run", "-n"):
             _sim = True
+        elif a in ("--solo-estado", "--estado"):
+            _solo = True
         elif not a.startswith("-"):
             _filtro = a
-    main(_filtro, incluir_envios=_envios, simular=_sim)
+    main(_filtro, incluir_envios=_envios, simular=_sim, solo_estado=_solo)

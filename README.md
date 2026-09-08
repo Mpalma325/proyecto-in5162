@@ -190,3 +190,12 @@ python -m modulos.tests.reconstruir
 Abre el correo en modo lectura —no marca ni envía nada— y vuelca al log lo que encuentre: los envíos con su Message-ID, las respuestas de los alumnos y las evaluaciones, cada uno con la fecha real del correo. Tarda un par de minutos y muestra el avance. Sirve cuando se perdió el registro local, cuando los envíos se hicieron desde otro equipo, o para traer un semestre entero que se llevó fuera del sistema.
 
 Se puede correr las veces que haga falta: antes de escribir mira lo que el log ya tiene y solo agrega lo que falta. Con `--simular` dice cuánto agregaría sin escribir nada.
+
+Al terminar deja el estado al día, porque escribir el log no basta: quien decide qué está pendiente, y de dónde sale la reportería, es `notas.csv`. Si el log ya está completo y lo único desalineado es el estado —el caso típico cuando alguien te pasa su log, o cuando los envíos se hicieron en el otro equipo— eso solo se hace sin abrir el correo, así que tampoco hacen falta las credenciales del buzón:
+
+```bash
+python -m modulos.tests.reconstruir --solo-estado --simular
+python -m modulos.tests.reconstruir --solo-estado
+```
+
+Completar el estado **solo agrega**: crea la casilla que falte y llena el campo vacío, y nunca pisa una nota ya escrita ni borra una fila. Una nota corregida a mano se queda como está.
