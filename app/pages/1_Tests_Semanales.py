@@ -215,6 +215,17 @@ with tab5:
 
         dry_exp = st.toggle("Solo mostrar la muestra — no llama al modelo",
                             value=True, key="ts_exp_dry")
+        if dry_exp:
+            # Viene activado para no gastar API sin querer, y entonces la salida
+            # lista las notas que ya están puestas. Sin este aviso se lee como
+            # si el prompt candidato no hubiera cambiado nada.
+            st.info(
+                "Con esto activado **el prompt candidato no se prueba**: solo se "
+                "lista qué respuestas se reevaluarían, con la nota que ya tienen. "
+                "Apágalo para que el modelo corrija de verdad y haya algo que "
+                "comparar.",
+                icon="👁",
+            )
         if not dry_exp:
             st.warning(
                 f"Se harán hasta {n_exp} llamadas reales a la API. Las notas de los "

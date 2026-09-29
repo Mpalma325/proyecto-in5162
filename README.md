@@ -69,6 +69,19 @@ Tres archivos en `semestres/<id>/`:
 
 El log guarda una fila por **evento** (envío, respuesta, evaluación, error), no por alumno. Nunca se edita lo ya escrito, así que si dos personas operan el curso desde equipos distintos basta juntar los archivos: no se pisan. De ahí sale `datos.log.como_interacciones()`, que arma la vista de una fila por alumno-semana cuando se necesita para análisis.
 
+### Operar desde dos computadores
+
+Git no sincroniza estas carpetas, así que cada equipo acumula solo lo que hizo: los envíos quedan donde se mandaron y las evaluaciones donde se corrigieron. Reemplazar una carpeta por la del otro borra esa mitad. Para sumarlas, cada uno le pasa su `log_envios.csv` al otro y corre:
+
+```bash
+python -m modulos.datos.fusionar ruta/al/log_del_otro.csv --simular   # qué entraría
+python -m modulos.datos.fusionar ruta/al/log_del_otro.csv             # incorporarlo
+```
+
+Agrega los eventos que faltan, ignora los que ya están y deja `notas.csv` al día. Correrlo dos veces no duplica nada, y antes de escribir deja una copia del log en `log_envios.csv.previo`. Cruzando los dos logs en ambos sentidos, los dos equipos quedan con la historia completa.
+
+Los prompts y `alumnos.csv` no se fusionan: si los dos los editan, hay que decidir a mano cuál queda.
+
 Cada semestre es una carpeta aparte, así que abrir uno nuevo no pisa los datos del anterior. Solo uno está activo a la vez, y se cambia desde **Datos y Configuración** en la app. Estas carpetas nunca se suben a git: tienen nombres y correos reales.
 
 Antes de un envío conviene confirmar sobre cuál se está trabajando, porque los comandos toman el activo sin preguntar:
@@ -76,6 +89,10 @@ Antes de un envío conviene confirmar sobre cuál se está trabajando, porque lo
 ```bash
 python -m modulos.semestre
 ```
+
+## El sitio web
+
+Las cuatro páginas de la app también existen como sitio web, para operar el curso desde cualquier equipo sin depender de un PC encendido. La página y los archivos viven en Cloudflare; los scripts de `modulos/` corren tal cual en un servicio de Google Cloud Run, el motor. Cómo funciona, cómo probarlo en local y cómo publicarlo: `web/SITIO.md` y `motor/MOTOR.md`.
 
 ## La reportería
 
@@ -141,13 +158,20 @@ Un aviso que conviene leer si aparece: si el prompt candidato no menciona `NOTA 
 A diferencia de los tests, las tareas son grupales: cada grupo entrega un HTML con su código. El sistema genera **una pregunta distinta por integrante**, sobre la parte del trabajo que le tocó, para que nadie pueda responder copiándole a un compañero.
 
 ```bash
+python -m modulos.tareas.chequeo T1    # qué pasaría al generar, sin llamar al modelo
 python -m modulos.tareas.generar T1    # una pregunta y pauta por integrante
 python -m modulos.tareas.enviar T1
 python -m modulos.tareas.recolectar T1
 python -m modulos.tareas.corregir T1
 ```
 
+Las entregas se suben desde **Datos y Configuración → Datos del curso → Entregas (Tareas)**, con el zip de U-Cursos tal como se descarga. Adentro viene un comprimido por alumno, y la app entra a cada uno, se queda con el HTML y con el `.Rmd` que lo acompaña, y les pone el nombre del grupo para que dos entregas con el mismo nombre de archivo no se pisen. Los `.rar` también se abren. Lo que no reconoce lo lista en pantalla en vez de descartarlo callado.
+
 El paso de generar empareja el nombre de cada integrante con la planilla de alumnos para obtener su correo. Cuando no encuentra una coincidencia clara lo deja en blanco, y hay que resolverlo a mano antes de enviar: es preferible eso a mandarle la pregunta al alumno equivocado.
+
+Antes de gastar la API conviene mirar el chequeo, que lee las entregas y dice lo que haría `generar` sin llamar al modelo: cuánto se recortó de cada pregunta, de dónde salieron los integrantes, quién no resuelve a un correo y con qué candidatos, y quién del roster queda sin pregunta. Es lo primero que muestra la pestaña 1 de la app, así que se ve sin pedirlo. Cuando un grupo no declaró roles, ahí mismo se puede cambiar qué pregunta le toca a cada integrante; lo elegido queda en un CSV junto a las entregas y `generar` lo respeta.
+
+Los entregables no siempre siguen el template: cambian los títulos de las secciones, dejan la tabla de roles sin llenar, o suben un HTML renderizado antes de escribir el código. El paso 1 reconoce esos casos, saca los integrantes del campo `author` cuando la tabla no sirve, y lee el `.Rmd` cuando el HTML viene vacío. Si un grupo no declaró roles, reparte las cuatro preguntas entre sus integrantes con semilla fija en vez de dejarlos sin nada. Lo que no puede resolver lo salta antes de gastar la API y dice por qué. `modulos/tareas/TAREAS.md` tiene el detalle.
 
 Las preguntas generadas quedan en `feedback_T*.csv`, que es lo único propio de este flujo; el estado (envíos, respuestas, notas) va a las mismas tablas que los tests.
 

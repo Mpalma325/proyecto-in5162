@@ -37,10 +37,37 @@ def _cargar_contexto_clases() -> str:
     return "\n\n".join(partes)
 
 
-def generar_preguntas(secciones: dict, roles_html: str) -> dict:
+def _bloque_sin_roles(asignacion: dict) -> str:
+    """
+    Instrucciones para el grupo que no declaró quién hizo qué.
+
+    Sin tabla de roles no hay cómo saber qué le tocó a cada uno, así que se le
+    asigna a cada integrante una de las cuatro preguntas y se pregunta sobre esa.
+    El reparto lo decide el flujo, no el modelo, para que sea reproducible.
+    """
+    lineas = "\n".join(f"- {nombre}: {pregunta}"
+                       for nombre, pregunta in asignacion.items())
+    return (
+        "=== ESTE GRUPO NO DECLARÓ ROLES ===\n"
+        "No hay tabla de roles utilizable, así que no se sabe qué parte hizo cada "
+        "integrante. En vez de la tabla, se te indica abajo sobre qué pregunta "
+        "interrogar a cada uno. Para cada integrante, toma el fragmento de código "
+        "técnicamente más interesante de la pregunta que le fue asignada y formula "
+        "ahí su pregunta de comprensión, con los mismos criterios de siempre.\n"
+        "Como no hay información de roles, no marques a nadie con \"pregunta\": null "
+        "por no haber contribuido: se asume que todos participaron del trabajo.\n\n"
+        "Integrantes y pregunta asignada:\n" + lineas
+    )
+
+
+def generar_preguntas(secciones: dict, roles_html: str,
+                      asignacion: dict | None = None) -> dict:
     """
     Llama a la API de OpenAI con el system prompt + los insumos del grupo.
     Devuelve el dict parseado con las preguntas por integrante.
+
+    `asignacion` es {nombre: "P1".."P4"} y reemplaza a la tabla de roles cuando
+    el grupo no la llenó.
     """
     system_prompt = (config.PROMPTS / "generar_preguntas.md").read_text(encoding="utf-8")
 
@@ -55,7 +82,10 @@ def generar_preguntas(secciones: dict, roles_html: str) -> dict:
             + contexto_clases
         )
 
-    partes_user.append(f"=== TABLA DE ROLES (HTML) ===\n{roles_html}")
+    if asignacion:
+        partes_user.append(_bloque_sin_roles(asignacion))
+    else:
+        partes_user.append(f"=== TABLA DE ROLES (HTML) ===\n{roles_html}")
     partes_user.append(f"=== PREGUNTA 1 ===\n{secciones['p1']}")
     partes_user.append(f"=== PREGUNTA 2 ===\n{secciones['p2']}")
     partes_user.append(f"=== PREGUNTA 3 ===\n{secciones['p3']}")

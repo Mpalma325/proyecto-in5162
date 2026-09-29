@@ -81,6 +81,18 @@ with tab1:
         )
         archivos_sel = [entregas_dir / n for n in sel]
 
+    # El chequeo no llama al modelo, así que se muestra apenas hay entregas: da
+    # el panorama antes de gastar API, que es cuando todavía se puede arreglar.
+    if htmls:
+        st.divider()
+        st.subheader("Estado de las entregas")
+        st.caption(
+            "Esto se calcula leyendo los archivos: no llama al modelo ni gasta API. "
+            "Arregla lo que aparezca marcado antes de generar."
+        )
+        _informe = runner.chequeo_tareas(tarea_p1)
+        runner.pintar_chequeo(st, _informe, tarea_p1)
+
     st.info(
         "Los nombres sin match en el CSV quedarán con correo vacío de forma preliminar "
         "Es necesario corregirlos manualmente desde **Datos → Feedback Tareas**."

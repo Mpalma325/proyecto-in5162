@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.dev.vars
+# Copia generada de modulos/datos/agregaciones.py (npm run preparar).
+# No se edita ni se versiona: la fuente es la del paquete Python.
+public/py/

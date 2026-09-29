@@ -21,8 +21,10 @@ from datetime import datetime
 from openai import OpenAI
 
 from modulos import datos as _datos
+from modulos.datos import candidatos as _candidatos
 
 from . import config, storage
+from .escala import validar_nota
 from modulos.mail import enviar_correo
 
 
@@ -74,26 +76,40 @@ def _construir_cuerpo_feedback(template: str, fila: dict) -> str:
         respuesta=fila["respuesta"],
         comentario=fila["comentario"],
         nota=fila["nota"],
+        ajuste=(f"{float(fila['nota']):+.1f}" if float(fila['nota']) else '0.0').replace('.', ','),
     )
 
 
-def main(tarea: str, dry_run: bool = False, enviar: bool = True) -> None:
+def main(tarea: str, dry_run: bool = False, enviar: bool = True,
+         solo: set[str] | None = None) -> None:
+    """`solo`: si se pasa, corrige solo a esos correos; el resto sigue pendiente."""
     filas = storage.leer_csv(tarea)
     if not filas:
         print(f"No hay CSV para tarea {tarea}.")
         return
 
     # las respuestas viven en el log; el estado (quién ya tiene nota) en notas.csv
-    respuestas = {
-        e["Correo"]: e["Respuesta"]
-        for e in _datos.log.leer(flujo=_datos.TAREAS, item=tarea, evento="respuesta")
-        if e.get("Respuesta", "").strip()
-    }
+    eventos = [e for e in _datos.log.leer(flujo=_datos.TAREAS, item=tarea, evento="respuesta")
+               if e.get("Respuesta", "").strip()]
+    respuestas = {e["Correo"]: e["Respuesta"] for e in eventos}
+    llegada = {e["Correo"]: e.get("Timestamp", "") for e in eventos}
     pendientes = [
         f for f in filas
         if respuestas.get(f.get("alumno_correo", "").strip().lower())
         and not _datos.notas.ya_evaluado(f.get("alumno_correo", ""), _datos.TAREAS, tarea)
     ]
+    if dry_run:
+        _candidatos.guardar("tareas", tarea, [{
+            "correo": f["alumno_correo"].strip().lower(), "nombre": f["alumno_nombre"],
+            "grupo": f.get("grupo_archivo", ""), "pregunta": f.get("pregunta_tarea", ""),
+            "llegada": llegada.get(f["alumno_correo"].strip().lower(), ""),
+            "respuesta": respuestas[f["alumno_correo"].strip().lower()][:3000],
+        } for f in pendientes])
+    if solo is not None:
+        for f in pendientes:
+            if f["alumno_correo"].strip().lower() not in solo:
+                print(f"  ⋯ {f['alumno_nombre']:30s}: no elegido, sigue pendiente")
+        pendientes = [f for f in pendientes if f["alumno_correo"].strip().lower() in solo]
     if not pendientes:
         print(f"No hay respuestas por corregir para {tarea}.")
         return
@@ -117,11 +133,11 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True) -> None:
         }
         try:
             resultado = _corregir_una(client, system_prompt, fila_con_respuesta)
+            nota = validar_nota(resultado.get('nota'))
         except Exception as e:
             print(f"  ✗ {nombre:30s}: error corrigiendo: {e}")
             continue
 
-        nota = resultado.get("nota")
         comentario = resultado.get("comentario", "")
         senales_ia = resultado.get("señales_copia_ia") or resultado.get("senales_copia_ia", False)
         justif = resultado.get("justificacion_interna", "")
@@ -167,4 +183,4 @@ if __name__ == "__main__":
         elif a.upper().startswith('T') and a[1:].isdigit():
             tarea = a.upper()
 
-    main(tarea, dry_run=dry_run, enviar=enviar)
+    main(tarea, dry_run=dry_run, enviar=enviar, solo=_candidatos.solo_de_argv())

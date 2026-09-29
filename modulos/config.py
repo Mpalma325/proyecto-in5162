@@ -57,6 +57,11 @@ IMAP_PORT = int(_env.get("IMAP_PORT", "993"))
 # identifica de dónde salió el mensaje.
 MSGID_DOMINIO = _env.get("MSGID_DOMINIO", "in5162.local")
 
+# --- sitio web ---
+# Dónde está el sitio del curso. Por defecto el de desarrollo local
+# (`npm run dev` en web/); al desplegar se cambia por la URL de Cloudflare.
+WEB_URL = _env.get("WEB_URL", "http://127.0.0.1:8787").rstrip("/")
+
 # --- tests semanales ---
 GRUPO_CONTROL_TRATAMIENTO = _flag("GRUPO_CONTROL_TRATAMIENTO", "true")
 GRUPO_SEED = int(_env.get("GRUPO_SEED", "19"))
@@ -85,6 +90,11 @@ def _obtener(var: str, descripcion: str) -> str:
             f"del proyecto o como variable de entorno."
         )
     return valor
+
+
+def cargar_token_web() -> str:
+    """Token con el que este equipo sube datos al sitio. Solo sirve para subir."""
+    return _obtener("WEB_TOKEN", "token del agente para subir datos al sitio web")
 
 
 def cargar_api_key() -> str:

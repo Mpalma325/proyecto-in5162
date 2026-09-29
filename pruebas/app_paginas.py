@@ -91,9 +91,14 @@ def falso_streamlit():
         return opciones[index or 0] if opciones else None
 
     st.selectbox.side_effect = _selectbox
-    # multiselect devuelve su default, como el de verdad cuando nadie lo toca
-    st.multiselect.side_effect = lambda label, opciones, *a, default=None, **k: (
-        list(default) if default is not None else list(opciones))
+    # multiselect devuelve su default, como el de verdad cuando nadie lo toca.
+    # Las opciones llegan posicionales o como `options=`, según la página.
+    def _multiselect(label, opciones=(), *a, options=None, default=None, **k):
+        if default is not None:
+            return list(default)
+        return list(options if options is not None else opciones)
+
+    st.multiselect.side_effect = _multiselect
     st.file_uploader.return_value = None
     st.stop.side_effect = _Detenida
     st.Page.side_effect = _Pagina

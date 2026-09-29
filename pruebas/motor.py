@@ -1,0 +1,253 @@
+"""
+El motor que ejecuta los trabajos en la nube, sin red.
+
+El sitio web (Cloudflare) se reemplaza por un diccionario en memoria: los
+archivos que estarían en R2 y los trabajos que estarían en D1. Así se prueba el
+ciclo completo —bajar el semestre, correr el script, informar la salida, subir
+lo que cambió— sin levantar nada.
+
+Lo que más importa verificar es lo que protege al curso:
+- todo trabajo es de prueba salvo que se pida lo contrario de forma explícita;
+- el motor nunca toca la carpeta semestres/ real;
+- un trabajo que ya empezó no se vuelve a ejecutar si la cola lo entrega dos
+  veces, porque podría mandar correos repetidos.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, ".")
+sys.path.insert(0, "pruebas")
+from comun import check, resultado, titulo
+
+from motor import trabajo
+
+
+class SitioFalso:
+    """Lo que el motor ve del Worker: archivos del semestre y trabajos."""
+
+    def __init__(self, archivos: dict[str, bytes], trabajos: dict[str, dict]):
+        self.archivos = archivos
+        self.trabajos = trabajos
+        self.subidos: dict[str, bytes] = {}
+        self.origenes: dict[str, str] = {}
+        self.paneles: list = []
+        self.parametros: dict[str, str] = {}
+
+    def listar_archivos(self, semestre):
+        return [{"ruta": r, "bytes": len(d), "etag": ""} for r, d in self.archivos.items()]
+
+    def bajar_archivo(self, semestre, ruta):
+        return self.archivos[ruta]
+
+    def subir_archivo(self, semestre, ruta, datos, origen="motor"):
+        self.origenes[ruta] = origen
+        self.subidos[ruta] = datos
+        self.archivos[ruta] = datos
+
+    def ver_trabajo(self, id_trabajo):
+        return dict(self.trabajos[id_trabajo])
+
+    def informar(self, id_trabajo, salida="", estado=None, codigo=None):
+        t = self.trabajos[id_trabajo]
+        t["salida"] = t.get("salida", "") + salida
+        if estado:
+            t["estado"] = estado
+        if codigo is not None:
+            t["codigo"] = codigo
+
+    def subir_panel(self, semestre, filas):
+        self.paneles.append(filas)
+
+    def leer_parametros(self):
+        return dict(self.parametros)
+
+
+def usar(sitio_falso):
+    for nombre in ("listar_archivos", "bajar_archivo", "subir_archivo", "ver_trabajo",
+                   "informar", "subir_panel", "leer_parametros"):
+        setattr(trabajo.sitio, nombre, getattr(sitio_falso, nombre))
+
+
+# Un semestre mínimo: lo justo para que el panel se pueda calcular.
+SEMESTRE = {
+    "alumnos.csv": "Nombre,Correo,Grupo\nAna Pérez,ana@x.cl,control\n".encode(),
+    "notas.csv": b"Correo,Flujo,Item,Enviado,Respondio,Nota,Originalidad\n"
+                 b"ana@x.cl,test,1,SI,SI,\"6,0\",Media\n",
+    "log_envios.csv": b"",
+    "tests_semanales/data/preguntas.csv": b"Semana,Tema\n1,Prueba\n",
+    "tareas/data/entregas/T1/grupo.html": b"<html>pesado</html>",
+    "analisis.xlsx": b"no lo necesita ningun trabajo",
+}
+
+titulo("1. los comandos se arman acá, no en la página")
+_, armar = trabajo.FLUJOS["tests.evaluar"]
+check("sin decir nada, es modo prueba", armar({"semana": 4})[-1] == "--dry-run", armar({"semana": 4}))
+check("prueba=True también", "--dry-run" in armar({"semana": 4, "prueba": True}))
+check("solo prueba=False lo quita", "--dry-run" not in armar({"semana": 4, "prueba": False}))
+check("un 'false' en texto NO cuenta como envío real",
+      "--dry-run" in armar({"semana": 4, "prueba": "false"}))
+for malo in (0, 53, -1):
+    try:
+        armar({"semana": malo})
+        check(f"semana {malo} se rechaza", False)
+    except ValueError:
+        check(f"semana {malo} se rechaza", True)
+try:
+    armar({"semana": "4; rm -rf /"})
+    check("una semana con comandos se rechaza", False)
+except ValueError:
+    check("una semana con comandos se rechaza", True)
+check("el chequeo nunca envía: no tiene modo real", "--dry-run" not in " ".join(
+    trabajo.FLUJOS["tests.chequeo"][1]({"semana": 4, "prueba": False})) and
+    "enviar" not in trabajo.FLUJOS["tests.chequeo"][1]({"semana": 4})[1])
+
+titulo("1b. los flujos de tareas")
+_, corregir = trabajo.FLUJOS["tareas.corregir"]
+check("corregir: sin decir nada, es modo prueba", corregir({"tarea": "T1"})[-1] == "--dry-run")
+check("corregir: 'no enviar' solo cuenta en modo real",
+      "--no-enviar" not in corregir({"tarea": "T1", "no_enviar": True}) and
+      "--no-enviar" in corregir({"tarea": "T1", "no_enviar": True, "prueba": False}))
+check("enviar tareas: modo prueba por defecto",
+      "--dry-run" in trabajo.FLUJOS["tareas.enviar"][1]({"tarea": "T2"}))
+for malo in ("T", "t1", "T123", "T1; rm", ""):
+    try:
+        corregir({"tarea": malo})
+        check(f"tarea {malo!r} se rechaza", False)
+    except ValueError:
+        check(f"tarea {malo!r} se rechaza", True)
+_, generar = trabajo.FLUJOS["tareas.generar"]
+cmd = generar({"tarea": "T1", "archivos": ["Grupo 1.html"], "_semestre": "2026-2"})
+check("generar recibe las rutas dentro de la carpeta de trabajo",
+      cmd[-1] == "semestres/2026-2/tareas/data/entregas/T1/Grupo 1.html" and "--no-interactivo" in cmd, cmd)
+for malo in (["../../alumnos.csv"], ["a/b.html"], ["x.csv"], "Grupo.html"):
+    try:
+        generar({"tarea": "T1", "archivos": malo, "_semestre": "2026-2"})
+        check(f"entrega {malo!r} se rechaza", False)
+    except ValueError:
+        check(f"entrega {malo!r} se rechaza", True)
+
+titulo("1c. evaluar o corregir solo a los elegidos")
+_, evaluar_ = trabajo.FLUJOS["tests.evaluar"]
+cmd = evaluar_({"semana": 7, "prueba": False, "solo": ["Ana.Mora@x.cl"]})
+check("pasa la lista en minúscula", cmd[-2:] == ["--solo", "ana.mora@x.cl"], cmd)
+check("sin 'solo' se procesa todo, como siempre", "--solo" not in evaluar_({"semana": 7}))
+check("corregir tareas también acepta 'solo'",
+      "--solo" in trabajo.FLUJOS["tareas.corregir"][1]({"tarea": "T1", "solo": ["a@b.cl"]}))
+for malo in ([], "a@b.cl", ["no-es-correo"], ["a@b.cl,c@d.cl"], ["a@b.cl --dry-run"]):
+    try:
+        evaluar_({"semana": 7, "solo": malo})
+        check(f"'solo' = {malo!r} se rechaza", False)
+    except ValueError:
+        check(f"'solo' = {malo!r} se rechaza", True)
+
+_, experimento = trabajo.FLUJOS["tests.experimento"]
+cmd = experimento({"prompt": "Evalúa {{PREGUNTAS}}", "n": 5})
+check("experimento: por defecto solo muestra la muestra (no llama al modelo)", cmd[-1] == "--dry-run", cmd[3:])
+check("experimento: el prompt va como argumento, no como código", cmd[2] == "Evalúa {{PREGUNTAS}}")
+for malo in ({"prompt": ""}, {"prompt": "x" * 30001}, {"prompt": "x", "n": 301}, {"prompt": "x", "semana": 99}):
+    try:
+        experimento(malo)
+        check(f"experimento rechaza {str(malo)[:40]}", False)
+    except ValueError:
+        check(f"experimento rechaza {str(malo)[:40]}", True)
+
+titulo("2. cada trabajo baja solo lo que necesita")
+check("tests baja las tablas", trabajo._en_perfil("tests", "notas.csv"))
+check("tests baja sus prompts", trabajo._en_perfil("tests", "tests_semanales/prompts/x.md"))
+check("tests NO baja las entregas de tareas",
+      not trabajo._en_perfil("tests", "tareas/data/entregas/T1/grupo.html"))
+check("tareas baja sus entregas", trabajo._en_perfil("tareas", "tareas/data/entregas/T1/grupo.html"))
+check("nadie baja planillas de análisis", not trabajo._en_perfil("tests", "analisis.xlsx"))
+
+titulo("3. un trabajo de punta a punta, con un script de mentira")
+# Se registra un flujo de prueba que imprime y escribe un archivo nuevo, para no
+# depender del buzón ni de OpenAI.
+trabajo.FLUJOS["prueba.eco"] = ("tests", lambda a: [
+    "-c",
+    "import os, pathlib; print('✓ hola desde el motor'); "
+    "d = pathlib.Path('semestres', os.environ['IN5162_SEMESTRE'], 'tests_semanales', 'data'); "
+    "(d / 'resumen_semana_1.txt').write_text('resumen', encoding='utf-8'); "
+    "print('semestre', os.environ['IN5162_SEMESTRE'])",
+])
+real = Path("semestres")
+antes = {p: p.stat().st_mtime for p in real.rglob("*") if p.is_file()} if real.exists() else {}
+
+sitio = SitioFalso(dict(SEMESTRE), {"t1": {"estado": "pendiente", "semestre": "zz-prueba",
+                                           "flujo": "prueba.eco", "argumentos": {}}})
+usar(sitio)
+trabajo.ejecutar("t1")
+t = sitio.trabajos["t1"]
+check("terminó bien", t["estado"] == "terminado" and t["codigo"] == 0, t)
+check("la salida llegó al sitio", "hola desde el motor" in t["salida"], t["salida"][:200])
+check("corrió con el semestre del trabajo", "semestre zz-prueba" in t["salida"])
+check("bajó solo lo del perfil (4 de 6 archivos)", "bajados 4 archivos" in t["salida"], t["salida"][:200])
+check("subió el archivo nuevo", "tests_semanales/data/resumen_semana_1.txt" in sitio.subidos,
+      list(sitio.subidos))
+check("no volvió a subir lo que no cambió", "notas.csv" not in sitio.subidos)
+check("cada archivo subido dice qué trabajo lo escribió (para el historial)",
+      sitio.origenes.get("tests_semanales/data/resumen_semana_1.txt") == "trabajo t1", sitio.origenes)
+check("recalculó la reportería", len(sitio.paneles) == 1 and sitio.paneles[0][0]["Correo"] == "ana@x.cl",
+      sitio.paneles[:1])
+
+titulo("4. no toca los datos reales ni deja basura")
+despues = {p: p.stat().st_mtime for p in real.rglob("*") if p.is_file()} if real.exists() else {}
+check("semestres/ real quedó igual", antes == despues)
+import tempfile
+restos = list(Path(tempfile.gettempdir()).glob("in5162-t1*"))
+check("la carpeta de trabajo se borró", not restos, restos[:2])
+
+titulo("5. un trabajo ya empezado no se repite")
+sitio.trabajos["t1"]["salida"] = ""
+trabajo.ejecutar("t1")
+check("si la cola lo entrega dos veces, la segunda no hace nada",
+      sitio.trabajos["t1"]["salida"] == "")
+
+titulo("6. un error se informa, no se pierde")
+trabajo.FLUJOS["prueba.falla"] = ("tests", lambda a: ["-c", "import sys; print('✗ algo salió mal'); sys.exit(3)"])
+sitio.trabajos["t2"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "prueba.falla",
+                        "argumentos": {}}
+trabajo.ejecutar("t2")
+check("queda fallido con el código del script",
+      sitio.trabajos["t2"]["estado"] == "fallido" and sitio.trabajos["t2"]["codigo"] == 3,
+      sitio.trabajos["t2"])
+sitio.trabajos["t3"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "no.existe",
+                        "argumentos": {}}
+trabajo.ejecutar("t3")
+check("un flujo desconocido queda fallido, sin ejecutar nada",
+      sitio.trabajos["t3"]["estado"] == "fallido" and "desconocido" in sitio.trabajos["t3"]["salida"])
+
+titulo("7. los parámetros de la página llegan al script, y solo esos")
+trabajo.FLUJOS["prueba.entorno"] = ("tests", lambda a: [
+    "-c", "import os; print('MODELO=' + os.environ.get('MODELO', '-')); "
+          "print('OPENAI=' + os.environ.get('OPENAI_API_KEY', '-'))"])
+sitio.parametros = {"MODELO": "gpt-prueba", "OPENAI_API_KEY": "robada"}
+sitio.trabajos["t4"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "prueba.entorno",
+                        "argumentos": {}}
+os.environ.pop("OPENAI_API_KEY", None)
+trabajo.ejecutar("t4")
+salida = sitio.trabajos["t4"]["salida"]
+check("el modelo elegido en la página llega", "MODELO=gpt-prueba" in salida, salida[-200:])
+check("una clave colada en los parámetros no llega", "OPENAI=-" in salida, salida[-200:])
+sitio.parametros = {}
+
+titulo("7b. un trabajo de tareas que solo guarda lo suyo no recalcula la reportería")
+trabajo.FLUJOS["prueba.tareas"] = ("tareas", lambda a: [
+    "-c", "import os, pathlib; d = pathlib.Path('semestres', os.environ['IN5162_SEMESTRE'], 'tareas', 'cache');"
+          "d.mkdir(parents=True, exist_ok=True); (d / 'x.json').write_text('{}')"])
+sitio.paneles.clear()
+sitio.trabajos["t6"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "prueba.tareas", "argumentos": {}}
+trabajo.ejecutar("t6")
+check("guarda su archivo", "tareas/cache/x.json" in sitio.subidos and sitio.trabajos["t6"]["estado"] == "terminado")
+check("y no toca la reportería", sitio.paneles == [])
+
+titulo("8. recalcular la reportería sin cambiar archivos")
+sitio.paneles.clear()
+sitio.trabajos["t5"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "datos.panel",
+                        "argumentos": {}}
+trabajo.ejecutar("t5")
+check("datos.panel termina bien", sitio.trabajos["t5"]["estado"] == "terminado", sitio.trabajos["t5"])
+check("y sube el panel aunque nada haya cambiado", len(sitio.paneles) == 1)
+
+sys.exit(resultado())

@@ -292,6 +292,9 @@ def ensayo_de_prompt():
 
         titulo("18. reevalúa con el prompt candidato, no con el del semestre")
         recibidos = []
+        # El semestre copiado puede traer experimentos anteriores (los hay en
+        # 2026-2). Se cuentan solo los CSV que aparezcan durante esta prueba.
+        previos = set((tmp / "tests_semanales" / "data").glob("experimento_*.csv"))
         enviados.clear()
 
         def ia_falsa(preguntas, pautas, respuesta, plantilla=None):
@@ -318,7 +321,8 @@ def ensayo_de_prompt():
               len(datos.log.leer(sid)) - eventos_antes)
 
         titulo("20. deja el detalle en un CSV")
-        csvs = list((tmp / "tests_semanales" / "data").glob("experimento_*.csv"))
+        csvs = [c for c in (tmp / "tests_semanales" / "data").glob("experimento_*.csv")
+                if c not in previos]
         check("escribió el CSV", len(csvs) == 1, [p.name for p in csvs])
         if csvs:
             import csv as _csv
@@ -424,9 +428,156 @@ def estado_desde_el_log():
         check("y la tabla quedo igual", len(datos.notas.leer(sid)) == len(despues))
 
 
+def _partir_log(tmp, aparte):
+    """Deja acá solo los envíos y escribe el resto en otro archivo.
+
+    Es la situación real entre dos equipos: uno mandó los tests y el otro
+    corrigió, así que cada log tiene una mitad y ninguno la historia completa.
+    """
+    import csv as _csv
+
+    log = tmp / "log_envios.csv"
+    with log.open(encoding="utf-8-sig", newline="") as f:
+        lector = _csv.DictReader(f)
+        columnas, filas = lector.fieldnames, list(lector)
+
+    mias = [x for x in filas if x.get("Evento") == "envio"]
+    suyas = [x for x in filas if x.get("Evento") != "envio"]
+
+    for destino, cuales in ((log, mias), (aparte, suyas)):
+        with destino.open("w", encoding="utf-8", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(cuales)
+    return filas, mias, suyas
+
+
+def fusion_de_dos_logs():
+    """Juntar el log del otro equipo con el de acá reconstruye la historia entera."""
+    with semestre_desechable(sid="_tmp_fusion") as (sid, tmp), sin_red():
+        from modulos import datos
+
+        aparte = tmp / "log_del_otro_equipo.csv"
+        todas, mias, suyas = _partir_log(tmp, aparte)
+        if not suyas:
+            check("el semestre base tiene eventos que no son envios", False,
+                  "sin respuestas ni evaluaciones no hay nada que fusionar")
+            return
+
+        titulo("26. simular dice que entraria sin escribir nada")
+        sim = datos.log.fusionar(aparte, sid, simular=True)
+        check("cuenta los que faltan", sim["Nuevas"] == len(suyas),
+              f"{sim['Nuevas']} vs {len(suyas)}")
+        check("y no toco el log", len(datos.log.leer(sid)) == len(mias),
+              f"{len(datos.log.leer(sid))} vs {len(mias)}")
+
+        titulo("27. fusionar reconstruye la historia completa")
+        r = datos.log.fusionar(aparte, sid)
+        check("hizo lo que dijo que haria", r["Nuevas"] == sim["Nuevas"],
+              f"{r['Nuevas']} vs {sim['Nuevas']}")
+
+        clave = lambda f: (f["Timestamp"], f["Flujo"], f["Item"],  # noqa: E731
+                           f["Correo"], f["Evento"])
+        quedaron = datos.log.leer(sid)
+        check("estan todos los eventos del original",
+              {clave(f) for f in quedaron} == {clave(f) for f in todas},
+              f"{len(quedaron)} vs {len(todas)}")
+
+        titulo("28. NO PIERDE EL TEXTO de las respuestas")
+        textos_antes = {clave(f): f.get("Respuesta", "") for f in todas}
+        vacios = [k for k, v in ((clave(f), f.get("Respuesta", "")) for f in quedaron)
+                  if textos_antes.get(k, "").strip() and not v.strip()]
+        check("las respuestas llegaron con su contenido", not vacios, vacios[:2])
+
+        titulo("29. correrlo dos veces no duplica")
+        otra = datos.log.fusionar(aparte, sid)
+        check("la segunda pasada no agrega nada", otra["Nuevas"] == 0, otra)
+        check("y el log quedo igual", len(datos.log.leer(sid)) == len(quedaron),
+              f"{len(datos.log.leer(sid))} vs {len(quedaron)}")
+
+        titulo("30. deja copia del log anterior antes de reescribirlo")
+        check("existe el respaldo", (tmp / "log_envios.csv.previo").exists())
+
+        titulo("31. el estado refleja lo que entro por la fusion")
+        datos.notas.sincronizar_desde_log(sid)
+        panel = datos.reportes.panel(sid, datos.TESTS)
+        # Solo las de tests: el panel es el de tests, y en el log también
+        # están las respuestas de tareas (que tienen su propia reportería).
+        respondieron = {f["Correo"] for f in quedaron
+                        if f.get("Evento") == "respuesta" and f.get("Flujo") == "test"}
+        faltan = [c for c in respondieron
+                  if not any(f["Correo"] == c and f["Respondio"] for f in panel)]
+        check("la reporteria ve las respuestas fusionadas", not faltan, faltan[:3])
+
+        titulo("32. rechaza un log de otro semestre")
+        ajeno = tmp / "log_de_otro_semestre.csv"
+        import csv as _csv
+        with aparte.open(encoding="utf-8-sig", newline="") as f:
+            lector = _csv.DictReader(f)
+            cols, filas = lector.fieldnames, list(lector)
+        for f_ in filas:
+            f_["Semestre"] = "1999-1"
+        with ajeno.open("w", encoding="utf-8", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(filas)
+        try:
+            datos.log.fusionar(ajeno, sid)
+            check("avisa en vez de mezclar semestres", False, "no levanto nada")
+        except ValueError as e:
+            check("avisa en vez de mezclar semestres", "1999-1" in str(e), str(e))
+
+
+def elegir_que_evaluar():
+    """Ver primero las respuestas y evaluar solo las elegidas (las demás no se tocan)."""
+    SEM = 4
+    with semestre_desechable(sid="_tmp_elegir") as (sid, tmp), sin_red():
+        _vaciar_semana(tmp, SEM)
+        from modulos import datos
+        from modulos.datos import candidatos
+        from modulos.tests import evaluar
+
+        curso = datos.alumnos.correos(sid)
+        entrantes = respuestas_falsas(curso, SEM, cantidad=3)
+
+        titulo("32. en modo prueba deja la lista para elegir")
+        enviados.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=entrantes):
+            evaluar.main(SEM, dry_run=True)
+        import json
+        lista = json.loads(candidatos.ruta("tests_semanales", SEM).read_text(encoding="utf-8"))
+        check("están las 3 respuestas, con su texto", len(lista) == 3 and all(c["respuesta"] for c in lista),
+              lista[:1])
+        check("modo prueba no manda nada", enviados == [])
+
+        titulo("33. evaluar solo la elegida")
+        marcados = []
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=entrantes), \
+             patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("6,0")), \
+             patch("modulos.mail.marcar_leidos", side_effect=lambda uids: marcados.extend(uids)):
+            evaluar.main(SEM, dry_run=False, solo={curso[1].lower()})
+        check("feedback solo a la elegida", enviados == [curso[1]], enviados)
+        check("solo su correo se marca como leído", marcados == [entrantes[1]["uid"]], marcados)
+        con_nota = [f["Correo"] for f in datos.notas.leer(sid, datos.TESTS, str(SEM)) if f["Nota"]]
+        check("solo ella queda con nota", con_nota == [curso[1].lower()], con_nota)
+
+        titulo("34. quien tiene nota no sale como 'no entregó'")
+        import io
+        from contextlib import redirect_stdout
+        salida = io.StringIO()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[]), redirect_stdout(salida):
+            evaluar.main(SEM, dry_run=True)
+        nombre = next(a["Nombre"] for a in datos.alumnos.leer(sid) if a["Correo"].lower() == curso[1].lower())
+        check("la evaluada no aparece en 'no entregó'",
+              f"→ {nombre}" not in salida.getvalue() or "no entregó" not in
+              next((l for l in salida.getvalue().splitlines() if nombre in l), ""))
+
+
 ciclo_completo()
+elegir_que_evaluar()
 fallos_y_recuperacion()
 tutoria_sobre_el_feedback()
 ensayo_de_prompt()
 estado_desde_el_log()
+fusion_de_dos_logs()
 sys.exit(resultado())

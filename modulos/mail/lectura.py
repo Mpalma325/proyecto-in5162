@@ -93,26 +93,22 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
     Busca en el inbox mensajes cuyo header In-Reply-To apunte a alguno
     de los message_ids dados.
 
-    Devuelve {message_id_original: {'remitente': ..., 'texto': ..., 'fecha': ...}}
+    Devuelve {message_id_original: {'remitente': ..., 'texto': ..., 'fecha': ...}}.
     """
+    if not message_ids:
+        return {}
     creds = credenciales.obtener()
     resultado = {}
 
     # Normalizar ids (algunos clientes agregan o quitan < >)
-    ids_buscar = set()
-    for mid in message_ids:
-        if not mid:
-            continue
-        mid = mid.strip()
-        ids_buscar.add(mid)
-        if not mid.startswith("<"):
-            ids_buscar.add(f"<{mid}>")
-        if mid.startswith("<") and mid.endswith(">"):
-            ids_buscar.add(mid[1:-1])
+    ids_buscar = {mid.strip().strip('<>'): mid for mid in message_ids if mid}
 
     with imaplib.IMAP4_SSL(credenciales.IMAP_HOST, credenciales.IMAP_PORT) as imap:
         imap.login(creds["remitente"], creds["password"])
-        imap.select("INBOX")
+        # Solo lectura, como el resto de este módulo: recorre el buzón entero y,
+        # si abriera los correos, dejaría leídas las respuestas de tests
+        # semanales que evaluar y tutoria buscan justamente por no leídas.
+        imap.select("INBOX", readonly=True)
 
         status, data = imap.search(None, "ALL")
         if status != "OK" or not data or not data[0]:
@@ -121,7 +117,7 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
         ids_mensajes = data[0].split()
 
         for msg_id in reversed(ids_mensajes):  # más recientes primero
-            status, data = imap.fetch(msg_id, "(RFC822)")
+            status, data = imap.fetch(msg_id, "(BODY.PEEK[])")
             if status != "OK" or not data or not data[0]:
                 continue
 
@@ -132,14 +128,11 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
             in_reply_to = (msg.get("In-Reply-To") or "").strip()
             references = (msg.get("References") or "").strip()
 
-            coincide_id = None
-            for original_id in message_ids:
-                if not original_id:
-                    continue
-                # El In-Reply-To puede venir con o sin <>
-                if original_id in in_reply_to or original_id in references:
-                    coincide_id = original_id
-                    break
+            # Prioriza el padre directo; References puede incluir varios envíos.
+            candidatos = re.findall(r'[^\s<>]+', in_reply_to)
+            candidatos += list(reversed(re.findall(r'[^\s<>]+', references)))
+            coincide_id = next((ids_buscar[mid] for mid in candidatos
+                                if mid in ids_buscar), None)
 
             if not coincide_id:
                 continue
@@ -150,6 +143,7 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
                 continue
 
             _, remitente = parseaddr(msg.get("From", ""))
+            remitente = remitente.strip().lower()
             fecha_hdr = msg.get("Date", "")
             try:
                 fecha = email.utils.parsedate_to_datetime(fecha_hdr).isoformat()
@@ -157,6 +151,8 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
                 fecha = datetime.now().isoformat()
 
             cuerpo = _limpiar_respuesta(_extraer_cuerpo(msg))
+            if not cuerpo.strip():
+                continue
 
             resultado[coincide_id] = {
                 "remitente": remitente,

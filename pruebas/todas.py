@@ -6,7 +6,9 @@ import sys
 
 AQUI = pathlib.Path(__file__).resolve().parent
 RAIZ = AQUI.parent
-ARCHIVOS = ["e2e_tests_semanales.py", "e2e_tareas.py", "reportes.py", "app_paginas.py"]
+ARCHIVOS = ["limpieza_correos.py", "e2e_tests_semanales.py", "e2e_tareas.py", "reportes.py", "web.py", "motor.py", "app_paginas.py",
+             "entregas_zip.py",
+             "chequeo_tareas.py", "segunda_oportunidad.py"]
 
 fallaron = []
 for nombre in ARCHIVOS:

@@ -25,6 +25,24 @@ semestres/*/
 !semestres/_template/
 semestres/activo.txt
 
+# Los semestres se intercambian entre equipos como archivo comprimido, y ahí
+# viajan los mismos nombres, correos y respuestas que la carpeta original. La
+# regla de arriba no los cubre: solo tapa directorios, así que un .zip suelto
+# aparecía como archivo nuevo listo para subir.
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# Y cualquier archivo suelto dentro de semestres/ que no sea el activo: ahí
+# caen los export de análisis y los CSV que uno deja "un momento" al lado de
+# las carpetas.
+semestres/*.csv
+semestres/*.json
+semestres/*.xlsx
+
 # Copias de una carpeta de semestre que se dejan aparte antes de reemplazarla.
 # Tienen el mismo contenido sensible que el original, y viven fuera de
 # semestres/ porque todo lo que cuelga de ahi la app lo lista como un semestre.

@@ -7,17 +7,37 @@ los tres casos; lo único distinto eran los prompts, que se quedan en cada flujo
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from openai import OpenAI
 
 _api_key_provider = None
-_ajustes = {"modelo": "gpt-5.4-mini", "temperatura": 0.2, "max_tokens": 3000}
+_ajustes = {"modelo": "gpt-5.4-mini", "temperatura": 0.2, "max_tokens": 3000,
+            "servidor": None, "timeout": None, "razonamiento": None}
+
+# Los modelos con razonamiento (Qwen 3.x, Gemma 4 y otros que se corren en
+# local) pueden devolver lo que pensaron entre <think>...</think> antes de la
+# respuesta. Eso no es parte del correo ni del HTML que se parsea, así que se
+# saca acá, en el único lugar por donde pasan todas las respuestas.
+_PENSAMIENTO = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 
 
 def configurar(api_key_provider, modelo: str | None = None,
-               temperatura: float | None = None, max_tokens: int | None = None) -> None:
-    """Registra cómo obtener la API key y los valores por defecto del modelo."""
+               temperatura: float | None = None, max_tokens: int | None = None,
+               servidor: str | None = None, timeout: float | None = None,
+               razonamiento: str | None = None) -> None:
+    """Registra cómo obtener la API key y los valores por defecto del modelo.
+
+    `servidor` es la URL de una API compatible con la de OpenAI. Vacío usa
+    OpenAI. Para un modelo local con Ollama es "http://127.0.0.1:11434/v1", y
+    la key puede ser cualquier texto: Ollama no la revisa.
+
+    `razonamiento` se manda como `reasoning_effort` ("none", "low", "medium",
+    "high"). Vacío no manda nada y cada modelo usa lo suyo. En los modelos
+    locales con razonamiento conviene "none": con él activo, qwen3.5:4b gastó
+    todo el tope de tokens pensando y devolvió la respuesta vacía.
+    """
     global _api_key_provider
     _api_key_provider = api_key_provider
     if modelo is not None:
@@ -26,6 +46,17 @@ def configurar(api_key_provider, modelo: str | None = None,
         _ajustes["temperatura"] = temperatura
     if max_tokens is not None:
         _ajustes["max_tokens"] = max_tokens
+    if servidor is not None:
+        _ajustes["servidor"] = servidor or None
+    if timeout is not None:
+        _ajustes["timeout"] = timeout
+    if razonamiento is not None:
+        _ajustes["razonamiento"] = razonamiento or None
+
+
+def ajustes() -> dict:
+    """Copia de la configuración vigente, para dejarla registrada."""
+    return dict(_ajustes)
 
 
 def _cliente() -> OpenAI:
@@ -34,7 +65,12 @@ def _cliente() -> OpenAI:
             "El módulo ia no tiene API key. Llama a ia.configurar(...) pasándole "
             "una función que devuelva la key."
         )
-    return OpenAI(api_key=_api_key_provider())
+    extra = {}
+    if _ajustes["servidor"]:
+        extra["base_url"] = _ajustes["servidor"]
+    if _ajustes["timeout"]:
+        extra["timeout"] = _ajustes["timeout"]
+    return OpenAI(api_key=_api_key_provider(), **extra)
 
 
 class Texto(str):
@@ -82,6 +118,8 @@ def completar(system: str, user: str, *, temperatura: float | None = None,
               max_tokens: int | None = None, json_mode: bool = False) -> Respuesta:
     """Una llamada al modelo. Devuelve el texto y el consumo de tokens."""
     extra = {"response_format": {"type": "json_object"}} if json_mode else {}
+    if _ajustes["razonamiento"]:
+        extra["reasoning_effort"] = _ajustes["razonamiento"]
 
     resp = _cliente().chat.completions.create(
         model=_ajustes["modelo"],
@@ -96,7 +134,7 @@ def completar(system: str, user: str, *, temperatura: float | None = None,
 
     uso = resp.usage
     return Respuesta(
-        texto=resp.choices[0].message.content or "",
+        texto=_PENSAMIENTO.sub("", resp.choices[0].message.content or "").strip(),
         meta={
             "modelo": _ajustes["modelo"],
             "prompt_tokens": getattr(uso, "prompt_tokens", None),

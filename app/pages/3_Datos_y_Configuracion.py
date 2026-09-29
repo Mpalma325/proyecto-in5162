@@ -187,8 +187,8 @@ with tab_datos:
             st.caption(f"Se extraen a `entregas/{tarea_entregas}/` — no se mezclan con otras tareas.")
 
             subidos = st.file_uploader(
-                "Entregas (.zip o .html)",
-                type=["zip", "html"],
+                "Entregas (.zip, .rar o .html)",
+                type=["zip", "rar", "html"],
                 accept_multiple_files=True,
                 key=f"up_entregas_{tarea_entregas}",
             )

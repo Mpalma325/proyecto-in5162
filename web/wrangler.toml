@@ -1,0 +1,42 @@
+# Sitio del curso: las páginas de Streamlit en la web. Ver SITIO.md.
+#
+# El Worker sirve la página (public/) y la API sobre D1 y R2. Los trabajos los
+# ejecuta el motor (../motor/, en Cloud Run); el Worker nunca ve las
+# credenciales del correo ni la clave de OpenAI.
+
+name = "in5162"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+# Las rutas /api/* las atiende el Worker; el resto son archivos de public/.
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "in5162"
+# El id de la base publicada (wrangler d1 create in5162). En local no se usa.
+database_id = "138d1b3d-0024-4193-93ef-0c6b92d92148"
+
+# Los archivos de cada semestre, con las mismas rutas que en disco:
+# semestres/2026-2/alumnos.csv, .../tests_semanales/prompts/evaluar_respuesta.md
+[[r2_buckets]]
+binding = "ARCHIVOS"
+bucket_name = "in5162-semestres"
+
+[vars]
+# "cloudflare": exige que la petición venga autenticada por Cloudflare Access.
+# "abierto": solo para desarrollo local. Por defecto se exige: si alguien olvida
+# configurar Access al desplegar, la página no muestra datos en vez de
+# mostrárselos a cualquiera.
+ACCESO = "cloudflare"
+# De la aplicación de Access: el dominio del equipo de Zero Trust y su
+# "Application Audience (AUD) Tag". Con ACCESO = "cloudflare", mientras estén
+# vacíos no entra nadie (ver src/acceso.ts).
+ACCESO_EQUIPO = "sparkling-recipe-d2a3.cloudflareaccess.com"
+ACCESO_AUD = "67ce97d02aab25423cfdc875b01d4c90ca8445505ef3293ee54e46211f6f118a"
+# Dónde está el motor que ejecuta los trabajos (Cloud Run). Para desarrollar,
+# .dev.vars puede apuntarlo al motor local: MOTOR_URL=http://127.0.0.1:8090
+MOTOR_URL = "https://in5162-motor-43qsaa7isa-uc.a.run.app"

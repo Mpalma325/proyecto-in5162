@@ -1,0 +1,6 @@
+# Mismo criterio que .gcloudignore: solo el código del motor.
+*
+!Dockerfile
+!modulos/
+!motor/
+**/__pycache__

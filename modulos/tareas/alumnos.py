@@ -12,6 +12,8 @@ import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from modulos import datos
+
 from . import config
 
 
@@ -29,25 +31,44 @@ def _similitud(a: str, b: str) -> float:
     return SequenceMatcher(None, _normalizar(a), _normalizar(b)).ratio()
 
 
+def _tokens(s: str) -> set[str]:
+    """Los tokens de un nombre normalizado, sin puntos ni guiones."""
+    limpio = _normalizar(s).replace('.', ' ').replace('-', ' ')
+    return {t for t in limpio.split() if t}
+
+
+def _por_nombre_incompleto(nombre_html: str, alumnos: list[dict]) -> str | None:
+    """
+    El caso frecuente: el alumno firma con su nombre y un apellido, y el roster
+    trae los dos. La similitud de texto lo deja en 0.72-0.81, bajo el umbral.
+
+    Se acepta solo si todos los tokens del HTML están en el nombre del roster, hay
+    al menos dos, y ningún otro alumno cumple lo mismo. Pedir dos tokens deja
+    fuera el apellido suelto, que es justo donde el emparejamiento se equivoca, y
+    exigir unicidad evita elegir entre dos alumnos que comparten el primer nombre.
+    """
+    tokens = _tokens(nombre_html)
+    if len(tokens) < 2:
+        return None
+    contenidos = [a for a in alumnos if tokens <= _tokens(a['nombre'])]
+    if len(contenidos) == 1:
+        return contenidos[0]['correo']
+    return None
+
+
 def cargar_alumnos() -> list[dict]:
     """
-    Carga data/alumnos.csv como lista de dicts con keys 'nombre' y 'correo'.
-    """
-    path = config.DATA / "alumnos.csv"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"No existe {path}. "
-            f"Genera primero con: python -m modulos.tareas.alumnos <csv_crudo_de_DataCamp>"
-        )
+    El roster del semestre activo, como lista de dicts con 'nombre' y 'correo'.
 
+    Sale de datos.alumnos, que es el único roster del curso; este flujo tenía el
+    suyo aparte, con los mismos alumnos escritos en otras columnas.
+    """
     alumnos = []
-    with path.open(encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            nombre = (row.get('nombre') or '').strip()
-            correo = (row.get('correo') or '').strip()
-            if nombre and correo:
-                alumnos.append({'nombre': nombre, 'correo': correo})
+    for fila in datos.alumnos.leer():
+        nombre = (fila.get('Nombre') or '').strip()
+        correo = (fila.get('Correo') or '').strip()
+        if nombre and correo:
+            alumnos.append({'nombre': nombre, 'correo': correo})
     return alumnos
 
 
@@ -98,6 +119,10 @@ def buscar_correo(nombre_html: str, alumnos: list[dict],
 
     if puntuados and puntuados[0][1] >= umbral_auto:
         return puntuados[0][0]['correo'], puntuados
+
+    correo = _por_nombre_incompleto(nombre_html, alumnos)
+    if correo:
+        return correo, puntuados
 
     candidatos = [(a, s) for a, s in puntuados if s >= umbral_candidato][:5]
     return None, candidatos

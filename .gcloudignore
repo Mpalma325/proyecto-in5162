@@ -1,0 +1,13 @@
+# Qué se sube a Google para construir el motor.
+#
+# Se permite en vez de prohibir: se ignora TODO y se habilita solo lo necesario.
+# Así, un archivo nuevo con datos de alumnos o credenciales nunca viaja por
+# accidente. semestres/, .env y anexo/ quedan fuera sin tener que nombrarlos.
+*
+!Dockerfile
+!modulos/
+!modulos/**
+!motor/
+!motor/**
+modulos/**/__pycache__/
+motor/**/__pycache__/

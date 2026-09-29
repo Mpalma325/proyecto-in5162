@@ -12,6 +12,11 @@ import email
 import re
 from email.header import decode_header
 
+# La línea con que un cliente de correo presenta la cita del mensaje original:
+# "El vie, 25 sep 2026 a las 12:00, <in5162@uchile.cl> escribió:",
+# "El El vie, …" (algunas apps del celular) u "On Fri, … wrote:".
+_ENCABEZADO_CITA = re.compile(r'^(?:El |On ).*(?:escribi[óo]|wrote)\s*:?\s*$')
+
 
 def _decodificar_header(raw: str) -> str:
     if not raw:
@@ -109,6 +114,9 @@ def _recuperar_de_la_cita(lineas: list) -> str:
 def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
     import re
 
+    # Los correos llegan con fines de línea de Windows (\r\n). Con el \r
+    # colgando, los patrones que terminan en fin de línea no calzan.
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
     lineas = texto.split('\n')
 
     es_citada = [l.lstrip().startswith(">") for l in lineas]
@@ -118,14 +126,29 @@ def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
         primera_cita = next(i for i, c in enumerate(es_citada) if c)
         ultima_cita = max(i for i, c in enumerate(es_citada) if c)
 
+        # El encabezado "El … escribió:" va justo antes de la cita, a veces con
+        # una línea en blanco de por medio (así lo dejan algunas apps del
+        # celular) o partido en dos líneas. Mirar solo la línea anterior lo
+        # dejaba pegado a la respuesta.
         fin_antes = primera_cita
-        if fin_antes > 0:
-            linea_prev = lineas[fin_antes - 1].strip()
-            if re.match(r'^(El |On ).*(escribió|wrote|escribio)\s*:?\s*$', linea_prev):
-                fin_antes -= 1
+        j = fin_antes - 1
+        while j >= 0 and not lineas[j].strip():
+            j -= 1
+        if j >= 0 and _ENCABEZADO_CITA.match(lineas[j].strip()):
+            fin_antes = j
+        elif j >= 1 and _ENCABEZADO_CITA.match(f"{lineas[j - 1].strip()} {lineas[j].strip()}"):
+            fin_antes = j - 1
 
         texto_antes = "\n".join(lineas[:fin_antes]).strip()
         texto_despues = "\n".join(lineas[ultima_cita + 1:]).strip()
+
+        # Respondió intercalado: su texto va entre bloques citados, debajo de
+        # cada pregunta. Quedarse solo con lo de arriba o lo de abajo perdía
+        # respuestas; se toma todo lo que no es cita.
+        intercalado = any(lineas[i].strip() and not es_citada[i]
+                          for i in range(primera_cita, ultima_cita))
+        if intercalado:
+            return _limpiar_lineas(_sin_cita("\n".join(lineas)))
 
         if len(texto_despues) > len(texto_antes):
             return _limpiar_lineas(texto_despues)
@@ -157,9 +180,16 @@ def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
         "\n________________________________",
     ]
     patrones_regex = [
-        r'\nEl \w{3},?\s+\d{1,2}\s+\w{3,4}\.?\s+\d{4}',          # Gmail español: "El lun, 4 may 2026"
+        # Gmail español: "El lun, 4 may 2026". Algunas apps del celular repiten
+        # el "El" ("El El vie, 25 sep. 2026 a la(s) 12:00, … escribió:"), y sin
+        # el (?:El )+ la cita completa quedaba pegada a la respuesta.
+        r'\n(?:El )+\w{3},?\s+\d{1,2}\s+\w{3,4}\.?\s+\d{4}',
         r'\nOn \w{3},?\s+\w{3,4}\.?\s+\d{1,2},?\s+\d{4}',        # Gmail inglés
         r'\nEl \d{2}-\d{2}-\d{4},? a las',                       # Apple Mail español: "El 29-05-2026, a las"
+        # Cualquier otro encabezado de cita: una línea que empieza con "El " u
+        # "On " y termina en "escribió:" / "wrote:", aunque venga partida en dos
+        # líneas (pasa cuando el nombre del remitente es largo).
+        r'\n(?:El |On )[^\n]{0,200}?(?:\n[^\n]{0,120}?)?(?:escribi[óo]|wrote)\s*:[ \t]*(?=\n|$)',
     ]
 
     idx_corte = len(texto)
@@ -210,7 +240,7 @@ def _sin_cita(texto: str) -> str:
         limpia = linea.lstrip()
         if limpia.startswith(">"):
             continue
-        if re.match(r'^(El |On ).*(escribi[óo]|wrote)\s*:?\s*$', limpia):
+        if _ENCABEZADO_CITA.match(limpia.strip()):
             continue
         fuera.append(linea)
     return chr(10).join(fuera)

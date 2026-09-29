@@ -9,6 +9,7 @@ from modulos.datos import esquema as _esquema
 
 from . import config
 from modulos.mail import enviar_correo, buscar_respuestas_semana, marcar_leido
+from modulos.datos import candidatos as _candidatos
 from .ia_prompts import evaluar_respuesta
 from .preguntas import cargar_semana, SemanaInfo
 
@@ -120,7 +121,8 @@ def _es_repregunta(corr: dict) -> bool:
     return origen is not None
 
 
-def main(semana: int, dry_run: bool = False) -> None:
+def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> None:
+    """`solo`: si se pasa, evalúa solo a esos correos; el resto queda sin leer."""
     _anunciar_semestre()
     info = cargar_semana(semana)
     filas = [a for a in _datos.alumnos.leer() if a.get("Correo", "").strip()]
@@ -138,6 +140,8 @@ def main(semana: int, dry_run: bool = False) -> None:
     fallidos = 0
     ya_evaluados_en_esta_corrida = set()
     repreguntas = 0
+    candidatos = []  # lo que se evaluaría, para elegir en la página
+    no_elegidos = 0
 
     for corr in correos:
         # Si contesta a un feedback que ya le mandamos, no es una respuesta
@@ -157,6 +161,18 @@ def main(semana: int, dry_run: bool = False) -> None:
 
         nombre = alumno.get("Nombre", "?")
         correo_alumno = alumno.get("Correo", "").strip()
+        candidatos.append({
+            "correo": correo_alumno.lower(), "nombre": nombre,
+            "grupo": alumno.get("Grupo", ""), "llegada": corr.get("fecha"),
+            "ya_tiene_nota": (_datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {})
+            .get("Nota", "").strip(),
+            "respuesta": corr.get("texto", "").strip()[:3000],
+        })
+
+        if solo is not None and correo_alumno.lower() not in solo:
+            no_elegidos += 1
+            print(f"  ⋯ {nombre:30s} no elegido: su correo queda sin leer")
+            continue
 
         # No se re-evalúa a quien ya tiene nota: gasta API y le manda un
         # correo repetido al alumno.
@@ -264,17 +280,26 @@ def main(semana: int, dry_run: bool = False) -> None:
                   f"Volver a correr este paso es seguro: los que ya tienen nota "
                   f"no se re-evalúan, solo se marcan.")
 
+    if dry_run:
+        _candidatos.guardar("tests_semanales", semana, candidatos)
+        if candidatos:
+            print(f"\n{len(candidatos)} respuesta(s) para elegir cuáles evaluar.")
+
     if correos:
-        print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}")
+        print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}"
+              + (f"  No elegidos: {no_elegidos}" if no_elegidos else ""))
         if repreguntas:
             print(f"Repreguntas sobre el feedback: {repreguntas} (sin leer; las atiende: python -m modulos.tests.tutoria {semana})")
 
     estados = {e["Correo"]: e for e in _datos.notas.leer(flujo=_datos.TESTS, item=semana)}
+    # Quien tiene nota entregó, aunque "Respondio" esté vacío (pasa con datos
+    # migrados). Sin esto salía a la vez evaluado y "no entregó".
     sin_entregar = [
         f for f in filas
         if (est := estados.get(f["Correo"].strip().lower()))
         and est.get("Enviado", "").strip()
         and not est.get("Respondio", "").strip()
+        and not est.get("Nota", "").strip()
     ]
     if sin_entregar:
         print()
@@ -291,7 +316,7 @@ def _parsear_args() -> tuple[int, bool]:
         al = a.lower()
         if al == "--dry-run":
             dry_run = True
-        elif a.isdigit():
+        elif a.isdigit() and semana is None:
             semana = int(a)
 
     if semana is None:
@@ -306,4 +331,4 @@ def _parsear_args() -> tuple[int, bool]:
 
 if __name__ == "__main__":
     semana, dry_run = _parsear_args()
-    main(semana, dry_run)
+    main(semana, dry_run, solo=_candidatos.solo_de_argv())

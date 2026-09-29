@@ -1,0 +1,20 @@
+{
+  "name": "in5162-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preparar": "node scripts/copiar-py.mjs",
+    "dev": "npm run preparar && wrangler dev",
+    "db:local": "wrangler d1 execute in5162 --local --file schema.sql",
+    "deploy": "npm run preparar && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260922.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.136.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260921.1": true
+  }
+}
