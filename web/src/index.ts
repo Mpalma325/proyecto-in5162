@@ -81,6 +81,10 @@ const PARAMETROS: Record<string, (v: string) => boolean> = {
   GRUPO_SEED: (v) => /^\d{1,5}$/.test(v),
 };
 
+// Material del curso que el modelo usa como contexto (modulos/tareas/contexto.py).
+// Es lo único que se puede borrar desde la página.
+const CONTEXTO = /^tareas\/data\/clases\/[^/]{1,200}\.(html|md|txt|R|r|py)$/;
+
 // Qué archivos del semestre puede escribir una persona desde la página: lo
 // mismo que se edita hoy en Streamlit. El resto solo lo escriben los trabajos.
 const EDITABLES = [
@@ -92,6 +96,8 @@ const EDITABLES = [
   // Y la asignación de preguntas elegida a mano en el chequeo de Tareas.
   /^tareas\/data\/entregas\/(T\d{1,2})\/asignacion_\1\.csv$/,
   /^tareas\/data\/entregas\/T\d{1,2}\/[^/]{1,200}\.(html|Rmd)$/,
+  // El contexto del curso para el modelo: clases renderizadas, apuntes, código.
+  CONTEXTO,
 ];
 const editable = (ruta: string) => EDITABLES.some((r) => r.test(ruta));
 
@@ -289,6 +295,21 @@ async function subirArchivo(req: Request, env: Env, semestre: string, ruta: stri
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).bind(semestre, ruta, quien, t, actual ? actual.size : null, cuerpo.byteLength, versionAnterior).run();
   return json({ ruta, bytes: cuerpo.byteLength });
+}
+
+/** Borra un archivo, dejando antes su última versión en el historial. */
+async function borrarArchivo(env: Env, semestre: string, ruta: string, quien: string): Promise<Response> {
+  const actual = await env.ARCHIVOS.get(clave(semestre, ruta));
+  if (!actual) return error(404, "No existe ese archivo.");
+  const t = ahora();
+  const versionAnterior = `historial/${semestre}/${ruta}/${t}`;
+  await env.ARCHIVOS.put(versionAnterior, actual.body);
+  await env.ARCHIVOS.delete(clave(semestre, ruta));
+  await env.DB.prepare(
+    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior)
+     VALUES (?, ?, ?, ?, ?, 0, ?)`,
+  ).bind(semestre, ruta, quien, t, actual.size, versionAnterior).run();
+  return json({ ruta, borrado: true });
 }
 
 /** Quién escribe desde el motor: "trabajo <id>" o "subida desde el PC". Solo texto simple. */
@@ -557,6 +578,13 @@ export default {
           return error(409, "Esa entrega ya existe.");
         }
         return await subirArchivo(req, env, partes[2], ruta, quien);
+      }
+      // Borrar: solo el contexto del curso. El resto de los archivos no se borra desde la página.
+      if (partes[1] === "archivo" && partes[2] && req.method === "DELETE") {
+        const ruta = partes.slice(3).join("/");
+        if (!ID_VALIDO.test(partes[2]) || !RUTA_VALIDA.test(ruta)) return error(400, "Ruta inválida.");
+        if (!CONTEXTO.test(ruta)) return error(403, "Ese archivo no se borra desde la página.");
+        return await borrarArchivo(env, partes[2], ruta, quien);
       }
       // Historial de ediciones de un semestre (o de un archivo) y sus versiones anteriores.
       if (partes[1] === "historial" && partes[2] && req.method === "GET") {

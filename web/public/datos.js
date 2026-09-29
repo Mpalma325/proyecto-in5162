@@ -458,9 +458,92 @@ function editorPrompt(ruta) {
   return contenedor;
 }
 
+// ---------------------------------------------------------------- contexto del curso
+
+const CARPETA_CONTEXTO = "tareas/data/clases/";
+const EXT_CONTEXTO = /\.(html|md|txt|R|r|py)$/;
+
+/**
+ * El material del curso que el modelo recibe como contexto al generar las
+ * preguntas de tareas: clases renderizadas, apuntes, código. Sirve para
+ * cualquier curso, no solo uno con R.
+ */
+function vistaContexto() {
+  const lista = archivos.filter((a) => a.ruta.startsWith(CARPETA_CONTEXTO) && EXT_CONTEXTO.test(a.ruta))
+    .sort((a, b) => a.ruta.localeCompare(b.ruta));
+  const mensaje = el("div");
+  const ficheros = el("input", { type: "file", multiple: true, accept: ".html,.md,.txt,.R,.py" });
+  const subir = el("button", { class: "primario", type: "button" }, "Subir");
+
+  subir.addEventListener("click", async () => {
+    const elegidos = [...ficheros.files];
+    if (!elegidos.length) { mensaje.replaceChildren(caja("aviso", "Elige primero los archivos.")); return; }
+    const malos = elegidos.filter((f) => !EXT_CONTEXTO.test(f.name));
+    if (malos.length) {
+      mensaje.replaceChildren(caja("aviso", `Formato no admitido: ${malos.map((f) => f.name).join(", ")}. `
+        + "Se aceptan .html, .md, .txt, .R y .py."));
+      return;
+    }
+    const reemplazos = elegidos.filter((f) => existe(CARPETA_CONTEXTO + nombreContexto(f.name)));
+    if (reemplazos.length && !confirm(`Ya existen y se van a reemplazar: ${reemplazos.map((f) => f.name).join(", ")}.`
+      + "\nLa versión anterior queda en el historial. ¿Seguir?")) return;
+    subir.disabled = true;
+    const listos = [];
+    try {
+      for (const f of elegidos) {
+        mensaje.replaceChildren(caja("info", `Subiendo ${f.name}…`));
+        await guardarArchivo(CARPETA_CONTEXTO + nombreContexto(f.name), await f.arrayBuffer(),
+          f.type || "application/octet-stream");
+        listos.push(f.name);
+      }
+      dibujar();
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `Subí ${listos.length}; falló ${elegidos[listos.length]?.name}: ${e.message}`));
+    } finally {
+      subir.disabled = false;
+    }
+  });
+
+  const borrar = async (ruta) => {
+    if (!confirm(`¿Borrar ${nombre(ruta)} del contexto? Queda una copia en el historial.`)) return;
+    try {
+      await api(urlArchivo(ruta), { method: "DELETE" });
+      archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
+      dibujar();
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude borrarlo: ${e.message}`));
+    }
+  };
+
+  return [
+    el("p", {}, "Material del curso que la IA recibe como contexto al generar las preguntas de tareas: clases "
+      + "renderizadas (.html), apuntes (.md, .txt) o código (.R, .py). De una clase de RMarkdown se toma el código "
+      + "R; de lo demás, el texto. Así las preguntas se ajustan a los métodos y el estilo del curso."),
+    lista.length ? null : caja("aviso", "Este semestre no tiene contexto: las preguntas de tareas se generan sin "
+      + "ver el material del curso."),
+    el("div", { class: "fila-campos" }, el("label", { class: "campo" }, "Archivos", ficheros), subir),
+    el("p", { class: "nota-pie" }, "Para actualizar una clase, súbela de nuevo con el mismo nombre. Cada archivo "
+      + "aporta como máximo 40 mil caracteres."),
+    mensaje,
+    lista.length ? el("div", { class: "tabla-envoltura" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Archivo", "Tamaño", "Subido", ""].map((c) => el("th", {}, c)))),
+      el("tbody", {}, lista.map((a) => el("tr", {},
+        el("td", {}, nombre(a.ruta)),
+        el("td", {}, tamano(a.bytes)),
+        el("td", {}, a.subido ? new Date(a.subido).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" }) : ""),
+        el("td", {}, el("button", { class: "enlace", type: "button", onclick: () => borrar(a.ruta) }, "Borrar"))))))) : null,
+  ];
+}
+
+// El Worker acepta casi cualquier nombre, pero sin \ : * ? " < > | ni "..".
+function nombreContexto(n) {
+  return n.replace(/[\\:*?"<>|]/g, "_").replace(/\.{2,}/g, ".");
+}
+
 // ---------------------------------------------------------------- historial
 
-const tamano = (b) => (b == null ? "—" : b < 1024 ? `${b} B` : `${(b / 1024).toFixed(1)} KB`);
+const tamano = (b) => (b == null ? "—" : b < 1024 ? `${b} B`
+  : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 
 /** Quién cambió qué archivo y cuándo, con la versión que había antes para bajarla. */
 function vistaHistorial() {
@@ -696,6 +779,7 @@ const SUBPESTANAS = [
   ["entregas", "Entregas (Tareas)", vistaEntregas],
   ["feedback", "Feedback Tareas", vistaFeedback],
   ["prompts", "Prompts", vistaPrompts],
+  ["contexto", "Contexto del curso", vistaContexto],
   ["historial", "Historial", vistaHistorial],
 ];
 

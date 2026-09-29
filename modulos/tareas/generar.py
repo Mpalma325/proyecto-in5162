@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from . import asignacion as _asignacion
+from . import contexto as _contexto
 from . import config, storage
 from .alumnos import cargar_alumnos, resolver_interactivo
 from .limpieza_html import (limpiar_html, extraer_secciones, extraer_autores,
@@ -189,6 +190,7 @@ def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
     alumnos = cargar_alumnos()
     elegido = _asignacion.leer(tarea)
     print(f"Tarea: {tarea} | {len(alumnos)} alumnos en CSV | {len(archivos)} HTMLs a procesar")
+    print(_contexto.describir())
     if elegido:
         print(f"  {len(elegido)} asignación(es) elegidas a mano en asignacion_{tarea}.csv")
 

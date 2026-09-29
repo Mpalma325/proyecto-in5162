@@ -208,6 +208,19 @@ async function guardarAsignacion(selects, mensaje) {
   mensaje.replaceChildren(caja("exito", `Guardado en asignacion_${tarea}.csv. Generar va a usar esto.`));
 }
 
+/** Qué material del curso va a ver el modelo al generar (modulos/tareas/contexto.py). */
+function lineaContexto(c) {
+  if (!c) return null; // chequeo guardado antes de que existiera este dato
+  const enlace = el("a", { href: "/datos#datos/contexto" }, "Datos y Configuración → Contexto del curso");
+  if (!c.activo) return el("p", { class: "nota-pie" }, "Contexto del curso: apagado.");
+  if (!c.archivos.length) {
+    return caja("aviso", el("span", {}, "Sin contexto del curso: las preguntas se van a generar sin ver el material "
+      + "de las clases. Súbelo en ", enlace, "."));
+  }
+  return el("p", { class: "nota-pie" }, `Contexto del curso: ${c.archivos.length} archivo(s), `
+    + `${Math.round(c.caracteres / 1000)} mil caracteres (`, enlace, ").");
+}
+
 function dibujarChequeo(informe, destino, cuando) {
   const grupos = informe.grupos;
   if (!grupos.length) {
@@ -222,6 +235,7 @@ function dibujarChequeo(informe, destino, cuando) {
   const partes = [
     el("p", { class: "nota-pie" }, `Revisado el ${cuando} · `,
       el("button", { class: "enlace", type: "button", onclick: () => revisar(destino) }, "Volver a revisar")),
+    lineaContexto(informe.contexto),
     el("div", { class: "kpis", style: "grid-template-columns: repeat(3, 1fr)" },
       kpi("Preguntas que se generarían", aGenerar), kpi("Sin correo, a resolver", sinCorreo),
       kpi("Grupos que se saltarían", grupos.length - activos.length)),
@@ -288,7 +302,8 @@ async function revisar(destino) {
 function chequeoAlDia() {
   const guardado = buscar(rutaChequeo());
   if (!guardado) return false;
-  const influyen = archivos.filter((a) => a.ruta.startsWith(carpetaEntregas()) || a.ruta === "alumnos.csv");
+  const influyen = archivos.filter((a) => a.ruta.startsWith(carpetaEntregas()) || a.ruta === "alumnos.csv"
+    || a.ruta.startsWith("tareas/data/clases/"));
   return influyen.every((a) => a.subido <= guardado.subido);
 }
 

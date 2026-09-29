@@ -17,6 +17,7 @@ import sys
 from modulos import datos
 
 from . import asignacion as _asignacion
+from . import contexto as _contexto
 from . import config
 from .alumnos import cargar_alumnos, buscar_correo
 from .generar import _leer_entrega, _asignar_preguntas
@@ -91,6 +92,7 @@ def revisar(tarea: str) -> dict:
         "grupos": grupos,
         "sin_entrega": sin_entrega,
         "total_roster": len(roster),
+        "contexto": _contexto.resumen(),
     }
 
 
@@ -100,7 +102,8 @@ def imprimir(informe: dict) -> int:
 
     print(f"=== Chequeo previo — {informe['tarea']} ===")
     print(f"[CHEQUEO] semestre {_sem.activo_o_error()}")
-    print(f"Entregas en {informe['carpeta']}\n")
+    print(f"Entregas en {informe['carpeta']}")
+    print(_contexto.describir(informe["contexto"]) + "\n")
 
     if not informe["grupos"]:
         print("No hay HTMLs en esa carpeta. Súbelos desde la app, en "
