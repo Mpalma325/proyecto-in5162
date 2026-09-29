@@ -156,7 +156,22 @@ def conversacion(correo: str, flujo: str, item: str,
         if f.get("Correo", "").strip().lower() == correo
         and f.get("Evento") in de_interes
     ]
-    return sorted(filas, key=lambda f: (int(f.get("Ronda") or 0), f.get("Timestamp", "")))
+    return sorted(filas, key=lambda f: (int(f.get("Ronda") or 0), _instante(f.get("Timestamp"))))
+
+
+def _instante(timestamp: str | None):
+    """El momento real de un evento, para ordenar.
+
+    Ordenar el texto no sirve: un equipo registra en -03:00, otro en -07:00 y
+    la nube en UTC, y "10:15-03:00" queda antes que "08:00-07:00" aunque sea
+    después. Lo que no se puede leer va al principio.
+    """
+    from datetime import datetime, timezone
+    try:
+        t = datetime.fromisoformat((timestamp or "").strip())
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
 def como_interacciones(semestre_id: str | None = None) -> list[dict]:
@@ -309,7 +324,7 @@ def fusionar(otro, semestre_id: str | None = None, simular: bool = False) -> dic
         return resumen
 
     todas = propias + nuevas
-    todas.sort(key=lambda f: (f.get("Timestamp") or ""))
+    todas.sort(key=lambda f: _instante(f.get("Timestamp")))
 
     # `_csv.escribir` descarta lo que no esté en las columnas dadas, y el log
     # de otro equipo puede traer una columna que este todavía no tiene. Se

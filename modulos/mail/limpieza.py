@@ -15,7 +15,10 @@ from email.header import decode_header
 # La línea con que un cliente de correo presenta la cita del mensaje original:
 # "El vie, 25 sep 2026 a las 12:00, <in5162@uchile.cl> escribió:",
 # "El El vie, …" (algunas apps del celular) u "On Fri, … wrote:".
-_ENCABEZADO_CITA = re.compile(r'^(?:El |On ).*(?:escribi[óo]|wrote)\s*:?\s*$')
+# Los dos puntos son obligatorios: "El autor lo escribió" es una frase del alumno.
+_ENCABEZADO_CITA = re.compile(r'^(?:El |On ).*(?:escribi[óo]|wrote)\s*:\s*$')
+# La segunda mitad de un encabezado partido en dos líneas: "in5162@uchile.cl> escribió:".
+_FIN_ENCABEZADO = re.compile(r'^(?!El |On ).*@.*(?:escribi[óo]|wrote)\s*:\s*$')
 
 
 def _decodificar_header(raw: str) -> str:
@@ -187,9 +190,13 @@ def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
         r'\nOn \w{3},?\s+\w{3,4}\.?\s+\d{1,2},?\s+\d{4}',        # Gmail inglés
         r'\nEl \d{2}-\d{2}-\d{4},? a las',                       # Apple Mail español: "El 29-05-2026, a las"
         # Cualquier otro encabezado de cita: una línea que empieza con "El " u
-        # "On " y termina en "escribió:" / "wrote:", aunque venga partida en dos
-        # líneas (pasa cuando el nombre del remitente es largo).
-        r'\n(?:El |On )[^\n]{0,200}?(?:\n[^\n]{0,120}?)?(?:escribi[óo]|wrote)\s*:[ \t]*(?=\n|$)',
+        # "On ", trae el correo del remitente (@) y termina en "escribió:" /
+        # "wrote:". También partida en dos líneas (nombre del remitente largo),
+        # pero la segunda no puede empezar con "El "/"On ": si no, una línea
+        # del alumno que empieza con "El" se tomaba como parte del encabezado.
+        r'\n(?:El |On )[^\n]{0,200}?@[^\n]{0,120}?(?:escribi[óo]|wrote)\s*:[ \t]*(?=\n|$)',
+        r'\n(?:El |On )[^\n]{0,200}?\n(?!El |On )[^\n]{0,120}?@[^\n]{0,120}?'
+        r'(?:escribi[óo]|wrote)\s*:[ \t]*(?=\n|$)',
     ]
 
     idx_corte = len(texto)
@@ -234,13 +241,18 @@ def _es_solo_saludo(texto: str) -> bool:
 
 
 def _sin_cita(texto: str) -> str:
-    """Quita las líneas citadas y el encabezado 'El ... escribió:'."""
+    """Quita las líneas citadas y el encabezado 'El ... escribió:', también partido en dos."""
     fuera = []
     for linea in texto.splitlines():
         limpia = linea.lstrip()
         if limpia.startswith(">"):
             continue
         if _ENCABEZADO_CITA.match(limpia.strip()):
+            continue
+        # Segunda mitad de un encabezado partido: se va junto con la primera.
+        if (_FIN_ENCABEZADO.match(limpia.strip()) and fuera
+                and re.match(r'^(?:El |On )', fuera[-1].strip())):
+            fuera.pop()
             continue
         fuera.append(linea)
     return chr(10).join(fuera)

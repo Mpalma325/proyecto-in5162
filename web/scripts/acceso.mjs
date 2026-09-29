@@ -72,6 +72,9 @@ async function aplicacion(nombre, dominio, politica) {
   const cuerpo = {
     name: nombre, domain: dominio, type: "self_hosted", session_duration: "24h",
     app_launcher_visible: false,
+    // La cookie de sesión no viaja en pedidos que otra página arme contra este
+    // sitio (CSRF). El Worker además exige que las escrituras vengan de acá.
+    same_site_cookie_attribute: "lax", http_only_cookie_attribute: true,
   };
   const ya = apps.find((a) => a.name === nombre || a.domain === dominio);
   const app = ya ? await cf("PUT", `${base}/apps/${ya.id}`, { ...cuerpo, id: ya.id })

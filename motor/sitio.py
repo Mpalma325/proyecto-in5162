@@ -60,10 +60,17 @@ def bajar_archivo(semestre: str, ruta: str) -> bytes:
     return _pedir("GET", _ruta_archivo(semestre, ruta))
 
 
-def subir_archivo(semestre: str, ruta: str, datos: bytes, origen: str = "motor") -> None:
-    """`origen` queda en el historial de ediciones: "trabajo <id>"."""
+def subir_archivo(semestre: str, ruta: str, datos: bytes, origen: str = "motor",
+                  etag: str | None = None) -> None:
+    """`origen` queda en el historial de ediciones: "trabajo <id>".
+
+    `etag` es el de la versión que se bajó: si en la nube cambió desde entonces,
+    el sitio responde 409 en vez de pisarla. Sin etag, el archivo tiene que ser
+    nuevo.
+    """
+    condicion = {"If-Match": etag} if etag else {"If-None-Match": "*"}
     _pedir("PUT", _ruta_archivo(semestre, ruta), datos, "application/octet-stream",
-           extra={"X-In5162-Origen": origen})
+           extra={"X-In5162-Origen": origen, **condicion})
 
 
 def ver_trabajo(id_trabajo: str) -> dict:
@@ -81,9 +88,16 @@ def informar(id_trabajo: str, salida: str = "", estado: str | None = None,
            json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"))
 
 
+def _sin_nan(v):
+    # Una nota "nan" en notas.csv llega como float('nan'), y json.dumps la
+    # escribe como NaN, que no es JSON válido: el sitio rechazaba todo el panel.
+    return None if isinstance(v, float) and v != v else v
+
+
 def subir_panel(semestre: str, filas: list[dict]) -> None:
+    limpias = [{k: _sin_nan(v) for k, v in f.items()} for f in filas]
     _pedir("POST", f"subir/{semestre}",
-           json.dumps({"filas": filas}, ensure_ascii=False).encode("utf-8"))
+           json.dumps({"filas": limpias}, ensure_ascii=False).encode("utf-8"))
 
 
 def leer_parametros() -> dict[str, str]:

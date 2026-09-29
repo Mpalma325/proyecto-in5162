@@ -1,29 +1,31 @@
 """
-Sube el panel de cada semestre al sitio web del curso.
+Sube semestres de este equipo al sitio web del curso (la migración a la nube).
 
-El sitio muestra la reportería a quien tenga acceso, desde cualquier equipo o
-teléfono. Los datos siguen viviendo acá, en semestres/<id>/; lo que se sube es
-el resultado de `datos.reportes.panel()`, la misma tabla que dibuja Streamlit.
+Desde que el curso se opera en el sitio, **la nube es la fuente**: el motor
+mantiene al día los archivos y la reportería. Por eso esto solo agrega lo que
+allá no existe: un semestre nuevo, un archivo nuevo. Lo que ya está en la nube
+y es distinto acá no se toca (la copia de acá suele ser la vieja), salvo que se
+pida con --forzar; en ese caso la versión reemplazada queda en el historial.
 
-**Solo lee.** No manda correos, no llama al modelo y no modifica ningún CSV.
+    python -m modulos.web.subir 2026-2 --archivos     # agrega lo que falta de 2026-2
+    python -m modulos.web.subir --archivos            # todos los semestres y la plantilla
+    python -m modulos.web.subir 2026-2 --simular      # dice qué haría, sin tocar nada
+    python -m modulos.web.subir 2026-2 --archivos --forzar   # reemplaza también lo distinto
 
-    python -m modulos.web.subir               # el panel de todos los semestres
-    python -m modulos.web.subir 2026-2        # uno
-    python -m modulos.web.subir --archivos    # además, las carpetas completas a R2
-    python -m modulos.web.subir --simular     # dice qué subiría, sin conectarse
+Sin --archivos solo se sube la reportería, y solo de semestres que la nube
+todavía no tiene. **No manda correos, no llama al modelo y no modifica ningún
+archivo de este equipo.** Para traer lo de la nube acá: `modulos.web.bajar`.
 
-Con --archivos se copian a R2 todos los archivos de cada semestre, con las
-mismas rutas que tienen acá, y la plantilla de semestres nuevos. Es lo que usa el motor en la nube como disco, y se
-hace una vez para migrar; después el motor los mantiene al día.
-
-Necesita en el .env: WEB_URL (por defecto el sitio local de desarrollo) y
-WEB_TOKEN, el mismo valor que tiene el Worker como secreto TOKEN_MOTOR.
+Necesita en el .env: WEB_URL y WEB_TOKEN (el mismo valor que el secreto
+TOKEN_MOTOR del Worker).
 """
 
+import hashlib
 import json
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 from modulos import config
 from modulos import semestre as _semestre
@@ -33,69 +35,44 @@ from modulos.datos import TESTS, reportes
 _AGENTE = "in5162-subir/1.0"
 
 
-def _subir(semestre_id: str, filas: list[dict], activo: bool, token: str) -> dict:
-    cuerpo = json.dumps({"activo": activo, "filas": filas}, ensure_ascii=False).encode("utf-8")
+def _pedir(metodo: str, ruta: str, token: str, cuerpo: bytes | None = None,
+           extra: dict | None = None, tipo: str = "application/octet-stream") -> bytes:
     req = urllib.request.Request(
-        f"{config.WEB_URL}/api/subir/{semestre_id}",
-        data=cuerpo, method="POST",
-        headers={"Content-Type": "application/json; charset=utf-8",
-                 "Authorization": f"Bearer {token}", "User-Agent": _AGENTE},
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def _subir_archivo(semestre_id: str, ruta: str, datos: bytes, token: str) -> None:
-    from urllib.parse import quote
-
-    destino = "/".join(quote(p) for p in ruta.split("/"))
-    req = urllib.request.Request(
-        f"{config.WEB_URL}/api/motor/archivo/{semestre_id}/{destino}",
-        data=datos, method="PUT",
-        headers={"Content-Type": "application/octet-stream", "Authorization": f"Bearer {token}",
-                 "User-Agent": _AGENTE, "X-In5162-Origen": "subida desde el PC"},
+        f"{config.WEB_URL}/api/{ruta}", data=cuerpo, method=metodo,
+        headers={"Content-Type": tipo, "Authorization": f"Bearer {token}",
+                 "User-Agent": _AGENTE, **(extra or {})},
     )
     with urllib.request.urlopen(req, timeout=300) as r:
-        r.read()
+        return r.read()
+
+
+def _sin_nan(v):
+    # Una nota "nan" llega como float('nan') y json.dumps la escribe como NaN,
+    # que no es JSON válido: el sitio rechazaba el panel entero.
+    return None if isinstance(v, float) and v != v else v
+
+
+def _subir_panel(semestre_id: str, filas: list[dict], activo: bool | None, token: str) -> dict:
+    cuerpo = {"filas": [{k: _sin_nan(v) for k, v in f.items()} for f in filas]}
+    if activo is not None:
+        cuerpo["activo"] = activo
+    return json.loads(_pedir("POST", f"subir/{semestre_id}", token,
+                             json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"),
+                             tipo="application/json; charset=utf-8"))
+
+
+def _subir_archivo(semestre_id: str, ruta: str, datos: bytes, token: str, etag: str | None) -> None:
+    """Con etag, reemplaza solo esa versión; sin etag, solo si el archivo no existe."""
+    destino = "/".join(quote(p) for p in ruta.split("/"))
+    condicion = {"If-Match": etag} if etag else {"If-None-Match": "*"}
+    _pedir("PUT", f"motor/archivo/{semestre_id}/{destino}", token, datos,
+           extra={"X-In5162-Origen": "subida desde el PC", **condicion})
 
 
 def _en_la_nube(semestre_id: str, token: str) -> dict[str, str]:
     """{ruta: etag} de lo que el sitio ya tiene. El etag de R2 es el MD5 del archivo."""
-    req = urllib.request.Request(
-        f"{config.WEB_URL}/api/motor/archivos/{semestre_id}",
-        headers={"Authorization": f"Bearer {token}", "User-Agent": _AGENTE},
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return {a["ruta"]: a["etag"].strip('"') for a in json.loads(r.read())}
-
-
-def _subir_carpeta(semestre_id: str, token: str) -> tuple[int, int, list[str]]:
-    """Sube lo que falta o cambió. Devuelve (subidos, iguales, fallidos).
-
-    Lo idéntico no se vuelve a subir: cada subida deja una versión en el
-    historial del sitio, y resubir todo lo llenaría de copias iguales. Un
-    archivo que falla no detiene al resto: se informa al final.
-    """
-    import hashlib
-
-    raiz = _semestre.raiz(semestre_id)
-    nube = _en_la_nube(semestre_id, token)
-    subidos, iguales, fallidos = 0, 0, []
-    lista = _archivos_de(semestre_id)
-    for i, p in enumerate(lista, 1):
-        ruta = p.relative_to(raiz).as_posix()
-        datos = p.read_bytes()
-        if nube.get(ruta) == hashlib.md5(datos).hexdigest():
-            iguales += 1
-        else:
-            try:
-                _subir_archivo(semestre_id, ruta, datos, token)
-                subidos += 1
-            except urllib.error.HTTPError as e:
-                fallidos.append(f"{ruta} ({e.code}: {e.read().decode('utf-8', 'replace')[:120]})")
-        print(f"\r  {semestre_id}: {i}/{len(lista)} archivos", end="", flush=True)
-    print()
-    return subidos, iguales, fallidos
+    return {a["ruta"]: a["etag"].strip('"')
+            for a in json.loads(_pedir("GET", f"motor/archivos/{semestre_id}", token))}
 
 
 def _archivos_de(semestre_id: str) -> list:
@@ -105,7 +82,54 @@ def _archivos_de(semestre_id: str) -> list:
                   and not p.name.endswith((".tmp", ".pyc")))
 
 
-def main(filtro: str | None = None, simular: bool = False, archivos: bool = False) -> int:
+def _subir_carpeta(semestre_id: str, token: str | None, nube: dict[str, str],
+                   forzar: bool, simular: bool) -> dict[str, list[str]]:
+    """Clasifica cada archivo de acá y sube lo que corresponde.
+
+    Devuelve {"nuevos", "iguales", "distintos", "reemplazados", "fallidos"}.
+    """
+    raiz = _semestre.raiz(semestre_id)
+    r = {k: [] for k in ("nuevos", "iguales", "distintos", "reemplazados", "fallidos")}
+    lista = _archivos_de(semestre_id)
+    for i, p in enumerate(lista, 1):
+        ruta = p.relative_to(raiz).as_posix()
+        datos = p.read_bytes()
+        etag = nube.get(ruta)
+        if etag == hashlib.md5(datos).hexdigest():
+            r["iguales"].append(ruta)
+            continue
+        if etag and not forzar:
+            r["distintos"].append(ruta)
+            continue
+        if not simular:
+            try:
+                _subir_archivo(semestre_id, ruta, datos, token, etag)
+            except urllib.error.HTTPError as e:
+                r["fallidos"].append(f"{ruta} ({e.code}: {e.read().decode('utf-8', 'replace')[:120]})")
+                continue
+        r["reemplazados" if etag else "nuevos"].append(ruta)
+        print(f"\r  {semestre_id}: {i}/{len(lista)} archivos", end="", flush=True)
+    print(f"\r{' ' * 40}\r", end="")
+    return r
+
+
+def _informar(sid: str, r: dict[str, list[str]], simular: bool) -> None:
+    verbo = "subiría" if simular else "subidos"
+    malos = r["fallidos"]
+    print(f"  {'✗' if malos else '✓'} {sid}: {len(r['nuevos'])} nuevos {verbo}, "
+          f"{len(r['iguales'])} iguales"
+          + (f", {len(r['reemplazados'])} reemplazados" if r["reemplazados"] else ""))
+    if r["distintos"]:
+        print(f"    ⊘ {len(r['distintos'])} distintos en la nube, no se tocaron "
+              f"(la nube es la fuente; --forzar para reemplazarlos):")
+        for ruta in r["distintos"][:15]:
+            print(f"       {ruta}")
+    for m in malos:
+        print(f"    ✗ {m}")
+
+
+def main(filtro: str | None = None, simular: bool = False, archivos: bool = False,
+         forzar: bool = False) -> int:
     activo = _semestre.activo()
     semestres = [s for s in _semestre.listar() if not s.startswith("_")]
     if filtro:
@@ -114,58 +138,50 @@ def main(filtro: str | None = None, simular: bool = False, archivos: bool = Fals
             print(f"No existe el semestre {filtro}.")
             return 1
 
-    print(f"Sitio: {config.WEB_URL}")
-    token = None if simular else config.cargar_token_web()
-
+    print(f"Sitio: {config.WEB_URL}" + ("   (simulación: no se sube nada)" if simular else ""))
+    token = config.cargar_token_web()
     fallidos = 0
-    if archivos and not filtro:
-        # La plantilla también: el sitio crea los semestres nuevos copiándola,
-        # igual que semestre.crear() en el PC. No tiene datos de alumnos.
-        lista = _archivos_de("_template")
-        if simular:
-            print(f"  _template: subiría {len(lista)} archivos a R2")
-        else:
-            subidos, iguales, malos = _subir_carpeta("_template", token)
-            fallidos += len(malos)
-            print(f"  {'✗' if malos else '✓'} _template: {subidos} subidos, {iguales} ya estaban")
-            for m in malos:
-                print(f"     ✗ {m}")
-    for sid in semestres:
-        filas = reportes.panel(sid, TESTS)
-        marca = "  (activo)" if sid == activo else ""
-        if archivos:
-            lista = _archivos_de(sid)
-            total = sum(p.stat().st_size for p in lista)
+    try:
+        if archivos and not filtro:
+            # La plantilla también: el sitio crea los semestres nuevos copiándola.
+            r = _subir_carpeta("_template", token, _en_la_nube("_template", token), forzar, simular)
+            _informar("_template", r, simular)
+            fallidos += len(r["fallidos"])
+        for sid in semestres:
+            nube = _en_la_nube(sid, token)
+            nuevo_en_la_nube = not nube
+            if archivos:
+                r = _subir_carpeta(sid, token, nube, forzar, simular)
+                _informar(sid, r, simular)
+                fallidos += len(r["fallidos"])
+            # La reportería de un semestre que ya vive en la nube la mantiene el
+            # motor: la de acá está calculada con datos que pueden ser viejos.
+            if not (nuevo_en_la_nube or forzar):
+                print(f"  ⊘ {sid}: la reportería de la nube no se toca (la mantiene el motor)")
+                continue
+            filas = reportes.panel(sid, TESTS)
             if simular:
-                print(f"  {sid}: subiría {len(lista)} archivos a R2 ({total / 1048576:.1f} MB)")
-            else:
-                subidos, iguales, malos = _subir_carpeta(sid, token)
-                fallidos += len(malos)
-                print(f"  {'✗' if malos else '✓'} {sid}: {subidos} subidos, {iguales} ya estaban "
-                      f"({total / 1048576:.1f} MB en total)")
-                for m in malos:
-                    print(f"     ✗ {m}")
-        if simular:
-            print(f"  {sid}: subiría {len(filas)} filas{marca}")
-            continue
-        try:
-            r = _subir(sid, filas, sid == activo, token)
-            print(f"  ✓ {sid}: {r['filas']} filas{marca}")
-        except urllib.error.HTTPError as e:
-            fallidos += 1
-            detalle = e.read().decode("utf-8", "replace")[:200]
-            print(f"  ✗ {sid}: el sitio respondió {e.code}: {detalle}")
-        except urllib.error.URLError as e:
-            fallidos += 1
-            print(f"  ✗ {sid}: no pude conectarme a {config.WEB_URL} ({e.reason})")
-            if "127.0.0.1" in config.WEB_URL or "localhost" in config.WEB_URL:
-                print("    ¿Está corriendo el sitio local? En web/: npm run dev")
-            break
+                print(f"  {sid}: subiría la reportería ({len(filas)} filas)")
+                continue
+            # El semestre activo solo se marca al llegar por primera vez; después se
+            # elige en la página, y el activo de este equipo no lo pisa.
+            marca_activo = (sid == activo) if nuevo_en_la_nube else None
+            respuesta = _subir_panel(sid, filas, marca_activo, token)
+            print(f"  ✓ {sid}: reportería con {respuesta['filas']} filas"
+                  + ("  (activo)" if marca_activo else ""))
+    except urllib.error.HTTPError as e:
+        print(f"  ✗ el sitio respondió {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+        return 1
+    except urllib.error.URLError as e:
+        print(f"  ✗ no pude conectarme a {config.WEB_URL} ({e.reason})")
+        if "127.0.0.1" in config.WEB_URL or "localhost" in config.WEB_URL:
+            print("    ¿Está corriendo el sitio local? En web/: npm run dev")
+        return 1
     return 1 if fallidos else 0
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    sim = "--simular" in args
     resto = [a for a in args if not a.startswith("-")]
-    raise SystemExit(main(resto[0] if resto else None, sim, "--archivos" in args))
+    raise SystemExit(main(resto[0] if resto else None, "--simular" in args,
+                          "--archivos" in args, "--forzar" in args))

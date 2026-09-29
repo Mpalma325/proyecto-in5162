@@ -10,6 +10,7 @@ se saltan y quedan como estaban (sin leer en el buzón, sin nota).
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -17,8 +18,15 @@ from modulos import semestre as _semestre
 
 
 def ruta(flujo: str, item: str | int) -> Path:
-    """flujo: "tests_semanales" o "tareas"."""
-    return _semestre.raiz() / flujo / "cache" / f"candidatos_{item}.json"
+    """flujo: "tests_semanales" o "tareas".
+
+    Desde la página, el motor pasa el id del trabajo (IN5162_TRABAJO) y la
+    lista queda con ese nombre: así el botón "evaluar las elegidas" usa la
+    lista de la revisión que se está mirando, no la de otra más reciente.
+    """
+    trabajo = os.environ.get("IN5162_TRABAJO", "")
+    sufijo = f"_{trabajo}" if trabajo else ""
+    return _semestre.raiz() / flujo / "cache" / f"candidatos_{item}{sufijo}.json"
 
 
 def guardar(flujo: str, item: str | int, candidatos: list[dict]) -> Path:

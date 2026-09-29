@@ -60,8 +60,15 @@ async function leerTexto(ruta) {
   return r.text();
 }
 
+/**
+ * Guarda un archivo sin pisar cambios ajenos: manda el etag de la versión que
+ * se cargó. Si alguien lo cambió mientras tanto, el sitio responde 409 y la
+ * edición no se pierde: queda en pantalla para copiarla y recargar.
+ */
 async function guardarArchivo(ruta, cuerpo, tipo) {
-  await api(urlArchivo(ruta), { method: "PUT", headers: { "content-type": tipo }, body: cuerpo });
+  const previo = archivos.find((a) => a.ruta === ruta);
+  const condicion = previo ? { "if-match": previo.etag } : { "if-none-match": "*" };
+  await api(urlArchivo(ruta), { method: "PUT", headers: { "content-type": tipo, ...condicion }, body: cuerpo });
   archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
 }
 
@@ -321,6 +328,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
     try {
       await api(urlArchivo(carpeta + seguro), {
         method: "PUT", body: datos,
+        // Una entrega ya subida no se reemplaza (el sitio responde 409).
         headers: { "content-type": seguro.endsWith(".html") ? "text/html" : "text/plain" },
       });
       agregados.push(seguro);

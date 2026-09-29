@@ -58,7 +58,18 @@ function Secreto($nombre, $valor) {
     try {
         [IO.File]::WriteAllText($tmp, $valor)
         if (Existe secrets describe $nombre --project $Proyecto) {
-            G secrets versions add $nombre --data-file=$tmp --project $Proyecto | Out-Null
+            # Solo una versión nueva si la clave cambió: cada versión activa por
+            # sobre las 6 gratuitas se cobra, y volver a desplegar no debe sumar.
+            $antes = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            $vigente = (& gcloud secrets versions access latest --secret $nombre --project $Proyecto 2>$null) -join "`n"
+            $ErrorActionPreference = $antes
+            if ($vigente -ne $valor) {
+                G secrets versions add $nombre --data-file=$tmp --project $Proyecto | Out-Null
+                # Las anteriores quedan destruidas: no se usan y cuestan.
+                foreach ($v in (G secrets versions list $nombre --project $Proyecto --filter "state=ENABLED" --sort-by "~createTime" --format "value(name)" | Select-Object -Skip 1)) {
+                    G secrets versions destroy $v --secret $nombre --project $Proyecto --quiet | Out-Null
+                }
+            }
         } else {
             G secrets create $nombre --data-file=$tmp --replication-policy=automatic --project $Proyecto | Out-Null
         }
@@ -111,15 +122,30 @@ foreach ($rol in "roles/secretmanager.secretAccessor", "roles/cloudtasks.enqueue
 }
 
 Paso "Construyendo y desplegando el motor (tarda unos minutos la primera vez)"
+# 1 GB: la carpeta de trabajo vive en memoria, y un trabajo de tareas baja
+# todas las entregas del semestre (más de 100 MB en un semestre completo).
 Push-Location $raiz
 try {
     G run deploy $Servicio --source . --region $Region `
         --allow-unauthenticated `
-        --memory 512Mi --cpu 1 --timeout 1800 --concurrency 4 --max-instances 1 `
+        --memory 1Gi --cpu 1 --timeout 1800 --concurrency 4 --max-instances 1 `
         --set-secrets "OPENAI_API_KEY=in5162-openai:latest,CORREO_REMITENTE=in5162-correo-remitente:latest,CORREO_APP_PASSWORD=in5162-correo-clave:latest,TOKEN_MOTOR=in5162-token-motor:latest,TOKEN_WEB=in5162-token-web:latest" `
         --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,WEB_URL=$WebUrl" | Out-Host
 } finally {
     Pop-Location
+}
+
+# Cada despliegue guarda una imagen nueva; se conservan las 2 últimas para no
+# pasar el medio GB gratuito de Artifact Registry.
+$politica = New-TemporaryFile
+try {
+    '[{"name":"borrar-viejas","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"1d"}},' +
+    '{"name":"mantener-las-2-ultimas","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":2}}]' |
+        Set-Content -Encoding ascii $politica
+    G artifacts repositories set-cleanup-policies cloud-run-source-deploy --location $Region `
+        --policy $politica --no-dry-run | Out-Null
+} finally {
+    Remove-Item $politica -Force
 }
 
 $url = (G run services describe $Servicio --region $Region --format "value(status.url)") -join ""

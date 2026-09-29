@@ -64,6 +64,7 @@ const FLUJOS = new Set([
   "tests.enviar", "tests.evaluar", "tests.resumen", "tests.tutoria", "tests.chequeo", "tests.experimento",
   "datos.panel",
   "tareas.chequeo", "tareas.generar", "tareas.enviar", "tareas.recolectar", "tareas.corregir",
+  "tareas.segunda",
 ]);
 
 // Los parámetros que se pueden cambiar desde la página, con su validación.
@@ -96,7 +97,10 @@ const editable = (ruta: string) => EDITABLES.some((r) => r.test(ruta));
 
 // Un semestre se llama como las carpetas: "2026-2". Se valida para que el id
 // no pueda usarse para inyectar nada.
-const ID_VALIDO = /^[A-Za-z0-9._-]{1,32}$/;
+// Empieza con letra o número: así "." y ".." no pasan (colapsarían la ruta en
+// el motor), ni "_template", que solo el motor puede tocar (idMotor).
+const ID_VALIDO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+const idMotor = (s: string) => ID_VALIDO.test(s) || s === "_template";
 // Una ruta dentro del semestre: sin "..", sin barra inicial, sin caracteres raros.
 // Los nombres de las entregas de U-Cursos traen de todo: comas ("T1-Contreras,
 // Del Pino.html"), acentos escritos como carácter aparte y hasta restos de una
@@ -240,7 +244,12 @@ async function listarArchivos(env: Env, semestre: string): Promise<Response> {
 async function bajarArchivo(env: Env, semestre: string, ruta: string): Promise<Response> {
   const objeto = await env.ARCHIVOS.get(clave(semestre, ruta));
   if (!objeto) return error(404, "No existe ese archivo.");
-  return new Response(objeto.body, { headers: { "content-type": "application/octet-stream" } });
+  // Las entregas son HTML de los alumnos: se sirven como descarga y, si un
+  // navegador igual intentara mostrarlas, sin poder correr nada en el sitio.
+  return new Response(objeto.body, { headers: {
+    "content-type": "application/octet-stream", "x-content-type-options": "nosniff",
+    "content-security-policy": "sandbox",
+  } });
 }
 
 /**
@@ -254,13 +263,27 @@ async function subirArchivo(req: Request, env: Env, semestre: string, ruta: stri
   quien: string): Promise<Response> {
   const cuerpo = await req.arrayBuffer();
   const actual = await env.ARCHIVOS.get(clave(semestre, ruta));
+  // Escritura condicional: If-Match con el etag de la versión que se leyó, o
+  // If-None-Match: * para un archivo nuevo. Si en la nube cambió mientras
+  // tanto, no se pisa: 409, y quien escribía se entera.
+  const siCoincide = (req.headers.get("If-Match") || "").replace(/"/g, "");
+  if (siCoincide && (!actual || actual.etag !== siCoincide)) {
+    return error(409, "El archivo cambió en la nube desde que se leyó. Vuelve a cargarlo.");
+  }
+  if (req.headers.get("If-None-Match") === "*" && actual) {
+    return error(409, "El archivo ya existe en la nube.");
+  }
   const t = ahora();
   let versionAnterior: string | null = null;
   if (actual) {
     versionAnterior = `historial/${semestre}/${ruta}/${t}`;
     await env.ARCHIVOS.put(versionAnterior, actual.body);
   }
-  await env.ARCHIVOS.put(clave(semestre, ruta), cuerpo);
+  // onlyIf repite la condición en el mismo acto de escribir, por si otro
+  // escribió entre el get de arriba y este put.
+  const escrito = await env.ARCHIVOS.put(clave(semestre, ruta), cuerpo,
+    actual ? { onlyIf: { etagMatches: actual.etag } } : undefined);
+  if (!escrito) return error(409, "El archivo cambió en la nube mientras se guardaba. Vuelve a intentarlo.");
   await env.DB.prepare(
     `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -368,13 +391,20 @@ const ESTADOS = new Set(["corriendo", "terminado", "fallido"]);
 async function informarAvance(req: Request, env: Env, id: string): Promise<Response> {
   const a = await req.json<Avance>();
   if (a.estado && !ESTADOS.has(a.estado)) return error(400, "Estado inválido.");
+  // Tomarlo ("corriendo") solo vale desde "pendiente", en una sola sentencia:
+  // si la cola entrega el mismo trabajo dos veces a la vez, uno solo lo toma.
+  // Y un trabajo terminado o fallido no se reabre.
+  const permitido = a.estado === "corriendo" ? "estado = 'pendiente'" : "estado IN ('pendiente', 'corriendo')";
   // La salida se va agregando al final, así la página la ve crecer.
   const r = await env.DB.prepare(
     `UPDATE trabajos SET salida = salida || ?, estado = COALESCE(?, estado),
                          codigo = COALESCE(?, codigo), actualizado = ?
-     WHERE id = ?`,
+     WHERE id = ? AND ${permitido}`,
   ).bind(a.salida || "", a.estado ?? null, a.codigo ?? null, ahora(), id).run();
-  if (!r.meta.changes) return error(404, "No existe ese trabajo.");
+  if (!r.meta.changes) {
+    const existe = await env.DB.prepare("SELECT estado FROM trabajos WHERE id = ?").bind(id).first();
+    return existe ? error(409, `El trabajo ya está ${existe.estado}.`) : error(404, "No existe ese trabajo.");
+  }
   return json({ ok: true });
 }
 
@@ -464,13 +494,13 @@ export default {
           if (req.method === "POST") return await informarAvance(req, env, partes[3]);
         }
         if (partes[2] === "archivos" && partes[3] && req.method === "GET") {
-          if (!ID_VALIDO.test(partes[3])) return error(400, "Semestre inválido.");
+          if (!idMotor(partes[3])) return error(400, "Semestre inválido.");
           return await listarArchivos(env, partes[3]);
         }
         if (partes[2] === "archivo" && partes[3]) {
           const sem = partes[3];
           const ruta = partes.slice(4).join("/");
-          if (!ID_VALIDO.test(sem) || !RUTA_VALIDA.test(ruta)) return error(400, "Ruta inválida.");
+          if (!idMotor(sem) || !RUTA_VALIDA.test(ruta)) return error(400, "Ruta inválida.");
           if (req.method === "GET") return await bajarArchivo(env, sem, ruta);
           if (req.method === "PUT") return await subirArchivo(req, env, sem, ruta, origenMotor(req));
         }
@@ -480,6 +510,13 @@ export default {
       // --- personas
       const quien = await persona(req, env);
       if (!quien) return error(403, "Acceso no autenticado. Este sitio requiere Cloudflare Access.");
+      // Una página ajena abierta por alguien con sesión podría pedir un trabajo
+      // a su nombre (CSRF): el navegador manda la cookie de Access igual. Toda
+      // escritura tiene que venir de este mismo sitio, que el navegador declara
+      // en Origin y la página ajena no puede falsificar.
+      if (req.method !== "GET" && req.method !== "HEAD" && req.headers.get("Origin") !== url.origin) {
+        return error(403, "Pedido rechazado: no viene de esta página.");
+      }
 
       if (partes[1] === "semestres" && req.method === "GET") return await listarSemestres(env);
       if (partes[1] === "semestres" && req.method === "POST") return await cambiarSemestre(req, env);

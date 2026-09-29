@@ -35,13 +35,23 @@ class SitioFalso:
         self.paneles: list = []
         self.parametros: dict[str, str] = {}
 
+    # Como R2: el etag cambia con el contenido.
+    @staticmethod
+    def _etag(datos):
+        import hashlib
+        return hashlib.md5(datos).hexdigest()
+
     def listar_archivos(self, semestre):
-        return [{"ruta": r, "bytes": len(d), "etag": ""} for r, d in self.archivos.items()]
+        return [{"ruta": r, "bytes": len(d), "etag": self._etag(d)} for r, d in self.archivos.items()]
 
     def bajar_archivo(self, semestre, ruta):
         return self.archivos[ruta]
 
-    def subir_archivo(self, semestre, ruta, datos, origen="motor"):
+    def subir_archivo(self, semestre, ruta, datos, origen="motor", etag=None):
+        # Igual que el Worker: con etag, solo si nadie lo cambió; sin etag, solo si es nuevo.
+        actual = self.archivos.get(ruta)
+        if (etag and (actual is None or self._etag(actual) != etag)) or (not etag and actual is not None):
+            raise RuntimeError(f"PUT {ruta}: 409 b'cambió en la nube'")
         self.origenes[ruta] = origen
         self.subidos[ruta] = datos
         self.archivos[ruta] = datos
@@ -49,8 +59,15 @@ class SitioFalso:
     def ver_trabajo(self, id_trabajo):
         return dict(self.trabajos[id_trabajo])
 
+    caido = False  # simula que el sitio no responde a los avisos de avance
+
     def informar(self, id_trabajo, salida="", estado=None, codigo=None):
         t = self.trabajos[id_trabajo]
+        if self.caido and not estado:
+            raise RuntimeError("POST motor/trabajos: sin respuesta del sitio")
+        # Igual que el Worker: solo pasa a "corriendo" desde "pendiente".
+        if estado == "corriendo" and t.get("estado") != "pendiente":
+            raise RuntimeError(f"POST motor/trabajos/{id_trabajo}: 409 b'ya lo tomo otro'")
         t["salida"] = t.get("salida", "") + salida
         if estado:
             t["estado"] = estado
@@ -127,6 +144,23 @@ for malo in (["../../alumnos.csv"], ["a/b.html"], ["x.csv"], "Grupo.html"):
         check(f"entrega {malo!r} se rechaza", False)
     except ValueError:
         check(f"entrega {malo!r} se rechaza", True)
+
+titulo("1d. segunda oportunidad")
+_, segunda = trabajo.FLUJOS["tareas.segunda"]
+check("preparar genera preguntas (no manda correos)",
+      segunda({"tarea": "T2", "paso": "preparar"})[-2:] == ["preparar", "T2"])
+check("enviar sin decir nada solo arma los borradores",
+      segunda({"tarea": "T2", "paso": "enviar"})[-2:] == ["borradores", "T2"])
+check("enviar con prueba=False manda, con --confirmar",
+      segunda({"tarea": "T2", "paso": "enviar", "prueba": False})[-3:] == ["enviar", "T2", "--confirmar"])
+check("un 'false' en texto NO manda",
+      "--confirmar" not in segunda({"tarea": "T2", "paso": "enviar", "prueba": "false"}))
+for malo in ({"tarea": "T2"}, {"tarea": "T2", "paso": "borrar"}, {"tarea": "x", "paso": "preparar"}):
+    try:
+        segunda(malo)
+        check(f"segunda rechaza {malo}", False)
+    except ValueError:
+        check(f"segunda rechaza {malo}", True)
 
 titulo("1c. evaluar o corregir solo a los elegidos")
 _, evaluar_ = trabajo.FLUJOS["tests.evaluar"]
@@ -249,5 +283,68 @@ sitio.trabajos["t5"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo":
 trabajo.ejecutar("t5")
 check("datos.panel termina bien", sitio.trabajos["t5"]["estado"] == "terminado", sitio.trabajos["t5"])
 check("y sube el panel aunque nada haya cambiado", len(sitio.paneles) == 1)
+
+from unittest import mock  # noqa: E402
+
+ESCRIBE = ("import os, pathlib, sys, time; "
+           "d = pathlib.Path('semestres', os.environ['IN5162_SEMESTRE'], 'tests_semanales', 'data'); "
+           "(d / 'hecho.txt').write_text('ya se mandaron los correos', encoding='utf-8'); "
+           "print('✓ correos enviados'); ")
+
+
+def correr(id_, flujo, codigo_extra="", **estado):
+    trabajo.FLUJOS[flujo] = ("tests", lambda a: ["-c", ESCRIBE + codigo_extra])
+    sitio.trabajos[id_] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": flujo,
+                           "argumentos": {}, **estado}
+    sitio.archivos.pop("tests_semanales/data/hecho.txt", None)
+    sitio.subidos.clear()
+    with mock.patch.object(trabajo.time, "sleep", lambda s: None):
+        trabajo.ejecutar(id_)
+    return sitio.trabajos[id_]
+
+
+titulo("9. si el sitio no responde a los avisos, lo hecho igual se guarda")
+sitio.caido = True
+t = correr("t7", "prueba.caido")
+sitio.caido = False
+check("el archivo que dejó el script llegó a la nube", "tests_semanales/data/hecho.txt" in sitio.subidos)
+check("y el trabajo cerró como terminado", t["estado"] == "terminado", t.get("estado"))
+
+titulo("10. si el script falla después de mandar correos, lo que hizo se guarda")
+t = correr("t8", "prueba.falla_tarde", "sys.exit(3)")
+check("el archivo se guardó igual", "tests_semanales/data/hecho.txt" in sitio.subidos)
+check("y el trabajo queda fallido con su código", t["estado"] == "fallido" and t["codigo"] == 3, t)
+
+titulo("11. no se pisa una versión que cambió en la nube mientras corría")
+original = sitio.listar_archivos
+sitio.listar_archivos = lambda sem: [dict(a, etag="version-vieja") if a["ruta"] == "notas.csv" else a
+                                     for a in original(sem)]
+usar(sitio)
+t = correr("t9", "prueba.conflicto",
+           "(d.parent.parent / 'notas.csv').write_text('Correo\\n', encoding='utf-8')")
+sitio.listar_archivos = original
+usar(sitio)
+check("notas.csv no se sube (la nube tiene otra versión)", "notas.csv" not in sitio.subidos)
+check("lo demás sí se guarda", "tests_semanales/data/hecho.txt" in sitio.subidos)
+check("y el trabajo queda fallido, diciendo qué no guardó",
+      t["estado"] == "fallido" and "No pude guardar notas.csv" in t["salida"], t["salida"][-300:])
+
+titulo("12. si la cola lo entrega dos veces a la vez, corre una sola")
+real_ver = sitio.ver_trabajo
+sitio.ver_trabajo = lambda i: dict(real_ver(i), estado="pendiente")  # los dos lo ven pendiente
+usar(sitio)
+t = correr("t10", "prueba.doble", estado="corriendo")
+sitio.ver_trabajo = real_ver
+usar(sitio)
+check("el segundo no ejecuta nada", "tests_semanales/data/hecho.txt" not in sitio.subidos and not t.get("salida"),
+      t)
+
+titulo("13. un trabajo que pasa del límite se corta, y lo hecho se guarda")
+limite = trabajo.LIMITE_SEGUNDOS
+trabajo.LIMITE_SEGUNDOS = 2
+t = correr("t11", "prueba.eterno", "time.sleep(60)")
+trabajo.LIMITE_SEGUNDOS = limite
+check("se cortó y quedó fallido", t["estado"] == "fallido" and "pasó de" in t["salida"], t["salida"][-200:])
+check("lo que alcanzó a escribir se guardó", "tests_semanales/data/hecho.txt" in sitio.subidos)
 
 sys.exit(resultado())

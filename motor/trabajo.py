@@ -66,6 +66,16 @@ def _solo(a: dict) -> list[str]:
     return ["--solo", ",".join(c.lower() for c in correos)]
 
 
+def _paso_segunda(a: dict) -> list[str]:
+    paso = a.get("paso")
+    if paso == "preparar":
+        return ["preparar", _tarea(a)]
+    if paso == "enviar":
+        # Como en el resto: sin "prueba": false, no sale nada; se arman los borradores.
+        return ["enviar", _tarea(a), "--confirmar"] if a.get("prueba") is False else ["borradores", _tarea(a)]
+    raise ValueError(f"Paso inválido: {paso!r}")
+
+
 def _tarea(a: dict) -> str:
     t = str(a.get("tarea", ""))
     if not re.fullmatch(r"T\d{1,2}", t):
@@ -152,6 +162,10 @@ FLUJOS = {
     "tareas.enviar": ("tareas", lambda a: ["-m", "modulos.tareas.enviar", _tarea(a), *_prueba(a)]),
     # Solo lee el buzón y actualiza el CSV.
     "tareas.recolectar": ("tareas", lambda a: ["-m", "modulos.tareas.recolectar", _tarea(a)]),
+    # Segunda oportunidad: "preparar" genera las preguntas nuevas (llama al
+    # modelo, no manda correos); "enviar" en modo prueba solo escribe los
+    # borradores, y en real los manda.
+    "tareas.segunda": ("tareas", lambda a: ["-m", "modulos.tareas.segunda_oportunidad", *_paso_segunda(a)]),
     "tareas.corregir": ("tareas", lambda a: ["-m", "modulos.tareas.corregir", _tarea(a), *_prueba(a), *_solo(a),
                                              *(["--no-enviar"] if a.get("no_enviar") is True
                                                and a.get("prueba") is False else [])]),
@@ -188,8 +202,13 @@ def _huella(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def _preparar(semestre: str, perfil: str, base: Path) -> dict[str, str]:
-    """Arma la carpeta de trabajo. Devuelve la huella de cada archivo bajado."""
+def _preparar(semestre: str, perfil: str, base: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Arma la carpeta de trabajo.
+
+    Devuelve la huella de cada archivo bajado (para saber qué cambió) y su etag
+    en R2 (para no pisar, al subir, una versión que alguien cambió mientras
+    tanto).
+    """
     shutil.copytree(REPO / "modulos", base / "modulos",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     carpeta = base / "semestres" / semestre
@@ -206,9 +225,10 @@ def _preparar(semestre: str, perfil: str, base: Path) -> dict[str, str]:
 
     # De a varios a la vez: de a uno, cada archivo espera la ida y vuelta al
     # sitio, y un semestre con entregas son cientos de archivos.
-    rutas = [a["ruta"] for a in sitio.listar_archivos(semestre) if _en_perfil(perfil, a["ruta"])]
+    lista = [a for a in sitio.listar_archivos(semestre) if _en_perfil(perfil, a["ruta"])]
     with ThreadPoolExecutor(max_workers=8) as grupo:
-        return dict(grupo.map(bajar, rutas))
+        huellas = dict(grupo.map(bajar, [a["ruta"] for a in lista]))
+    return huellas, {a["ruta"]: a.get("etag", "") for a in lista}
 
 
 def _cambiados(carpeta: Path, perfil: str, huellas: dict[str, str]) -> list[str]:
@@ -247,21 +267,49 @@ class _Salida:
         if time.monotonic() - self._ultimo >= self.INTERVALO:
             self.vaciar()
 
-    def vaciar(self, **extra) -> None:
+    def vaciar(self, **extra) -> bool:
+        """Manda lo juntado. Devuelve False si el sitio no respondió.
+
+        Si falla, el texto se guarda para el próximo intento. Un aviso perdido
+        no puede cortar un trabajo que ya está mandando correos: antes, una
+        caída del sitio a mitad de corrida dejaba los envíos sin registrar.
+        """
         with self._candado:
             texto = "".join(self._pendiente)
             self._pendiente.clear()
         self._ultimo = time.monotonic()
-        if texto or extra:
+        if not (texto or extra):
+            return True
+        try:
             sitio.informar(self.id, salida=texto, **extra)
+            return True
+        except Exception:  # noqa: BLE001
+            with self._candado:
+                self._pendiente.insert(0, texto)
+            return False
+
+    def cerrar(self, **extra) -> None:
+        """El aviso final (terminado o fallido): se insiste un rato antes de rendirse."""
+        for espera in (0, 5, 15, 30):
+            time.sleep(espera)
+            if self.vaciar(**extra):
+                return
+
+
+# Cloud Tasks espera hasta 30 minutos; pasado eso suelta el cupo y despacha el
+# trabajo siguiente, que correría a la vez que este y pisaría sus archivos. Se
+# corta antes, para alcanzar a guardar lo hecho y responder a tiempo.
+LIMITE_SEGUNDOS = 25 * 60
 
 
 def _correr(cmd: list[str], base: Path, semestre: str, salida: _Salida,
-            parametros: dict[str, str]) -> int:
+            parametros: dict[str, str], id_trabajo: str = "") -> int:
     entorno = {
         **os.environ,
         **{k: v for k, v in parametros.items() if k in PARAMETROS},
         "IN5162_SEMESTRE": semestre,
+        # Para nombrar lo que el trabajo deja a la página (candidatos_<item>_<id>.json).
+        "IN5162_TRABAJO": id_trabajo,
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
         "PYTHONUNBUFFERED": "1",
@@ -271,10 +319,28 @@ def _correr(cmd: list[str], base: Path, semestre: str, salida: _Salida,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
-    assert proc.stdout is not None
-    for linea in proc.stdout:
-        salida.agregar(linea)
-    return proc.wait()
+    vencido = threading.Event()
+
+    def cortar() -> None:
+        vencido.set()
+        proc.kill()
+
+    reloj = threading.Timer(LIMITE_SEGUNDOS, cortar)
+    reloj.start()
+    try:
+        assert proc.stdout is not None
+        for linea in proc.stdout:
+            salida.agregar(linea)
+    finally:
+        reloj.cancel()
+        if proc.poll() is None:
+            proc.kill()
+        codigo = proc.wait()
+    if vencido.is_set():
+        salida.agregar(f"\n✗ El trabajo pasó de {LIMITE_SEGUNDOS // 60} minutos y se detuvo. "
+                       "Lo que alcanzó a hacer se guarda igual.\n")
+        return -9
+    return codigo
 
 
 def _panel(base: Path, semestre: str) -> list[dict]:
@@ -303,10 +369,45 @@ def _como_se_ve(cmd: list[str]) -> str:
     return " ".join(partes)
 
 
+class _YaTomado(Exception):
+    """Otro intento ya tomó este trabajo (la cola lo entregó dos veces)."""
+
+
+def _guardar(base: Path, semestre: str, perfil: str, huellas: dict[str, str],
+             etags: dict[str, str], id_trabajo: str, salida: _Salida) -> tuple[list[str], list[str]]:
+    """Sube lo que el script cambió. Devuelve (guardados, los que no se pudieron guardar).
+
+    Cada archivo va por separado: si uno falla, los demás igual se guardan. Se
+    sube con el etag con que se bajó; si en la nube cambió mientras tanto, el
+    sitio lo rechaza en vez de pisar esa versión.
+    """
+    carpeta = base / "semestres" / semestre
+    guardados, fallidos = [], []
+    for ruta in _cambiados(carpeta, perfil, huellas):
+        try:
+            sitio.subir_archivo(semestre, ruta, (carpeta / ruta).read_bytes(),
+                                origen=f"trabajo {id_trabajo}", etag=etags.get(ruta))
+            guardados.append(ruta)
+        except Exception as e:  # noqa: BLE001
+            fallidos.append(f"{ruta} ({e})")
+    if guardados:
+        salida.agregar(f"\n(guardados {len(guardados)} archivos: {', '.join(guardados)})\n")
+    for f in fallidos:
+        salida.agregar(f"✗ No pude guardar {f}\n")
+    return guardados, fallidos
+
+
 def ejecutar(id_trabajo: str) -> None:
-    """Corre un trabajo de punta a punta. Nunca levanta excepción: la informa."""
+    """Corre un trabajo de punta a punta. Nunca levanta excepción: la informa.
+
+    Lo que el script alcanzó a cambiar se guarda SIEMPRE, también si falló o se
+    cortó a medio camino: si ya mandó correos, tienen que quedar registrados, o
+    la corrida siguiente los volvería a mandar.
+    """
     salida = _Salida(id_trabajo)
-    base = Path(tempfile.mkdtemp(prefix=f"in5162-{id_trabajo[:8]}-"))
+    base = None  # la carpeta de trabajo se crea recién al bajar el semestre
+    preparado = None  # (semestre, perfil, huellas, etags) una vez bajado el semestre
+    codigo, flujo = -1, ""
     try:
         t = sitio.ver_trabajo(id_trabajo)
         if t.get("estado") != "pendiente":
@@ -320,34 +421,47 @@ def ejecutar(id_trabajo: str) -> None:
         # El semestre lo pone el motor, no la página: pisa cualquier "_semestre" que venga.
         cmd = armar({**args, "_semestre": semestre})
 
-        sitio.informar(id_trabajo, estado="corriendo",
-                       salida=f"$ python {_como_se_ve(cmd)}   [{semestre}]\n")
-        huellas = _preparar(semestre, perfil, base)
+        try:
+            # El sitio solo lo pasa a "corriendo" si seguía "pendiente": si dos
+            # intentos llegan a la vez, uno solo lo ejecuta.
+            sitio.informar(id_trabajo, estado="corriendo",
+                           salida=f"$ python {_como_se_ve(cmd)}   [{semestre}]\n")
+        except RuntimeError as e:
+            if " 409 " in f" {e} ":
+                raise _YaTomado() from e
+            raise
+        base = Path(tempfile.mkdtemp(prefix="in5162-trabajo-"))
+        huellas, etags = _preparar(semestre, perfil, base)
+        preparado = (semestre, perfil, huellas, etags)
         parametros = sitio.leer_parametros()
         modelo = f"; modelo {parametros['MODELO']}" if parametros.get("MODELO") else ""
         salida.agregar(f"(bajados {len(huellas)} archivos del semestre{modelo})\n\n")
 
-        codigo = _correr(cmd, base, semestre, salida, parametros)
-
-        carpeta = base / "semestres" / semestre
-        cambiados = _cambiados(carpeta, perfil, huellas)
-        for ruta in cambiados:
-            sitio.subir_archivo(semestre, ruta, (carpeta / ruta).read_bytes(),
-                                origen=f"trabajo {id_trabajo}")
-        if cambiados:
-            salida.agregar(f"\n(guardados {len(cambiados)} archivos: {', '.join(cambiados)})\n")
-        # La reportería sale de los CSV de la raíz del semestre y de los tests.
-        # Un trabajo de tareas que solo guardó sus archivos no la cambia.
-        afecta = [r for r in cambiados if "/" not in r or r.startswith("tests_semanales/")]
-        if afecta or flujo == "datos.panel":
-            filas = _panel(base, semestre)
-            sitio.subir_panel(semestre, filas)
-            if flujo == "datos.panel":
-                salida.agregar(f"✓ reportería al día: {len(filas)} casillas\n")
-        salida.vaciar(estado="terminado" if codigo == 0 else "fallido", codigo=codigo)
+        codigo = _correr(cmd, base, semestre, salida, parametros, id_trabajo)
+    except _YaTomado:
+        return
     except Exception as e:  # noqa: BLE001
         salida.agregar(f"\n✗ El trabajo falló: {type(e).__name__}: {e}\n")
         salida.agregar("".join(traceback.format_exc(limit=4)))
-        salida.vaciar(estado="fallido", codigo=-1)
+        codigo = -1
+    try:
+        fallidos = []
+        if preparado:
+            semestre, perfil, huellas, etags = preparado
+            guardados, fallidos = _guardar(base, semestre, perfil, huellas, etags, id_trabajo, salida)
+            # La reportería sale de los CSV de la raíz del semestre y de los tests.
+            # Un trabajo de tareas que solo guardó sus archivos no la cambia.
+            afecta = [r for r in guardados if "/" not in r or r.startswith("tests_semanales/")]
+            if (afecta or flujo == "datos.panel") and not fallidos:
+                filas = _panel(base, semestre)
+                sitio.subir_panel(semestre, filas)
+                if flujo == "datos.panel":
+                    salida.agregar(f"✓ reportería al día: {len(filas)} casillas\n")
+        ok = codigo == 0 and not fallidos
+        salida.cerrar(estado="terminado" if ok else "fallido", codigo=codigo if codigo else (0 if ok else -1))
+    except Exception as e:  # noqa: BLE001
+        salida.agregar(f"\n✗ Falló al guardar: {type(e).__name__}: {e}\n")
+        salida.cerrar(estado="fallido", codigo=-1)
     finally:
-        shutil.rmtree(base, ignore_errors=True)
+        if base:
+            shutil.rmtree(base, ignore_errors=True)

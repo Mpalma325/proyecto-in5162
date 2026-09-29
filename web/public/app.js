@@ -587,7 +587,10 @@ function descargarCsv() {
   if (!filas.length) return;
   const cols = Object.keys(filas[0]);
   const celda = (v) => {
-    const t = v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "True" : "False") : String(v);
+    let t = v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "True" : "False") : String(v);
+    // Una respuesta que empieza con = + - @ Excel la ejecutaría como fórmula al
+    // abrir el archivo. Los números (notas) se dejan tal cual.
+    if (/^[=+\-@\t\r]/.test(t) && Number.isNaN(Number(t))) t = `'${t}`;
     return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   const texto = [cols.join(","), ...filas.map((f) => cols.map((c) => celda(f[c])).join(","))].join("\r\n");

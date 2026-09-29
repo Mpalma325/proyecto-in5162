@@ -76,4 +76,17 @@ check("líneas del alumno que empiezan con 'El'", queda(propio) == propio, queda
 en_medio = "Como dijo el profe:\nEl valor medio es 8, y eso escribió: nada más.\nFin."
 check("'escribió:' en medio de una frase", queda(en_medio) == en_medio, queda(en_medio))
 
+titulo("5. casos borde que encontró la auditoría")
+c = ("Mi respuesta es que sube.\nEl efecto neto es negativo.\n"
+     "El 25-09-2026, a las 12:00, in5162@uchile.cl escribió:\nHola Ana, la pregunta.")
+check("una línea del alumno que empieza con 'El' justo antes de la cita se conserva",
+      queda(c) == "Mi respuesta es que sube.\nEl efecto neto es negativo.", queda(c))
+c = "Respuesta:\nEl autor lo escribió\n\n> Hola Ana\n> la pregunta"
+check("una línea del alumno que termina en 'escribió' (sin dos puntos) se conserva",
+      queda(c) == "Respuesta:\nEl autor lo escribió", queda(c))
+c = ("El vie, 25 sep 2026 a las 12:00, Equipo IN5162 Coordinación <\nin5162@uchile.cl> escribió:\n\n"
+     "> P1\nMi respuesta 1, bien larga para que cuente.\n> P2\nMi respuesta 2.")
+check("respuesta intercalada con encabezado partido en dos líneas: sale el encabezado",
+      queda(c) == "Mi respuesta 1, bien larga para que cuente.\nMi respuesta 2.", queda(c))
+
 sys.exit(resultado())

@@ -65,12 +65,13 @@ let pestana = PESTANAS.find((p) => p.id === location.hash.slice(1)) || PESTANAS[
 function descarga(t) {
   // Después de revisar en modo prueba: elegir qué respuestas evaluar de verdad.
   if (t.flujo === "tests.evaluar" && t.prueba && t.estado === "terminado" && t.argumentos.semana) {
+    // El semestre y la lista son los de esta revisión, no los del selector.
     const semana = t.argumentos.semana;
     return elegirCandidatos({
-      semestre, ruta: `tests_semanales/cache/candidatos_${semana}.json`, verbo: "Evaluar",
+      semestre: t.semestre, ruta: `tests_semanales/cache/candidatos_${semana}_${t.id}.json`, verbo: "Evaluar",
       alProcesar: async (solo) => {
         const destino = document.getElementById("resultado");
-        const id = await pedirTrabajo(semestre, "tests.evaluar", { semana, prueba: false, solo });
+        const id = await pedirTrabajo(t.semestre, "tests.evaluar", { semana, prueba: false, solo });
         await seguir(id, destino);
       },
     });

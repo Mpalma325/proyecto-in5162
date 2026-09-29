@@ -78,7 +78,13 @@ def main(semestre_id: str, solo_comparar: bool = False) -> int:
 
     destino = config.PROJECT_ROOT / "respaldos" / "web" / datetime.now().strftime("%Y%m%d-%H%M") / semestre_id
     for i, a in enumerate(nube, 1):
-        ruta = "/".join(urllib.parse.quote(p) for p in a["ruta"].split("/"))
+        # El sitio ya no deja crear rutas así, pero lo que se escribe en este
+        # equipo no depende de eso: nada que salga de la carpeta del respaldo.
+        partes = a["ruta"].split("/")
+        if a["ruta"].startswith("/") or any(p in ("", ".", "..") or ":" in p or "\\" in p for p in partes):
+            print(f"\n  ⊘ se salta una ruta rara: {a['ruta']!r}")
+            continue
+        ruta = "/".join(urllib.parse.quote(p) for p in partes)
         archivo = destino / a["ruta"]
         archivo.parent.mkdir(parents=True, exist_ok=True)
         archivo.write_bytes(_pedir(f"archivo/{semestre_id}/{ruta}", token))

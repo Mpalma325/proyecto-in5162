@@ -197,7 +197,7 @@ def enviar(tarea: str) -> None:
             continue  # ya enviado: correrlo dos veces no repite correos
         alumno["message_id"] = enviar_correo(alumno["correo"], _asunto(tarea),
                                              _cuerpo(tarea, alumno))
-        alumno["enviado"] = datetime.now().isoformat(timespec="seconds")
+        alumno["enviado"] = datetime.now().astimezone().isoformat(timespec="seconds")
         _guardar(tarea, filas)
         # Desde acá, recolectar y corregir trabajan con la pregunta nueva.
         storage.actualizar_fila(tarea, alumno["grupo_archivo"], alumno["alumno_nombre"], {

@@ -45,6 +45,7 @@ const PESTANAS = [
       ? `Vas a corregir ${tarea} con GPT (gasta tokens) y guardar las notas, sin mandar correos.`
       : `Vas a corregir ${tarea} con GPT y mandarle el feedback por correo a cada alumno. Son correos reales.`),
   },
+  { id: "segunda", titulo: "Segunda oportunidad", flujo: "tareas.segunda", vista: (p, d) => vistaSegunda(d) },
 ];
 
 let pestana = PESTANAS.find((p) => p.id === location.hash.slice(1)) || PESTANAS[0];
@@ -77,12 +78,18 @@ const historial = historialTrabajos({
 
 // Después de revisar la corrección en modo prueba: elegir a quién corregir de verdad.
 function elegir(t) {
+  // Segunda oportunidad en modo prueba: los borradores de los correos, para leerlos.
+  if (t.flujo === "tareas.segunda" && t.argumentos.paso === "enviar" && t.prueba && t.estado === "terminado") {
+    const ruta = `tareas/data/salidas/correos_segunda_oportunidad_${t.argumentos.tarea}.txt`;
+    return el("a", { class: "descarga", href: `${urlArchivo(ruta)}?descargar` }, "Descargar los borradores");
+  }
   if (t.flujo !== "tareas.corregir" || !t.prueba || t.estado !== "terminado") return null;
   const tareaRevisada = t.argumentos.tarea;
+  // El semestre y la lista son los de esta revisión, no los del selector.
   return elegirCandidatos({
-    semestre, ruta: `tareas/cache/candidatos_${tareaRevisada}.json`, verbo: "Corregir",
+    semestre: t.semestre, ruta: `tareas/cache/candidatos_${tareaRevisada}_${t.id}.json`, verbo: "Corregir",
     alProcesar: async (solo) => {
-      const id = await pedirTrabajo(semestre, "tareas.corregir", { tarea: tareaRevisada, prueba: false, solo });
+      const id = await pedirTrabajo(t.semestre, "tareas.corregir", { tarea: tareaRevisada, prueba: false, solo });
       await seguir(id, document.getElementById("resultado"));
     },
   });
@@ -192,7 +199,11 @@ async function guardarAsignacion(selects, mensaje) {
   const texto = escribirCsv({ columnas: ["grupo_archivo", "alumno_nombre", "pregunta_tarea"], filas,
     formato: { sep: ",", eol: "\r\n" } });
   await api(urlArchivo(rutaAsignacion()), {
-    method: "PUT", headers: { "content-type": "text/csv; charset=utf-8" }, body: texto,
+    method: "PUT", body: texto, headers: {
+      "content-type": "text/csv; charset=utf-8",
+      // Sin pisar una asignación que otra persona guardó mientras tanto.
+      ...(previo ? { "if-match": previo.etag } : { "if-none-match": "*" }),
+    },
   });
   mensaje.replaceChildren(caja("exito", `Guardado en asignacion_${tarea}.csv. Generar va a usar esto.`));
 }
@@ -338,6 +349,84 @@ function vistaGenerar(destino) {
   return partes;
 }
 
+// ---------------------------------------------------------------- segunda oportunidad
+
+/**
+ * Una pregunta nueva para quien recibió la primera y no respondió. Dos pasos:
+ * preparar (el modelo genera las preguntas; no sale ningún correo) y enviar
+ * (en modo prueba solo arma los borradores). Después, recolectar y corregir
+ * funcionan como siempre, contra la pregunta nueva.
+ */
+function vistaSegunda(destino) {
+  const rutaCsv = `tareas/data/salidas/segunda_oportunidad_${tarea}.csv`;
+  const vista = el("div");
+  if (buscar(rutaCsv)) {
+    fetch(urlArchivo(rutaCsv), { cache: "no-store" }).then((r) => r.text()).then((texto) => {
+      const { columnas, filas } = leerCsv(texto);
+      const col = (n) => columnas.indexOf(n);
+      const enviados = filas.filter((f) => f[col("message_id")]).length;
+      vista.replaceChildren(
+        el("p", { class: "nota-pie" }, `${filas.length} alumnos · ${enviados} ya recibieron su pregunta nueva`),
+        el("div", { class: "tabla-envoltura editor-envoltura" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["Alumno", "Parte", "Pregunta nueva", "Enviada"].map((c) => el("th", {}, c)))),
+          el("tbody", {}, filas.map((f) => el("tr", {},
+            el("td", {}, f[col("nombre")]), el("td", {}, f[col("pregunta_tarea")]),
+            el("td", {}, el("div", { class: "celda-lectura" }, f[col("pregunta")] || "(sin preparar)")),
+            el("td", {}, f[col("enviado")] ? new Date(f[col("enviado")]).toLocaleString("es-CL",
+              { dateStyle: "short", timeStyle: "short" }) : "—")))))),
+        el("div", { class: "acciones" },
+          el("a", { class: "descarga", href: `${urlArchivo(rutaCsv)}?descargar` }, "Descargar el CSV")));
+    }).catch(() => vista.replaceChildren(caja("aviso", "No pude leer la lista de la segunda oportunidad.")));
+  } else {
+    vista.replaceChildren(caja("info", `Todavía no hay segunda oportunidad preparada para ${tarea}.`));
+  }
+
+  const pedir = async (argumentos, boton) => {
+    boton.disabled = true;
+    try {
+      const id = await pedirTrabajo(semestre, "tareas.segunda", { tarea, ...argumentos });
+      await seguir(id, destino);
+      historial.dibujar(semestre);
+    } catch (e) {
+      destino.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
+    } finally {
+      boton.disabled = false;
+    }
+  };
+  const preparar = el("button", { class: "primario", type: "button" }, "Preparar preguntas nuevas");
+  preparar.addEventListener("click", () => pedir({ paso: "preparar" }, preparar));
+
+  const prueba = el("input", { type: "checkbox", checked: true });
+  const alerta = el("div");
+  const enviar = el("button", { class: "primario", type: "button" }, "Enviar");
+  const actualizar = () => {
+    alerta.replaceChildren(prueba.checked ? "" : caja("aviso", "Modo prueba desactivado — se enviarán emails reales."));
+    enviar.classList.toggle("peligro", !prueba.checked);
+    enviar.textContent = prueba.checked ? "Ver los borradores" : "Enviar (envío real)";
+  };
+  prueba.addEventListener("change", actualizar);
+  enviar.addEventListener("click", () => {
+    if (!prueba.checked && !confirm(`Vas a mandar la pregunta nueva de ${tarea} a quienes no respondieron la `
+      + "primera. Son correos reales. Quien ya la recibió no la recibe de nuevo.\n\n¿Confirmas?")) return;
+    pedir({ paso: "enviar", prueba: prueba.checked }, enviar);
+  });
+  actualizar();
+
+  return [
+    el("p", {}, "Una pregunta nueva, sobre la misma parte de la tarea, para quienes recibieron la primera y no "
+      + "respondieron. Después, recolectar y corregir funcionan como siempre, contra la pregunta nueva."),
+    el("h4", {}, "1 · Preparar"),
+    caja("info", "Llama al modelo, una vez por alumno; no manda correos. Si ya estaba preparada, solo completa "
+      + "las preguntas que falten."),
+    el("div", { class: "form-trabajo" }, preparar),
+    vista,
+    el("h4", {}, "2 · Enviar"),
+    el("div", { class: "form-trabajo" },
+      el("label", { class: "interruptor" }, prueba, "Modo prueba — solo arma los borradores, no envía"), enviar),
+    alerta,
+  ];
+}
+
 function vistaPaso(p, destino) {
   const prueba = p.prueba ? el("input", { type: "checkbox", checked: true }) : null;
   const noEnviar = p.noEnviar ? el("input", { type: "checkbox" }) : null;
@@ -392,7 +481,8 @@ function dibujar() {
     onclick: () => { pestana = p; dibujar(); },
   }, p.titulo)));
   const resultado = el("div", { id: "resultado" });
-  const vista = pestana.id === "generar" ? vistaGenerar(resultado) : vistaPaso(pestana, resultado);
+  const vista = pestana.vista ? pestana.vista(pestana, resultado)
+    : pestana.id === "generar" ? vistaGenerar(resultado) : vistaPaso(pestana, resultado);
   app.replaceChildren(
     el("p", { class: "subtitulo" }, `Semestre activo: ${semestre}`),
     pestanas, selectorTarea(), ...vista.filter(Boolean), resultado, el("hr"), historial.nodo);

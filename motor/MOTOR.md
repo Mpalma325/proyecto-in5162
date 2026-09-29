@@ -34,6 +34,10 @@ la conexión abierta hasta 30 minutos.
   cola se crea sin reintentos.
 - **De a uno.** Dos trabajos a la vez podrían escribir el mismo archivo del
   semestre; la cola se crea con un solo despacho simultáneo.
+- **Lo hecho se guarda siempre.** Si el script falla, se corta o el sitio deja de responder a los avisos, los archivos que alcanzó a cambiar se suben igual: si ya salieron correos, tienen que quedar registrados, o la corrida siguiente los repetiría.
+- **25 minutos por trabajo.** Pasado eso se corta y guarda lo hecho. La cola espera 30 y después despacha el siguiente, que correría a la vez y pisaría los archivos.
+- **No pisa versiones ajenas.** Sube cada archivo con el etag con que lo bajó; si en la nube cambió mientras corría, el sitio responde 409 y el trabajo queda fallido diciendo qué no guardó.
+- **Tomar un trabajo es atómico.** El sitio solo lo pasa a "corriendo" si seguía "pendiente": si la cola lo entrega dos veces a la vez, uno solo lo ejecuta.
 - **Solo baja lo que necesita** (`_en_perfil`). Un trabajo de tests baja unos
   3 MB; si bajara también las entregas de tareas, serían más de 100.
 
@@ -49,6 +53,7 @@ la conexión abierta hasta 30 minutos.
 | `tareas.generar` | `modulos.tareas.generar --no-interactivo` con los HTML elegidos | llama al modelo |
 | `tareas.enviar`, `tareas.corregir` | los scripts de `modulos/tareas/` | correos reales solo con `prueba: false` |
 | `tareas.recolectar` | `modulos.tareas.recolectar` | lee el buzón |
+| `tareas.segunda` | segunda oportunidad: `preparar` genera las preguntas nuevas; `enviar` en modo prueba arma los borradores | preparar llama al modelo; enviar manda correos solo con `prueba: false` |
 | `datos.panel` | nada: solo recalcula la reportería después de editar alumnos o preguntas | ninguno |
 
 Un flujo nuevo se agrega en `FLUJOS` de `trabajo.py` y en `FLUJOS` de

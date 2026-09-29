@@ -26,6 +26,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,7 +71,8 @@ class Manejador(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return None
         id_trabajo = str(datos.get("id", ""))
-        return id_trabajo if 8 <= len(id_trabajo) <= 64 else None
+        # El id viaja a URLs hacia el sitio: solo letras, números y guiones.
+        return id_trabajo if re.fullmatch(r"[A-Za-z0-9-]{8,64}", id_trabajo) else None
 
     def do_GET(self):  # noqa: N802
         if self.path == "/salud":
@@ -107,7 +109,10 @@ def main() -> None:
     if faltan:
         sys.exit(f"Faltan variables: {', '.join(faltan)}")
     puerto = int(os.environ.get("PORT", "8090"))
-    servidor = ThreadingHTTPServer(("0.0.0.0", puerto), Manejador)
+    # En Cloud Run hay que escuchar en todas las interfaces; en el PC, solo en
+    # la propia máquina, para que nadie de la misma red le pida trabajos.
+    host = "127.0.0.1" if os.environ.get("COLA", "local") == "local" else "0.0.0.0"
+    servidor = ThreadingHTTPServer((host, puerto), Manejador)
     print(f"[motor] escuchando en :{puerto}  cola={os.environ.get('COLA', 'local')}  "
           f"sitio={os.environ.get('WEB_URL', 'http://127.0.0.1:8787')}", flush=True)
     servidor.serve_forever()
