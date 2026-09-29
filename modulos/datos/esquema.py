@@ -37,6 +37,7 @@ EVENTOS = (
     "evaluacion",   # el agente la corrigió y le mandó el feedback
     "repregunta",   # el alumno preguntó algo sobre ese feedback
     "tutoria",      # el agente le respondió la duda, sin tocar la nota
+    "ajuste",       # alguien del equipo docente cambió la nota a mano (motivo en Detalle)
     "error",
 )
 

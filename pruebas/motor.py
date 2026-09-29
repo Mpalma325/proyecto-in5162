@@ -145,6 +145,22 @@ for malo in (["../../alumnos.csv"], ["a/b.html"], ["x.csv"], "Grupo.html"):
     except ValueError:
         check(f"entrega {malo!r} se rechaza", True)
 
+titulo("1e. ajuste manual de nota")
+_, ajuste = trabajo.FLUJOS["datos.ajustar"]
+cmd = ajuste({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5",
+              "motivo": "castigó la firma", "_pedido_por": "profe@x.cl", "por": "otro@x.cl"})
+check("quién ajusta lo pone el sitio, no la página", cmd[-1] == "profe@x.cl", cmd)
+check("el motivo va como un solo argumento", "castigó la firma" in cmd)
+for malo in ({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5", "motivo": "x"},
+             {"flujo": "test", "item": "T1", "correo": "ana@x.cl", "nota": "6,5", "motivo": "motivo ok"},
+             {"flujo": "test", "item": "3", "correo": "no-es-correo", "nota": "6,5", "motivo": "motivo ok"},
+             {"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5; rm", "motivo": "motivo ok"}):
+    try:
+        ajuste(malo)
+        check(f"ajuste rechaza {str(malo)[:50]}", False)
+    except ValueError:
+        check(f"ajuste rechaza {str(malo)[:50]}", True)
+
 titulo("1d. segunda oportunidad")
 _, segunda = trabajo.FLUJOS["tareas.segunda"]
 check("preparar genera preguntas (no manda correos)",

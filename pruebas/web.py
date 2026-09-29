@@ -175,6 +175,16 @@ check("los valores por defecto de la página son los de config.py",
       set(defecto) == set(trabajo.PARAMETROS) and all(en_config.get(k) == v for k, v in defecto.items()),
       {k: (v, en_config.get(k)) for k, v in defecto.items() if en_config.get(k) != v})
 
+titulo("7a. la página no muestra nodos como texto ('[object HTMLDivElement]')")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-el.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-el.mjs corre", False, r.stderr[-300:])
+
 titulo("7b. las rutas de archivos: nombres raros sí, salirse de la carpeta no")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-rutas.mjs")],

@@ -4,7 +4,9 @@
 // corre con Pyodide, así que cada número sale de la misma función de Python que
 // usa Streamlit. Este archivo solo trae datos, pide cálculos y dibuja.
 
-import { api, caja, el, navegacion } from "./comun.js";
+import { api, caja, el, navegacion, pedirTrabajo, seguirTrabajo } from "./comun.js";
+import { descargar, exportarCsv } from "./csv.js";
+import { seccionSabana } from "./sabana.js";
 
 document.getElementById("nav")?.replaceWith(navegacion());
 
@@ -551,9 +553,60 @@ function seccionAlumnos() {
       c.EvaluacionIA
         ? [el("p", {}, el("strong", {}, "Lo que le respondió el agente")), evaluacionLegible(c.EvaluacionIA)]
         : null,
-      c.Modelo ? el("p", { class: "tenue" }, `Modelo: ${c.Modelo}`) : null));
+      c.Modelo ? el("p", { class: "tenue" }, `Modelo: ${c.Modelo}`) : null,
+      c.Respondio || c.NotaTexto ? formularioAjuste(c) : null));
   }
   return partes;
+}
+
+/**
+ * Cambiar la nota a mano cuando el modelo se equivocó. Queda en el log con el
+ * motivo, la nota anterior y quién lo hizo, y no se le escribe al alumno
+ * (modulos/datos/ajustar.py).
+ */
+function formularioAjuste(c) {
+  const nota = el("input", { type: "text", size: 5, placeholder: "6,5", "aria-label": "Nota nueva" });
+  const motivo = el("input", { type: "text", size: 40, placeholder: "por qué se ajusta", "aria-label": "Motivo" });
+  const destino = el("div");
+  const boton = el("button", { class: "descarga", type: "button" }, "Guardar ajuste");
+  boton.addEventListener("click", async () => {
+    const n = nota.value.trim().replace(".", ",");
+    if (!/^\d{1,2}(,\d)?$/.test(n) || Number(n.replace(",", ".")) > 7) {
+      destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
+      return;
+    }
+    if (motivo.value.trim().length < 5) {
+      destino.replaceChildren(caja("aviso", "Escribe el motivo: queda registrado junto al ajuste."));
+      return;
+    }
+    if (!confirm(`Cambiar la nota de ${c.Nombre}, semana ${c.Item}: ${c.NotaTexto || "sin nota"} → ${n}.
+`
+      + "No se le envía ningún correo. ¿Confirmas?")) return;
+    boton.disabled = true;
+    try {
+      const id = await pedirTrabajo(estado.semestre, "datos.ajustar",
+        { flujo: "test", item: String(c.Item), correo: c.Correo, nota: n, motivo: motivo.value.trim() });
+      await seguirTrabajo(id, destino, {
+        alTerminar: (t) => {
+          boton.disabled = false;
+          if (t.estado === "terminado") {
+            destino.append(el("button", { class: "enlace", type: "button", onclick: () => location.reload() },
+              "Recargar la reportería para ver la nota nueva"));
+          }
+        },
+      });
+    } catch (e) {
+      boton.disabled = false;
+      destino.replaceChildren(caja("aviso", `No pude pedir el ajuste: ${e.message}`));
+    }
+  });
+  return el("details", { class: "ajuste" }, el("summary", {}, "Ajustar nota a mano"),
+    el("div", { class: "contenido" },
+      el("p", { class: "nota-pie" }, "Para cuando el modelo se equivocó. Queda registrado quién la cambió, cuándo, la "
+        + "nota anterior y el motivo. El alumno no recibe ningún correo."),
+      el("div", { class: "fila-campos" }, el("label", { class: "campo" }, "Nota nueva", nota),
+        el("label", { class: "campo" }, "Motivo", motivo), boton),
+      destino));
 }
 
 function seccionPendientes() {
@@ -582,23 +635,19 @@ const SECCIONES = {
 
 // ---------------------------------------------------------------- pantalla
 
+// La sección de la sábana se arma una vez por semestre: la reportería se
+// redibuja con cada filtro, y rehacerla bajaría el CSV completo cada vez.
+let sabana = { semestre: null, nodo: null };
+function sabanaDe(semestre) {
+  if (sabana.semestre !== semestre) sabana = { semestre, nodo: seccionSabana(semestre) };
+  return sabana.nodo;
+}
+
 function descargarCsv() {
   const filas = llamar("_vista");
   if (!filas.length) return;
   const cols = Object.keys(filas[0]);
-  const celda = (v) => {
-    let t = v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "True" : "False") : String(v);
-    // Una respuesta que empieza con = + - @ Excel la ejecutaría como fórmula al
-    // abrir el archivo. Los números (notas) se dejan tal cual.
-    if (/^[=+\-@\t\r]/.test(t) && Number.isNaN(Number(t))) t = `'${t}`;
-    return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-  };
-  const texto = [cols.join(","), ...filas.map((f) => cols.map((c) => celda(f[c])).join(","))].join("\r\n");
-  // Con BOM, como el utf-8-sig de Streamlit: Excel lo abre con los acentos bien.
-  const blob = new Blob(["﻿", texto], { type: "text/csv;charset=utf-8" });
-  const a = el("a", { href: URL.createObjectURL(blob), download: `panel_${estado.semestre}_tests.csv` });
-  a.click();
-  URL.revokeObjectURL(a.href);
+  descargar(`panel_${estado.semestre}_tests.csv`, exportarCsv(cols, filas.map((f) => cols.map((c) => f[c]))));
 }
 
 function chips(opciones, seleccion) {
@@ -688,7 +737,8 @@ function dibujar() {
   contenedorPestana = el("div", { role: "tabpanel" });
   app.replaceChildren(subtitulo, cabecera, filtros, kpis, ...notas.filter(Boolean), el("hr"), pestanas,
     contenedorPestana, el("hr"),
-    el("button", { class: "descarga", type: "button", onclick: descargarCsv }, "Descargar el panel en CSV"));
+    el("button", { class: "descarga", type: "button", onclick: descargarCsv }, "Descargar el panel en CSV"),
+    sabanaDe(estado.semestre));
   dibujarPestana();
 }
 

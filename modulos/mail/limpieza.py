@@ -111,10 +111,10 @@ def _recuperar_de_la_cita(lineas: list) -> str:
     """
     import re
     sin_marcas = chr(10).join(re.sub(r'^\s*>+ ?', '', l) for l in lineas)
-    return _limpiar_respuesta(sin_marcas, _descitado=True).strip()
+    return _descitar(sin_marcas, _descitado=True).strip()
 
 
-def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
+def _descitar(texto: str, _descitado: bool = False) -> str:
     import re
 
     # Los correos llegan con fines de línea de Windows (\r\n). Con el \r
@@ -218,6 +218,65 @@ def _limpiar_respuesta(texto: str, _descitado: bool = False) -> str:
     if antes and not _es_solo_saludo(antes):
         return antes
     return despues or antes
+
+
+def _limpiar_respuesta(texto: str) -> str:
+    """Lo que escribió el alumno: sin la cita del correo original, el saludo ni la firma."""
+    return _sin_saludo_ni_firma(_descitar(texto))
+
+
+# Idea tomada del limpiador de Renzo (socrates): quitar saludo y firma. Pero
+# solo líneas que son ENTERAS un saludo o una firma; si la línea sigue con
+# contenido ("Hola, era necesario para…") se deja, que es donde el suyo perdía
+# parte de la respuesta.
+_LINEA_SALUDO = re.compile(
+    r"^(hola|holi|buen[oa]s?( (d[ií]as|tardes|noches))?|estimad[oa]s?\b[^,:!.]{0,40}|"
+    r"junto con saludar|espero que est[eé]n? bien)[\s,!.:;c]*$",
+    re.IGNORECASE,
+)
+# "Mis respuestas son las siguientes:", "Adjunto mi respuesta c:", "envío aquí mis respuestas:".
+# Solo la presentación, sin nada más: "Respuesta: sí, porque…" es una respuesta y se queda.
+_LINEA_PRESENTACION = re.compile(
+    r"^((hola|buen[oa]s?( (d[ií]as|tardes))?)[\s,!.]*)?"
+    r"((ac[aá]|aqu[ií]) van|adjunto|env[ií]o( aqu[ií])?|les? env[ií]o|les dejo|estas son|a continuaci[oó]n)?\s*"
+    r"(mis|mi|las)?\s*respuestas?"
+    r"( a (las|la|estas) preguntas?| de (esta|la) semana| son las siguientes| son| es la siguiente)*"
+    r"\s*[:.]?\s*(c:)?$",
+    re.IGNORECASE,
+)
+_LINEA_FIRMA = re.compile(
+    r"^(saludos( cordiales)?|cordiales saludos|atte\.?|atentamente|slds\.?|"
+    r"(muchas )?gracias( de antemano)?|quedo atent[oa]\.?|enviado desde mi [\w ]{2,20})[\s,!.]*$",
+    re.IGNORECASE,
+)
+
+
+def _sin_saludo_ni_firma(texto: str) -> str:
+    lineas = texto.split("\n")
+    # Arriba: hasta dos líneas de saludo o de presentación ("Mis respuestas son:").
+    for _ in range(2):
+        primera = next((i for i, l in enumerate(lineas) if l.strip()), None)
+        if primera is None:
+            break
+        l = lineas[primera].strip()
+        if len(l) <= 80 and (_LINEA_SALUDO.match(l) or _LINEA_PRESENTACION.match(l)):
+            lineas = lineas[primera + 1:]
+        else:
+            break
+    # Abajo: una despedida, y el nombre corto que suele ir debajo.
+    fin = [i for i, l in enumerate(lineas) if l.strip()]
+    if fin:
+        ultima = fin[-1]
+        penultima = fin[-2] if len(fin) > 1 else None
+        es_nombre = re.fullmatch(r"[\wÁÉÍÓÚÑáéíóúñü.\- ]{2,40}", lineas[ultima].strip() or "")
+        if _LINEA_FIRMA.match(lineas[ultima].strip()):
+            lineas = lineas[:ultima]
+        elif (penultima is not None and es_nombre and len(lineas[ultima].split()) <= 4
+              and _LINEA_FIRMA.match(lineas[penultima].strip())):
+            lineas = lineas[:penultima]
+    limpio = _limpiar_lineas("\n".join(lineas))
+    # Si todo era saludo y firma, mejor devolver lo que había que dejarlo vacío.
+    return limpio or _limpiar_lineas(texto)
 
 
 def _limpiar_lineas(texto: str) -> str:

@@ -9,7 +9,9 @@ export function el(tag, attrs = {}, ...hijos) {
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
     else n.setAttribute(k, v === true ? "" : v);
   }
-  for (const h of hijos.flat()) {
+  // Aplanado completo: con un solo nivel, una lista dentro de otra (como las
+  // semanas de la ficha de un alumno) se mostraba como "[object HTMLDivElement]".
+  for (const h of hijos.flat(Infinity)) {
     if (h === null || h === undefined || h === false) continue;
     n.append(h instanceof Node ? h : document.createTextNode(String(h)));
   }

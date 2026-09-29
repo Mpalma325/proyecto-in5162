@@ -76,6 +76,27 @@ def _paso_segunda(a: dict) -> list[str]:
     raise ValueError(f"Paso inválido: {paso!r}")
 
 
+def _ajuste(a: dict) -> list[str]:
+    """Ajuste manual de nota. Quién lo hace lo pone el sitio (pedido_por), no la página."""
+    flujo = a.get("flujo")
+    if flujo not in ("test", "tarea"):
+        raise ValueError(f"Flujo inválido: {flujo!r}")
+    item = str(a.get("item", ""))
+    if not re.fullmatch(r"\d{1,2}" if flujo == "test" else r"T\d{1,2}", item):
+        raise ValueError(f"Ítem inválido: {item!r}")
+    correo = str(a.get("correo", ""))
+    if not re.fullmatch(r"[^@\s,]+@[^@\s,]+\.[^@\s,]+", correo):
+        raise ValueError(f"Correo inválido: {correo!r}")
+    nota = str(a.get("nota", ""))
+    if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota):
+        raise ValueError(f"Nota inválida: {nota!r}")
+    motivo = " ".join(str(a.get("motivo", "")).split())
+    if not 5 <= len(motivo) <= 500:
+        raise ValueError("El motivo es obligatorio (entre 5 y 500 caracteres).")
+    return ["-m", "modulos.datos.ajustar", "--flujo", flujo, "--item", item, "--correo", correo,
+            "--nota", nota, "--motivo", motivo, "--por", a.get("_pedido_por") or "desconocido"]
+
+
 def _tarea(a: dict) -> str:
     t = str(a.get("tarea", ""))
     if not re.fullmatch(r"T\d{1,2}", t):
@@ -153,6 +174,10 @@ FLUJOS = {
     "tests.experimento": ("tests", _experimento),
     # Solo recalcula la reportería, después de editar alumnos o notas a mano.
     "datos.panel": ("tests", lambda a: ["-c", "print('Recalculando la reportería…')"]),
+    # La sábana de datos del semestre, en exportes/sabana.csv. Solo lee.
+    "datos.sabana": ("sabana", lambda a: ["-m", "modulos.sabana"]),
+    # Cambiar una nota a mano, con motivo. No manda correos.
+    "datos.ajustar": ("tests", _ajuste),
 
     # No llama al modelo: lee las entregas y deja el resultado para la página.
     "tareas.chequeo": ("tareas", lambda a: ["-c", _CHEQUEO, _tarea(a)]),
@@ -194,6 +219,10 @@ def _en_perfil(perfil: str, ruta: str) -> bool:
     """
     if "/" not in ruta:
         return ruta.lower().endswith(_RAIZ)
+    if perfil == "sabana":
+        # La sábana cruza tests y tareas, pero de tareas solo necesita las
+        # salidas (preguntas y pautas por alumno), no las entregas.
+        return ruta.startswith(("tests_semanales/", "tareas/data/salidas/", "exportes/"))
     carpeta = {"tests": "tests_semanales/", "tareas": "tareas/"}[perfil]
     return ruta.startswith(carpeta)
 
@@ -419,7 +448,7 @@ def ejecutar(id_trabajo: str) -> None:
             raise ValueError(f"Flujo desconocido: {flujo}")
         perfil, armar = FLUJOS[flujo]
         # El semestre lo pone el motor, no la página: pisa cualquier "_semestre" que venga.
-        cmd = armar({**args, "_semestre": semestre})
+        cmd = armar({**args, "_semestre": semestre, "_pedido_por": t.get("pedido_por", "")})
 
         try:
             # El sitio solo lo pasa a "corriendo" si seguía "pendiente": si dos

@@ -64,3 +64,27 @@ export function escribirCsv({ columnas, filas, formato = {} }) {
   ];
   return (bom ? BOM : "") + lineas.join(eol) + (finalConSalto ? eol : "");
 }
+
+/**
+ * CSV para descargar y abrir en Excel: con BOM, fines de línea de Windows y
+ * sin fórmulas. Una celda que empieza con = + - @ (una respuesta de alumno,
+ * por ejemplo) Excel la ejecutaría al abrir el archivo; se le antepone un
+ * apóstrofo. Los números se dejan tal cual.
+ */
+export function exportarCsv(columnas, filas) {
+  const celda = (v) => {
+    let t = v === null || v === undefined ? "" : typeof v === "boolean" ? (v ? "True" : "False") : String(v);
+    if (/^[=+\-@\t\r]/.test(t) && Number.isNaN(Number(t))) t = `'${t}`;
+    return /[",\n\r]/.test(t) ? `"${t.replaceAll('"', '""')}"` : t;
+  };
+  return BOM + [columnas.map(celda).join(","), ...filas.map((f) => f.map(celda).join(","))].join("\r\n");
+}
+
+/** Descarga un texto como archivo. */
+export function descargar(nombre, texto, tipo = "text/csv;charset=utf-8") {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([texto], { type: tipo }));
+  a.download = nombre;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}

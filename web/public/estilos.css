@@ -233,3 +233,8 @@ button.enlace {
 .candidatos { margin-top: 16px; }
 details.candidato summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 details.candidato summary .interruptor { display: inline-flex; gap: 8px; align-items: center; }
+
+/* ---------------------------------------------------------- sábana de datos */
+.sabana { margin-top: 12px; }
+.filtros-sabana { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; margin: 8px 0; }
+.filtro > span { display: block; font-size: 13px; color: var(--tenue); margin-bottom: 4px; }

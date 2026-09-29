@@ -62,7 +62,7 @@ const BOOLEANAS = new Set(["EnRoster", "Enviado", "EnvioRegistrado", "Respondio"
 // motor, que es quien arma el comando; acá solo se filtra el nombre.
 const FLUJOS = new Set([
   "tests.enviar", "tests.evaluar", "tests.resumen", "tests.tutoria", "tests.chequeo", "tests.experimento",
-  "datos.panel",
+  "datos.panel", "datos.ajustar", "datos.sabana",
   "tareas.chequeo", "tareas.generar", "tareas.enviar", "tareas.recolectar", "tareas.corregir",
   "tareas.segunda",
 ]);

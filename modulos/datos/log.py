@@ -83,6 +83,12 @@ def reconstruir_estado(semestre_id: str | None = None) -> dict:
         elif ev == "evaluacion":
             actual["Nota"] = fila.get("Nota", "")
             actual["Originalidad"] = fila.get("Originalidad", "")
+        elif ev == "ajuste":
+            # Un ajuste manual manda sobre la evaluación anterior. La
+            # originalidad no la cambia salvo que el ajuste la traiga.
+            actual["Nota"] = fila.get("Nota", "")
+            if fila.get("Originalidad"):
+                actual["Originalidad"] = fila["Originalidad"]
     return estado
 
 
