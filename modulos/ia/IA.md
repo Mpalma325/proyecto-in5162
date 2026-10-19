@@ -40,6 +40,24 @@ r.datos            # el texto ya parseado; falla con un error claro si no es JSO
 `temperatura` y `max_tokens` se pueden pasar por llamada cuando difieren del
 default: el resumen semanal usa 0.3 y 2000, distinto a la evaluación.
 
+## Lo que cuesta
+
+Cada llamada suma sus tokens al consumo del proceso, por modelo. Al terminar,
+el proceso imprime una línea por modelo:
+
+```
+Consumo de API (gpt-5.4-mini): 3 llamadas, 7512 tokens de entrada, 1830 de salida.
+```
+
+El sitio la lee de la salida de cada trabajo para mostrar cuánto costó
+(`web/public/consumo.js`), con los precios que se cargan en Configuración ›
+Parámetros. Si cambia la forma de la línea, cambia ese lector; la prueba
+`pruebas/web.py` (7f) lo comprueba con la línea que escribe este módulo.
+
+Una llamada que no pase por `completar()` (como la corrección de tareas, que
+usa el cliente de OpenAI directo) tiene que sumarse con `ia.registrar_uso()`,
+o su costo no aparece.
+
 ## Cuidado
 
 `configurar()` guarda estado a nivel de módulo. Si algún día conviven dos

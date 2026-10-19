@@ -1,6 +1,6 @@
 # Sitio del curso
 
-Las cuatro páginas de Streamlit (Reportería, Tests Semanales, Tareas, Datos y Configuración) en una página web a la que se entra desde cualquier equipo o teléfono. Los botones hacen lo mismo que en Streamlit y corren los mismos scripts de `modulos/`; lo que cambia es dónde corren.
+Las páginas de Streamlit en una página web a la que se entra desde cualquier equipo o teléfono: Inicio (en qué va la semana, lo que requiere atención y el gasto en la API), Tests semanales, Tareas, Resultados (la reportería) y Configuración. Los botones hacen lo mismo que en Streamlit y corren los mismos scripts de `modulos/`; lo que cambia es dónde corren.
 
 ## Piezas
 

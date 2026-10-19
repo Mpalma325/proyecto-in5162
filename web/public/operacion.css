@@ -1,0 +1,10 @@
+/* Operación semanal: Tests Semanales y Tareas. Va después de estilos.css y
+   usa sus mismos tokens, así que el modo oscuro sale solo. Las pestañas por
+   paso, el estado del curso y el recuadro de la acción real viven en
+   estilos.css, porque son componentes de comun.js. */
+
+.cabeza-operacion { margin: -6px 0 12px; }
+/* Tareas: el selector de tarea va justo debajo del semestre. */
+.cabeza-operacion + .fila-campos, .cabeza-operacion + .campo { margin-bottom: 10px; }
+
+.form-trabajo .costo { color: var(--tenue); font-size: 13px; align-self: center; }

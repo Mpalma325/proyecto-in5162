@@ -6,7 +6,9 @@ resúmenes, tareas para generar preguntas en JSON. La llamada era la misma en
 los tres casos; lo único distinto eran los prompts, que se quedan en cada flujo.
 """
 
+import atexit
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -21,6 +23,55 @@ _ajustes = {"modelo": "gpt-5.4-mini", "temperatura": 0.2, "max_tokens": 3000,
 # respuesta. Eso no es parte del correo ni del HTML que se parsea, así que se
 # saca acá, en el único lugar por donde pasan todas las respuestas.
 _PENSAMIENTO = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+# Lo que se gastó en este proceso, por modelo: [llamadas, tokens de entrada,
+# tokens de salida]. Al terminar se imprime una línea por modelo, y el sitio la
+# lee de la salida de cada trabajo para mostrar cuánto costó
+# (web/public/consumo.js). Si cambia la forma de la línea, cambia ese lector.
+_consumo: dict[str, list[int]] = {}
+
+
+def registrar_uso(modelo: str | None, entrada: int | None, salida: int | None) -> None:
+    """Suma una llamada al consumo del proceso. completar() la llama sola; las
+    llamadas que no pasan por acá (tareas/corregir.py) la llaman a mano."""
+    c = _consumo.setdefault(modelo or "desconocido", [0, 0, 0])
+    c[0] += 1
+    c[1] += int(entrada or 0)
+    c[2] += int(salida or 0)
+
+
+def consumo() -> dict[str, tuple[int, int, int]]:
+    """(llamadas, tokens de entrada, tokens de salida) por modelo, en este proceso."""
+    return {m: tuple(v) for m, v in _consumo.items()}
+
+
+def linea_consumo(modelo: str, llamadas: int, entrada: int, salida: int, precios: dict | None = None) -> str:
+    """La línea que queda en la salida del trabajo. Con precios (US$ por millón
+    de tokens, [entrada, salida]) agrega el costo de ese momento."""
+    texto = (f"Consumo de API ({modelo}): {llamadas} llamada{'' if llamadas == 1 else 's'}, "
+             f"{entrada} tokens de entrada, {salida} de salida")
+    p = (precios or {}).get(modelo)
+    if isinstance(p, list) and len(p) == 2:
+        costo = (entrada * float(p[0]) + salida * float(p[1])) / 1_000_000
+        texto += f", US$ {costo:.4f}".replace(".", ",")
+    return texto + "."
+
+
+def _informar_consumo() -> None:
+    if not _consumo:
+        return
+    # Los precios llegan del sitio como variable de entorno (Configuración ›
+    # Parámetros); sin ellos la línea dice solo los tokens.
+    try:
+        precios = json.loads(os.environ.get("PRECIOS_API") or "{}")
+    except ValueError:
+        precios = {}
+    for modelo, (llamadas, entrada, salida) in sorted(_consumo.items()):
+        print(linea_consumo(modelo, llamadas, entrada, salida, precios), flush=True)
+
+
+atexit.register(_informar_consumo)
 
 
 def configurar(api_key_provider, modelo: str | None = None,
@@ -133,6 +184,7 @@ def completar(system: str, user: str, *, temperatura: float | None = None,
     )
 
     uso = resp.usage
+    registrar_uso(_ajustes["modelo"], getattr(uso, "prompt_tokens", 0), getattr(uso, "completion_tokens", 0))
     return Respuesta(
         texto=_PENSAMIENTO.sub("", resp.choices[0].message.content or "").strip(),
         meta={

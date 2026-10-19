@@ -290,16 +290,25 @@ with tab_config:
 
     st.subheader("Credenciales")
     st.markdown(
-        "Se guardan en el archivo `.env` de la raíz del proyecto."
+        "Se guardan en el archivo `.env` de la raíz del proyecto. Las claves no se "
+        "muestran: se ven solo sus últimos caracteres y, si dejas el campo vacío, "
+        "queda la que está."
     )
+
+    def _oculta(valor: str) -> str:
+        # Nunca se manda la clave al navegador: el campo de contraseña de
+        # Streamlit trae un botón para mostrarla.
+        valor = valor.replace(" ", "")
+        return f"guardada, termina en …{valor[-4:]}" if len(valor) > 8 else "sin guardar"
 
     with st.form("form_creds"):
         api_key = st.text_input(
             "OpenAI API Key",
-            value=env.get("OPENAI_API_KEY", ""),
+            value="",
             type="password",
-            placeholder="sk-proj-...",
+            placeholder="sk-proj-... (vacío: se mantiene la actual)",
         )
+        st.caption(f"API Key: {_oculta(env.get('OPENAI_API_KEY', ''))}")
         correo = st.text_input(
             "Correo remitente",
             value=env.get("CORREO_REMITENTE", ""),
@@ -307,10 +316,11 @@ with tab_config:
         )
         password = st.text_input(
             "App password de Gmail (16 caracteres)",
-            value=env.get("CORREO_APP_PASSWORD", ""),
+            value="",
             type="password",
-            placeholder="xxxx xxxx xxxx xxxx",
+            placeholder="xxxx xxxx xxxx xxxx (vacío: se mantiene la actual)",
         )
+        st.caption(f"App password: {_oculta(env.get('CORREO_APP_PASSWORD', ''))}")
         submitted_creds = st.form_submit_button("Guardar credenciales", type="primary")
 
     if submitted_creds:

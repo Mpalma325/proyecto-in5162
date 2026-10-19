@@ -8,6 +8,8 @@ más: no permite ver la reportería ni pedir trabajos.
 
 from __future__ import annotations
 
+import hashlib
+import http.client
 import json
 import os
 import time
@@ -42,7 +44,10 @@ def _pedir(metodo: str, ruta: str, cuerpo: bytes | None = None,
             if 400 <= e.code < 500:
                 raise RuntimeError(f"{metodo} {ruta}: {e.code} {e.read()[:200]!r}") from e
             ultimo = e
-        except urllib.error.URLError as e:
+        except (OSError, http.client.HTTPException) as e:
+            # URLError, un timeout, o la conexión cortada sin respuesta
+            # (RemoteDisconnected), que urllib no envuelve en URLError. Antes
+            # ese último no se reintentaba y el trabajo fallaba de entrada.
             ultimo = e
         time.sleep(1 + 2 * i)
     raise RuntimeError(f"{metodo} {ruta}: sin respuesta del sitio ({ultimo})")
@@ -69,8 +74,19 @@ def subir_archivo(semestre: str, ruta: str, datos: bytes, origen: str = "motor",
     nuevo.
     """
     condicion = {"If-Match": etag} if etag else {"If-None-Match": "*"}
-    _pedir("PUT", _ruta_archivo(semestre, ruta), datos, "application/octet-stream",
-           extra={"X-In5162-Origen": origen, **condicion})
+    try:
+        # Más intentos que el resto: si esto falla después de mandar correos,
+        # el envío queda sin registrar.
+        _pedir("PUT", _ruta_archivo(semestre, ruta), datos, "application/octet-stream",
+               intentos=5, extra={"X-In5162-Origen": origen, **condicion})
+    except RuntimeError as e:
+        # Si un intento llegó pero se cortó la respuesta, el reintento choca con
+        # su propio cambio (409). Si en la nube está justo esto, ya se guardó.
+        if " 409 " not in f" {e} ":
+            raise
+        en_la_nube = {a["ruta"]: a.get("etag", "").strip('"') for a in listar_archivos(semestre)}
+        if en_la_nube.get(ruta) != hashlib.md5(datos).hexdigest():
+            raise
 
 
 def ver_trabajo(id_trabajo: str) -> dict:

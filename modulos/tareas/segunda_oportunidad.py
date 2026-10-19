@@ -174,7 +174,7 @@ def _cuerpo(tarea: str, alumno: dict) -> str:
 
 
 def _asunto(tarea: str) -> str:
-    return f"Nueva pregunta de comprensión — IN5162 {tarea}"
+    return f"Nueva pregunta de comprensión — {config.CURSO} {tarea}"
 
 
 def borradores(tarea: str):

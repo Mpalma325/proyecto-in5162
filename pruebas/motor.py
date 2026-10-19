@@ -363,4 +363,84 @@ trabajo.LIMITE_SEGUNDOS = limite
 check("se cortó y quedó fallido", t["estado"] == "fallido" and "pasó de" in t["salida"], t["salida"][-200:])
 check("lo que alcanzó a escribir se guardó", "tests_semanales/data/hecho.txt" in sitio.subidos)
 
+titulo("14. si el aviso de inicio llegó pero se cortó la respuesta, el trabajo corre igual")
+real_informar = sitio.informar
+
+
+def informar_cortado(id_trabajo, salida="", estado=None, codigo=None):
+    real_informar(id_trabajo, salida, estado, codigo)
+    if estado == "corriendo":
+        # el reintento choca con su propio cambio
+        raise RuntimeError(f"POST motor/trabajos/{id_trabajo}: 409 b'El trabajo ya está corriendo.'")
+
+
+sitio.informar = informar_cortado
+usar(sitio)
+t = correr("t12", "prueba.cortado")
+sitio.informar = real_informar
+usar(sitio)
+check("no lo confunde con otro intento: corre y termina", t["estado"] == "terminado", t.get("estado"))
+check("y guarda lo que hizo", "tests_semanales/data/hecho.txt" in sitio.subidos)
+
+# Desde acá, las funciones de verdad de motor/sitio.py, con la red simulada.
+import hashlib  # noqa: E402
+import http.client  # noqa: E402
+import importlib  # noqa: E402
+
+sitio_real = importlib.reload(trabajo.sitio)
+os.environ.setdefault("TOKEN_MOTOR", "prueba")
+
+
+class _Respuesta:
+    def __init__(self, cuerpo):
+        self.cuerpo = cuerpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self):
+        return self.cuerpo
+
+
+titulo("15. la conexión cortada sin respuesta se reintenta")
+llamadas = []
+
+
+def urlopen_que_corta(req, timeout=None):
+    llamadas.append(req.get_method())
+    if len(llamadas) == 1:
+        raise http.client.RemoteDisconnected("Remote end closed connection without response")
+    return _Respuesta(b'{"ok": true}')
+
+
+with mock.patch.object(sitio_real.urllib.request, "urlopen", urlopen_que_corta), \
+        mock.patch.object(sitio_real.time, "sleep", lambda s: None):
+    sitio_real.informar("t13", salida="x")
+check("reintentó y el aviso llegó", llamadas == ["POST", "POST"], llamadas)
+
+titulo("16. una subida que llegó pero perdió la respuesta no se da por fallida")
+guardado = b"Correo\nana@x.cl\n"
+
+
+def pedir_409(*_, **__):
+    raise RuntimeError("PUT motor/archivo/zz/notas.csv: 409 b'El archivo cambió en la nube'")
+
+
+with mock.patch.object(sitio_real, "_pedir", pedir_409), \
+        mock.patch.object(sitio_real, "listar_archivos",
+                          lambda sem: [{"ruta": "notas.csv", "etag": f'"{hashlib.md5(guardado).hexdigest()}"'}]):
+    try:
+        sitio_real.subir_archivo("zz", "notas.csv", guardado, etag="vieja")
+        check("si en la nube está justo lo que se subía, cuenta como guardado", True)
+    except RuntimeError as e:
+        check("si en la nube está justo lo que se subía, cuenta como guardado", False, e)
+    try:
+        sitio_real.subir_archivo("zz", "notas.csv", b"otra cosa", etag="vieja")
+        check("si en la nube hay otra cosa, sigue siendo un conflicto", False)
+    except RuntimeError:
+        check("si en la nube hay otra cosa, sigue siendo un conflicto", True)
+
 sys.exit(resultado())

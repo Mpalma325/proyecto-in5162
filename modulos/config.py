@@ -45,6 +45,9 @@ SEMESTRE = _semestre.activo_o_error()
 MODELO = _env.get("MODELO", "gpt-5.4-mini")
 TEMPERATURA = float(_env.get("TEMPERATURA", "0.2"))
 MAX_TOKENS = int(_env.get("MAX_TOKENS", "3000"))
+# US$ por millón de tokens, por modelo: {"modelo": [entrada, salida]}. Solo
+# sirve para que la línea "Consumo de API" de cada trabajo diga cuánto costó.
+PRECIOS_API = _env.get("PRECIOS_API", "{}")
 
 # --- correo ---
 # Por defecto Gmail, que es lo que usa el curso. Se pueden cambiar por .env
@@ -53,9 +56,12 @@ SMTP_HOST = _env.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(_env.get("SMTP_PORT", "587"))
 IMAP_HOST = _env.get("IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(_env.get("IMAP_PORT", "993"))
+# El código del curso, como lo ven los alumnos en el asunto de los correos.
+# Otro curso que use esto lo cambia en el .env (y el motor, en su despliegue).
+CURSO = _env.get("CURSO", "IN5162").strip() or "IN5162"
 # Dominio de los Message-ID que generamos. No tiene que existir; solo
 # identifica de dónde salió el mensaje.
-MSGID_DOMINIO = _env.get("MSGID_DOMINIO", "in5162.local")
+MSGID_DOMINIO = _env.get("MSGID_DOMINIO", f"{CURSO.lower()}.local")
 
 # --- sitio web ---
 # Dónde está el sitio del curso. Por defecto el de desarrollo local

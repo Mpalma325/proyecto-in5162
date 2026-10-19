@@ -11,6 +11,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* Un elemento con hidden no se ve, aunque su clase le dé otro display. */
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--fondo); color: var(--texto);
   font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -47,12 +49,6 @@ select {
 
 hr { border: 0; border-top: 1px solid var(--linea); margin: 20px 0; }
 
-.pestanas { display: flex; gap: 2px; border-bottom: 1px solid var(--linea); margin-bottom: 16px; overflow-x: auto; }
-.pestana {
-  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--tenue);
-  font: inherit; padding: 8px 14px; cursor: pointer; white-space: nowrap;
-}
-.pestana[aria-selected="true"] { color: var(--texto); border-bottom-color: var(--acento); font-weight: 600; }
 
 .grilla2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 820px) { .grilla2 { grid-template-columns: 1fr; } }
@@ -160,6 +156,8 @@ button.primario {
 }
 button.primario:disabled { opacity: .5; cursor: default; }
 button.primario.peligro { background: #b4532a; }
+/* La acción real (manda correos, guarda notas): verde, como algo que se confirma. El rojo queda para borrar. */
+button.primario.real { background: #2f7d4f; }
 pre.salida {
   background: var(--caja); border: 1px solid var(--linea); border-radius: 8px; padding: 12px 14px;
   font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-x: auto;
@@ -238,3 +236,354 @@ details.candidato summary .interruptor { display: inline-flex; gap: 8px; align-i
 .sabana { margin-top: 12px; }
 .filtros-sabana { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; margin: 8px 0; }
 .filtro > span { display: block; font-size: 13px; color: var(--tenue); margin-bottom: 4px; }
+
+/* ---------------------------------------------------------- preguntas por semana */
+.modos { margin: 0 0 12px; }
+.editor-preguntas { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 860px) { .editor-preguntas { grid-template-columns: 1fr; } }
+.lista-semanas {
+  display: flex; flex-direction: column; gap: 4px; position: sticky; top: 12px;
+  max-height: calc(100vh - 24px); overflow-y: auto;
+}
+@media (max-width: 860px) {
+  .lista-semanas { position: static; flex-direction: row; overflow-x: auto; max-height: none; padding-bottom: 4px; }
+  .lista-semanas .item-semana { min-width: 170px; }
+}
+.item-semana {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+  background: none; border: 1px solid transparent; border-radius: 10px; padding: 8px 12px;
+  font: inherit; color: var(--texto); cursor: pointer;
+}
+.item-semana:hover { background: var(--caja); border-color: var(--linea); }
+.item-semana[aria-current="true"] { background: var(--info-fondo); border-color: var(--acento); }
+.num-semana { font-weight: 600; font-size: 14px; }
+.tema-semana { color: var(--tenue); font-size: 13px; line-height: 1.3; }
+.marcas { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.marca {
+  font-size: 11px; border-radius: 999px; padding: 0 7px;
+  background: var(--aviso-fondo); color: var(--aviso);
+}
+.agregar-semana {
+  background: none; border: 1px dashed var(--linea); border-radius: 10px; padding: 8px 12px;
+  font: inherit; font-size: 14px; color: var(--acento); cursor: pointer; text-align: left; margin-top: 4px;
+}
+.panel-semana { min-width: 0; }
+.panel-semana h3 { font-size: 22px; margin: 0 0 12px; }
+.campos-semana { display: grid; grid-template-columns: 3fr 2fr; gap: 12px 16px; }
+@media (max-width: 620px) { .campos-semana { grid-template-columns: 1fr; } }
+.campos-semana input { width: 100%; font-size: 15px; color: var(--texto); }
+.titulo-preguntas { margin-top: 22px; }
+.tarjeta-pregunta {
+  background: var(--caja); border: 1px solid var(--linea); border-radius: 12px;
+  padding: 12px 16px 14px; margin: 0 0 14px;
+}
+.tarjeta-pregunta > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+.tarjeta-pregunta > header h4 { margin: 0; margin-right: auto; }
+.tarjeta-pregunta .interruptor { display: inline-flex; font-size: 13px; color: var(--tenue); }
+.dos-variantes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .dos-variantes { grid-template-columns: 1fr; } }
+.variante { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.variante .campo { margin-top: 8px; }
+.variante textarea {
+  width: 100%; resize: vertical; min-height: 64px; line-height: 1.5; font-size: 15px; overflow: hidden;
+}
+.variante textarea.pauta { background: var(--fondo); font-size: 14px; }
+.variante textarea:focus, .campos-semana input:focus { outline: 2px solid var(--acento); outline-offset: -1px; }
+.pildora {
+  align-self: flex-start; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 10px;
+  background: var(--info-fondo); color: var(--acento);
+}
+.pildora.tratamiento { background: var(--ok-fondo); color: var(--ok); }
+.vista-previa .asunto { font-size: 14px; margin: 8px 0; }
+iframe.correo {
+  width: 100%; height: 520px; border: 1px solid var(--linea); border-radius: 8px; background: #fff;
+}
+.barra-guardar {
+  position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+  background: var(--fondo); border-top: 1px solid var(--linea); padding: 10px 0; margin-top: 12px;
+}
+.barra-guardar .espacio { flex: 1; }
+.estado-guardado { font-size: 13px; color: var(--tenue); }
+.estado-guardado.pendiente { color: var(--aviso); font-weight: 600; }
+.resumen-semana { margin: 4px 0 12px; }
+.resumen-semana .tarjeta { padding: 12px 16px; }
+.cabeza-resumen { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.enlace-editar { color: var(--acento); font-size: 14px; }
+.resumen-semana ol { margin: 6px 0 4px; padding-left: 22px; }
+.resumen-semana li { margin: 4px 0; white-space: pre-wrap; }
+
+
+/* ---------------------------------------------------------- base común de las páginas */
+/* Cada página: h1, una línea que dice para qué es, y el semestre sobre el que trabaja. */
+h1 { margin-bottom: 4px; }
+.proposito { color: var(--tenue); font-size: 15px; margin: 0 0 18px; max-width: 760px; }
+h2 { font-size: 20px; margin: 24px 0 10px; }
+h3 { font-size: 17px; margin: 20px 0 8px; }
+.chip-semestre {
+  display: inline-flex; gap: 4px; align-items: baseline; text-decoration: none; color: var(--tenue);
+  font-size: 13px; border: 1px solid var(--linea); border-radius: 999px; padding: 2px 10px; background: var(--caja);
+}
+.chip-semestre strong { color: var(--texto); }
+.chip-semestre:hover { border-color: var(--acento); }
+
+/* Botones: uno primario por vista (la acción principal), los demás secundarios,
+   y rojo solo para lo que manda correos reales o borra. */
+button.secundario {
+  font: inherit; background: var(--caja); color: var(--texto); border: 1px solid var(--linea);
+  border-radius: 8px; padding: 7px 14px; cursor: pointer;
+}
+button.secundario:hover, button.descarga:hover, label.descarga:hover, a.descarga:hover { border-color: var(--acento); }
+button.primario:not(:disabled):hover { filter: brightness(1.08); }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+/* Zonas de clic de al menos 32 px para quitar o cerrar. */
+button.quitar, button.enlace { min-height: 32px; }
+table.editor button.quitar { min-width: 32px; }
+
+/* Celular: la navegación se desliza en vez de partirse en dos líneas. */
+@media (max-width: 720px) {
+  .navegacion { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .tabla-envoltura td { white-space: nowrap; }
+  h1 { font-size: 22px; }
+}
+
+/* ---------------------------------------------------------- datos: semestre y pestañas */
+.barra-semestre {
+  display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap;
+  background: var(--caja); border: 1px solid var(--linea); border-radius: 12px; padding: 10px 14px;
+}
+.campo-en-linea { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tenue); }
+.campo-en-linea select { min-width: 120px; }
+.estado-semestre { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex: 1; }
+.marca-estado {
+  font-size: 13px; border-radius: 999px; padding: 2px 10px; background: var(--fondo); color: var(--tenue);
+  border: 1px solid var(--linea); text-decoration: none;
+}
+.marca-estado.ok { background: var(--ok-fondo); color: var(--ok); border-color: transparent; }
+.marca-estado.falta { background: var(--aviso-fondo); color: var(--aviso); border-color: transparent; font-weight: 600; }
+details.nuevo-semestre { margin: 0; border: 0; background: none; }
+details.nuevo-semestre > summary { padding: 4px 0; color: var(--acento); font-size: 14px; }
+details.nuevo-semestre[open] { flex-basis: 100%; }
+details.nuevo-semestre > .contenido { padding: 4px 0 0; }
+.uso-pestana { color: var(--tenue); font-size: 14px; margin: 4px 0 16px; max-width: 820px; }
+.campo-explicado { max-width: 300px; }
+.campo-explicado .explicacion { font-size: 12px; color: var(--tenue); line-height: 1.4; }
+details.para-admin { margin-top: 8px; }
+.variables { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 10px; font-size: 13px; }
+.variables .chip { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+select.selector-prompt { max-width: 100%; min-width: 320px; }
+.aviso-campo { display: block; color: var(--aviso); font-size: 13px; margin: 4px 0 0; }
+.aviso-campo:empty { display: none; }
+input.falta { border-color: var(--aviso); }
+.avisos-tarjeta:empty { display: none; }
+.avisos-tarjeta { margin-top: 6px; }
+/* Que el campo que se edita no quede debajo de la barra fija de guardar. */
+.tarjeta-pregunta textarea, textarea.prompt { scroll-margin-bottom: 90px; }
+@media (max-width: 720px) {
+  select.selector-prompt { min-width: 0; width: 100%; }
+  .barra-semestre { padding: 10px; }
+}
+@media (max-width: 720px) {
+  .barra-semestre > * { flex-basis: 100%; }
+  .estado-semestre { flex: 1 1 100%; }
+}
+/* El chip activo con tono fijo: el acento del modo oscuro es claro y con texto blanco no se lee. */
+.chip[aria-pressed="true"] { background: #1f5f9e; border-color: #1f5f9e; color: #fff; }
+
+/* Lo que dibujan los trabajos de comun.js (salida, modo, historial): se usa en varias páginas. */
+/* ---------------------------------------------------------- modo de un trabajo */
+/* Rojo lleno, como el botón de envío real: distinto del "fallido", que es claro. */
+.estado.modo.real { background: #2f7d4f; color: #fff; }
+.estado.modo.simulacion { background: transparent; color: var(--tenue); box-shadow: inset 0 0 0 1px var(--linea); }
+.estado.modo.sin-correos { background: transparent; color: var(--tenue); font-weight: 400; }
+
+/* ---------------------------------------------------------- salida de un trabajo */
+.cabeza-trabajo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.titulo-salida { font-weight: 600; margin: 10px 0 2px; }
+.resumen-salida { font-size: 14px; margin: 4px 0 8px; }
+details.detalle-tecnico { margin: 6px 0; }
+details.detalle-tecnico > summary { font-size: 13px; color: var(--tenue); padding: 6px 12px; }
+details.detalle-tecnico pre.salida {
+  margin: 0; border: 0; border-top: 1px solid var(--linea); border-radius: 0 0 8px 8px; color: var(--tenue);
+}
+
+/* ---------------------------------------------------------- historial */
+.historial tbody tr:hover td { background: var(--info-fondo); }
+.historial tbody tr:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.historial tbody tr:focus-visible td { background: var(--info-fondo); }
+/* Celular: sin "Quién", y la fecha y el nombre del trabajo parten en dos
+   líneas para que el modo y el estado se vean sin deslizar la tabla. */
+@media (max-width: 600px) {
+  .historial .col-quien { display: none; }
+  .tabla-envoltura .historial td { white-space: normal; padding: 6px; font-size: 12px; }
+  .tabla-envoltura .historial td .estado, .historial .fecha, .historial .hora { white-space: nowrap; }
+  .tabla-envoltura .historial th { padding: 7px 6px; font-size: 12px; }
+}
+
+/* ---------------------------------------------------------- pestañas */
+/* Con forma de pestaña de carpeta: la elegida se une al contenido de abajo.
+   Agrupadas, con un rótulo chico sobre cada grupo (barraPestanas en comun.js);
+   las de una sola fila, como las de la Reportería, se ven igual. */
+:root { --pestana-fondo: #f0eeeb; }
+@media (prefers-color-scheme: dark) { :root { --pestana-fondo: #232120; } }
+.pestanas {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px;
+  border-bottom: 1px solid var(--linea); margin: 18px 0 14px; padding: 0 2px;
+}
+.grupo-pestanas { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.rotulo-grupo { font-size: 12px; color: var(--tenue); padding-left: 4px; }
+.fila-pestanas { display: flex; align-items: flex-end; gap: 4px; flex-wrap: wrap; }
+.pestanas:not(:has(.grupo-pestanas)) { gap: 4px; }
+.pestana {
+  position: relative; display: inline-flex; align-items: center; gap: 10px; text-align: left;
+  font: inherit; font-size: 14px; color: var(--tenue); cursor: pointer; white-space: nowrap;
+  background: var(--pestana-fondo); border: 1px solid var(--linea); border-bottom: 0;
+  border-radius: 6px 6px 0 0; padding: 7px 14px; margin-bottom: -1px;
+}
+.pestana:hover { color: var(--texto); }
+.pestana[aria-selected="true"] {
+  background: var(--fondo); color: var(--texto); font-weight: 600; z-index: 1;
+  border-bottom: 1px solid var(--fondo); border-top: 2px solid var(--acento); padding-top: 6px;
+}
+/* Un paso de un ciclo: el número a la izquierda y, bajo el título, en qué va.
+   El que toca ahora solo cambia el color de esa línea. */
+.pestana.paso {
+  display: inline-grid; grid-template-columns: auto auto; column-gap: 8px; row-gap: 1px;
+  align-items: baseline; padding: 7px 16px 8px 12px;
+}
+.pestana.paso[aria-selected="true"] { padding-top: 6px; }
+.pestana .num { grid-row: 1 / span 2; align-self: start; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--tenue); }
+.pestana .detalle-pestana { grid-column: 2; font-size: 12px; font-weight: 400; color: var(--tenue); }
+.pestana.toca .detalle-pestana { color: var(--acento); font-weight: 600; }
+/* Angosto: cada pestaña queda como una tarjeta suelta (las filas se parten). */
+@media (max-width: 860px) {
+  .pestanas { border-bottom: 0; gap: 8px 14px; }
+  .pestana { border-bottom: 1px solid var(--linea); border-radius: 6px; margin-bottom: 0; }
+  .pestana[aria-selected="true"] { border: 1px solid var(--acento); padding-top: 7px; }
+}
+
+/* ---------------------------------------------------------- operación: estado y acción real */
+.estado-curso { margin: 4px 0 0; font-size: 15px; color: var(--tenue); }
+.estado-curso strong { color: var(--texto); }
+.estado-curso.ahora strong { color: var(--acento); }
+.estado-curso a { color: var(--acento); font-weight: 600; }
+.estado-semana { margin: 0 0 8px; font-size: 14px; color: var(--tenue); }
+.estado-semana:empty { display: none; }
+.nota-real {
+  border-left: 3px solid #2f7d4f; background: var(--ok-fondo); color: var(--texto);
+  border-radius: 8px; padding: 10px 14px; margin: 8px 0; font-size: 14px;
+}
+.nota-real strong { display: block; font-weight: 600; }
+.nota-real .precondicion { margin: 6px 0 0; color: var(--aviso); }
+
+
+/* ---------------------------------------------------------- pasos como flechas */
+/* Tests y Tareas: los pasos del ciclo son una barra de progreso de flechas
+   encadenadas, y lo que se usa aparte va como botones al lado. Sin la línea de
+   carpeta: aquí la pestaña elegida se marca con el color lleno. */
+.pestanas.flujo { border-bottom: 0; margin: 14px 0 18px; gap: 6px 26px; }
+.flujo .fila-pestanas { gap: 6px; }
+.flujo .fila-pestanas.flechas { gap: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.flujo .pestana {
+  border: 1px solid var(--linea); border-radius: 8px; margin: 0; padding: 8px 14px; min-height: 52px;
+}
+.flujo .pestana[aria-selected="true"] {
+  background: #1f5f9e; color: #fff; border-color: #1f5f9e; padding-top: 8px;
+}
+/* Cada paso es una flecha que se mete en la siguiente. */
+.flechas .pestana {
+  --punta: 14px;
+  border: 0; border-radius: 0; margin-left: calc(var(--punta) * -1 + 3px);
+  padding: 8px calc(var(--punta) + 12px) 8px calc(var(--punta) + 14px);
+  clip-path: polygon(0 0, calc(100% - var(--punta)) 0, 100% 50%, calc(100% - var(--punta)) 100%, 0 100%, var(--punta) 50%);
+}
+.flechas .pestana:first-child {
+  margin-left: 0; padding-left: 14px; border-radius: 8px 0 0 8px;
+  clip-path: polygon(0 0, calc(100% - var(--punta)) 0, 100% 50%, calc(100% - var(--punta)) 100%, 0 100%);
+}
+.flechas .pestana.hecha { background: var(--ok-fondo); color: var(--texto); }
+.flechas .pestana.hecha .num { color: var(--ok); }
+.flechas .pestana.toca { background: var(--info-fondo); color: var(--texto); }
+.flujo .pestana[aria-selected="true"] .num,
+.flujo .pestana[aria-selected="true"] .detalle-pestana { color: rgba(255, 255, 255, .85); }
+.flujo .pestana.toca:not([aria-selected="true"]) .detalle-pestana { color: var(--acento); font-weight: 600; }
+.flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(.97); }
+@media (prefers-color-scheme: dark) {
+  .flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(1.15); }
+}
+@media (max-width: 860px) {
+  .flujo .pestana { border-radius: 8px; }
+  .flechas .pestana { border-radius: 0; border: 0; }
+}
+/* La elegida manda sobre su estado (hecha o la que toca): siempre azul lleno. */
+.flechas .pestana[aria-selected="true"] { background: #1f5f9e; color: #fff; }
+.flechas .pestana[aria-selected="true"] .num { color: #fff; }
+
+/* ---------------------------------------------------------- consumo de API */
+.consumo-trabajo { font-size: 13px; color: var(--tenue); margin: 2px 0 8px; }
+.historial .col-costo { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--tenue); }
+.precios { max-width: 520px; }
+.precios input { width: 110px; }
+@media (max-width: 600px) { .historial .col-costo { display: none; } }
+
+/* ---------------------------------------------------------- el ciclo en flechas (Inicio) */
+/* Hecho (verde), lo que corre ahora (azul lleno) y lo que sigue (gris), como
+   los pasos de Tests Semanales. */
+.flechas-estado { display: flex; margin: 12px 0 4px; }
+.flecha {
+  --punta: 18px; flex: 1 1 0; min-width: 0;
+  padding: 10px calc(var(--punta) + 12px) 11px calc(var(--punta) + 18px);
+  margin-left: calc(var(--punta) * -1 + 4px);
+  background: var(--pestana-fondo); color: var(--texto);
+  clip-path: polygon(0 0, calc(100% - var(--punta)) 0, 100% 50%, calc(100% - var(--punta)) 100%, 0 100%, var(--punta) 50%);
+}
+.flecha:first-child {
+  margin-left: 0; padding-left: 16px;
+  clip-path: polygon(0 0, calc(100% - var(--punta)) 0, 100% 50%, calc(100% - var(--punta)) 100%, 0 100%);
+}
+.flecha:last-child {
+  padding-right: 16px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, var(--punta) 50%);
+}
+.flecha-etiqueta { font-size: 12px; font-weight: 600; color: var(--tenue); }
+.flecha-valor { font-size: 17px; font-weight: 600; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flecha-nota { font-size: 12px; color: var(--tenue); margin-top: 1px; }
+.flecha.hecha { background: var(--ok-fondo); }
+.flecha.hecha .flecha-etiqueta { color: var(--ok); }
+.flecha.actual { background: #1f5f9e; color: #fff; }
+.flecha.actual .flecha-etiqueta, .flecha.actual .flecha-nota { color: rgba(255, 255, 255, .85); }
+.flecha.actual a { color: #fff; }
+.flecha a { color: var(--acento); }
+@media (max-width: 720px) {
+  .flechas-estado { flex-direction: column; gap: 4px; }
+  .flecha, .flecha:first-child, .flecha:last-child {
+    margin: 0; padding: 9px 14px; border-radius: 8px; clip-path: none;
+  }
+}
+
+/* En oscuro, el gris de lo que sigue se perdía contra la tarjeta. */
+@media (prefers-color-scheme: dark) { .flecha { background: #2c2a28; } }
+
+/* ---------------------------------------------------------- inicio */
+.kpis.k3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 820px) { .kpis.k3 { grid-template-columns: 1fr 1fr; } }
+.atencion-inicio ul { margin: 6px 0 18px; padding-left: 20px; }
+.atencion-inicio li { margin: 4px 0; }
+.atencion-inicio a, .franja-semana a { color: var(--acento); }
+
+/* La tarjeta de la semana en curso (Inicio). */
+.franja-semana {
+  background: var(--caja); border: 1px solid var(--linea); border-left: 4px solid var(--acento);
+  border-radius: 12px; padding: 12px 16px 10px; margin: 4px 0 14px;
+}
+.franja-cabeza { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px 12px; flex-wrap: wrap; }
+.franja-sobre {
+  font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--tenue);
+}
+.franja-titulo { font-size: 18px; font-weight: 600; }
+.franja-titulo .fecha { font-size: 14px; font-weight: 400; color: var(--tenue); }
+.franja-titulo .fecha::before { content: " · "; }
+@media (max-width: 520px) {
+  .franja-titulo { font-size: 17px; }
+  .franja-titulo .fecha { display: block; font-size: 13px; }
+  .franja-titulo .fecha::before { content: none; }
+}

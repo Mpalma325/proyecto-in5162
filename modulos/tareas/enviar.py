@@ -36,7 +36,7 @@ def _construir_cuerpo(template: str, fila: dict) -> str:
 
 def _construir_asunto(fila: dict) -> str:
     """Asunto limpio y humano. El tracking va por Message-ID (header oculto)."""
-    return f"Pregunta de comprensión — IN5162 {fila['tarea']}"
+    return f"Pregunta de comprensión — {config.CURSO} {fila['tarea']}"
 
 
 def main(tarea: str, dry_run: bool = False) -> None:

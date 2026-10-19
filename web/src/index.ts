@@ -2,6 +2,7 @@
  * API del sitio del curso.
  *
  * Para las personas (entran por Cloudflare Access):
+ *   GET  /api/curso                     el código del curso (CURSO), para los títulos
  *   GET  /api/semestres                 qué semestres hay y cuál es el activo
  *   POST /api/semestres                 crear un semestre desde la plantilla o activarlo
  *   GET  /api/panel/:semestre           las filas de la reportería
@@ -13,6 +14,7 @@
  *   GET|PUT /api/parametros             modelo, temperatura, escala de notas, grupos
  *   POST /api/trabajos                  pedir un trabajo: evaluar, enviar, tutoría...
  *   GET  /api/trabajos?semestre=X       los últimos trabajos de un semestre
+ *   GET  /api/consumo/:semestre         lo que gastó en la API cada trabajo
  *   GET  /api/trabajos/:id              estado y salida de un trabajo
  *
  * Para el motor (Cloud Run), con su propio token:
@@ -45,6 +47,8 @@ export interface Env {
   MOTOR_URL: string;
   TOKEN_MOTOR?: string;
   TOKEN_WEB?: string;
+  /** El código del curso, como "IN5162". */
+  CURSO?: string;
 }
 
 // En el mismo orden que las claves de reportes.panel() en Python: es el orden
@@ -69,6 +73,20 @@ const FLUJOS = new Set([
 
 // Los parámetros que se pueden cambiar desde la página, con su validación.
 // Las credenciales no están: viven solo en el motor, nunca pasan por el sitio.
+// Precios de la API por modelo, en US$ por millón de tokens: {"modelo": [entrada, salida]}.
+// Los escribe quien administra el curso; el sitio solo multiplica.
+function preciosValidos(v: string): boolean {
+  if (v.length > 4000) return false;
+  try {
+    const o = JSON.parse(v);
+    return Boolean(o) && typeof o === "object" && !Array.isArray(o) && Object.entries(o).every(([m, p]) =>
+      /^[A-Za-z0-9._:-]{2,60}$/.test(m) && Array.isArray(p) && p.length === 2
+      && p.every((x) => typeof x === "number" && x >= 0 && x < 10000));
+  } catch {
+    return false;
+  }
+}
+
 const PARAMETROS: Record<string, (v: string) => boolean> = {
   MODELO: (v) => /^[A-Za-z0-9._:-]{2,60}$/.test(v),
   TEMPERATURA: (v) => /^\d+(\.\d+)?$/.test(v) && Number(v) >= 0 && Number(v) <= 2,
@@ -79,6 +97,7 @@ const PARAMETROS: Record<string, (v: string) => boolean> = {
   TAREA_DEFAULT: (v) => /^T\d{1,2}$/.test(v),
   GRUPO_CONTROL_TRATAMIENTO: (v) => v === "true" || v === "false",
   GRUPO_SEED: (v) => /^\d{1,5}$/.test(v),
+  PRECIOS_API: (v) => preciosValidos(v),
 };
 
 // Material del curso que el modelo usa como contexto (modulos/tareas/contexto.py).
@@ -393,6 +412,24 @@ async function verTrabajo(env: Env, id: string): Promise<Response> {
   return json({ ...t, argumentos: JSON.parse(String(t.argumentos || "{}")) });
 }
 
+/**
+ * Lo que gastó en la API cada trabajo del semestre que llamó al modelo. Los
+ * scripts imprimen al terminar una línea "Consumo de API (modelo): …"
+ * (modulos/ia/cliente.py); acá se devuelven solo esas líneas, sin el resto de
+ * la salida, y la página las suma con los precios (public/consumo.js).
+ */
+async function consumoDelSemestre(env: Env, semestre: string): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, flujo, argumentos, prueba, estado, pedido_por, creado, salida
+     FROM trabajos WHERE semestre = ? AND salida LIKE '%Consumo de API (%' ORDER BY creado DESC LIMIT 2000`,
+  ).bind(semestre).all();
+  return json(results.map((t) => ({
+    id: t.id, flujo: t.flujo, argumentos: JSON.parse(String(t.argumentos || "{}")), prueba: t.prueba,
+    estado: t.estado, pedido_por: t.pedido_por, creado: t.creado,
+    lineas: String(t.salida || "").split("\n").filter((l) => l.startsWith("Consumo de API (")),
+  })));
+}
+
 async function listarTrabajos(env: Env, semestre: string): Promise<Response> {
   const { results } = await env.DB.prepare(
     `SELECT id, flujo, argumentos, prueba, estado, codigo, pedido_por, creado, actualizado
@@ -539,6 +576,7 @@ export default {
         return error(403, "Pedido rechazado: no viene de esta página.");
       }
 
+      if (partes[1] === "curso" && req.method === "GET") return json({ curso: env.CURSO || "IN5162" });
       if (partes[1] === "semestres" && req.method === "GET") return await listarSemestres(env);
       if (partes[1] === "semestres" && req.method === "POST") return await cambiarSemestre(req, env);
       if (partes[1] === "parametros") {
@@ -552,6 +590,10 @@ export default {
         if (prefijo && !RUTA_VALIDA.test(prefijo)) return error(400, "Prefijo inválido.");
         const todos = await (await listarArchivos(env, partes[2])).json<{ ruta: string }[]>();
         return json(todos.filter((a) => a.ruta.startsWith(prefijo)));
+      }
+      if (partes[1] === "consumo" && partes[2] && req.method === "GET") {
+        if (!ID_VALIDO.test(partes[2])) return error(400, "Semestre inválido.");
+        return await consumoDelSemestre(env, partes[2]);
       }
       if (partes[1] === "panel" && partes[2] && req.method === "GET") {
         if (!ID_VALIDO.test(partes[2])) return error(400, "Semestre inválido.");

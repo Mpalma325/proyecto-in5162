@@ -1,0 +1,95 @@
+/* Resultados (resultados.html, app.js, sabana.js). Va después de estilos.css y solo
+   usa sus variables de color, así que el modo oscuro sale solo. */
+
+/* ---------------------------------------------------------- cabecera */
+.cabecera { align-items: flex-start; }
+.ayuda-semestre { font-size: 12px; color: var(--tenue); margin-top: 4px; }
+.fecha-datos { font-size: 13px; color: var(--tenue); margin: 22px 0 0; }
+.cabecera > .aviso.fecha-vieja { margin: 18px 0 0; }
+.cabecera > .aviso.semestre-distinto { flex-basis: 100%; margin: 0; }
+
+@media (max-width: 720px) {
+  .fecha-datos { margin: 0; }
+  .cabecera { gap: 8px 16px; }
+}
+
+/* ---------------------------------------------------------- filtros */
+/* En pantallas anchas los filtros se ven siempre, sin el rótulo para plegarlos. */
+@media (min-width: 721px) {
+  details.filtros-plegables { border: 0; background: none; margin: 0; }
+  details.filtros-plegables > summary { display: none; }
+}
+@media (max-width: 720px) {
+  details.filtros-plegables > .filtros { padding: 0 12px 12px; margin: 0; }
+}
+
+/* ---------------------------------------------------------- indicadores */
+.meta-vista { font-size: 13px; color: var(--tenue); margin: 8px 0 0; }
+.kpi .sub { line-height: 1.35; }
+.kpi.clic .sub { color: var(--tenue); }
+.kpi .accion { font-size: 12px; color: var(--acento); margin-top: 4px; }
+.kpi[role="button"]:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
+.atencion {
+  display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline;
+  background: var(--aviso-fondo); border-radius: 8px; padding: 8px 14px; margin: 4px 0 12px; font-size: 14px;
+}
+.atencion > strong { color: var(--aviso); }
+.atencion .sep { color: var(--tenue); }
+
+/* ---------------------------------------------------------- pestañas */
+.descripcion-pestana { font-size: 13px; color: var(--tenue); margin: 0 0 16px; max-width: 820px; }
+
+/* ---------------------------------------------------------- tarjetas de gráficos */
+.tarjeta .titulo-grafico { font-size: 15px; margin: 0 0 6px; }
+.tarjeta .titulo-grafico .clic { display: block; font-size: 12px; font-weight: 400; color: var(--acento); margin-top: 1px; }
+.tarjeta .pie-grafico { color: var(--tenue); font-size: 12px; margin: 6px 0 6px; }
+
+/* ---------------------------------------------------------- alumnos */
+.barra-alumnos { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; }
+input.buscador {
+  font: inherit; color: var(--texto); background: var(--caja); border: 1px solid var(--linea);
+  border-radius: 8px; padding: 6px 10px; width: min(320px, 100%);
+}
+table.alumnos th { padding: 0; }
+table.alumnos th button.orden {
+  background: none; border: 0; font: inherit; font-weight: 600; color: var(--tenue); cursor: pointer;
+  padding: 7px 10px; width: 100%; text-align: inherit; white-space: nowrap;
+}
+table.alumnos th[aria-sort] button.orden { color: var(--texto); }
+table.alumnos th.num, table.alumnos td.num { text-align: right; }
+table.alumnos tbody tr[data-correo] { cursor: pointer; }
+table.alumnos tbody tr[data-correo]:hover td { background: var(--fondo); }
+table.alumnos tbody tr[aria-selected="true"] td { background: var(--info-fondo); }
+table.alumnos tbody tr:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+table.alumnos .nombre { display: block; font-weight: 600; }
+table.alumnos .correo { display: block; font-size: 12px; color: var(--tenue); }
+@media (max-width: 720px) {
+  table.alumnos .secundaria, table.alumnos .correo { display: none; }
+  .tabla-envoltura table.alumnos td { white-space: normal; }
+}
+.ficha { scroll-margin-top: 12px; }
+.titulo-ficha { margin: 0 0 2px; }
+
+/* ---------------------------------------------------------- quienes no respondieron */
+.por-alumno > .acciones { margin-top: 0; }
+.lista-alumnos { list-style: none; padding: 0; margin: 4px 0 8px; }
+.lista-alumnos li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 14px; align-items: center;
+  padding: 8px 2px; border-top: 1px solid var(--linea); font-size: 14px;
+}
+.lista-alumnos .meta { font-size: 12px; color: var(--tenue); overflow-wrap: anywhere; }
+.lista-alumnos .semanas { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.lista-alumnos .ir-ficha { margin: 0; }
+@media (max-width: 520px) {
+  .lista-alumnos li { grid-template-columns: minmax(0, 1fr) auto; }
+  .lista-alumnos .semanas { grid-column: 1; grid-row: 2; text-align: left; color: var(--tenue); }
+}
+
+/* ---------------------------------------------------------- descargar datos */
+.opcion-descarga h3, .sabana h3 { margin-top: 0; }
+.preajustes { margin: 4px 0 2px; }
+details.columnas-a-mano { margin: 10px 0; }
+details.columnas-a-mano > .contenido { padding-top: 12px; }
+.paso-valor.texto { font-size: 17px; }
+.paso-valor a { color: var(--acento); }

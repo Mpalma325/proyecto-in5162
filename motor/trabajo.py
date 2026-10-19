@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -200,7 +201,7 @@ FLUJOS = {
 # de las variables de entorno antes que del .env. Solo estos: si la tabla de
 # parámetros trajera otra cosa, no llega al script.
 PARAMETROS = ("MODELO", "TEMPERATURA", "MAX_TOKENS", "NOTA_MIN", "NOTA_MAX",
-              "TAREA_DEFAULT", "GRUPO_CONTROL_TRATAMIENTO", "GRUPO_SEED")
+              "TAREA_DEFAULT", "GRUPO_CONTROL_TRATAMIENTO", "GRUPO_SEED", "PRECIOS_API")
 
 # ---------------------------------------------------------------- qué archivos baja
 
@@ -450,15 +451,18 @@ def ejecutar(id_trabajo: str) -> None:
         # El semestre lo pone el motor, no la página: pisa cualquier "_semestre" que venga.
         cmd = armar({**args, "_semestre": semestre, "_pedido_por": t.get("pedido_por", "")})
 
+        # El sitio solo lo pasa a "corriendo" si seguía "pendiente": si dos
+        # intentos llegan a la vez, uno solo lo ejecuta. La marca de esta
+        # ejecución distingue el otro caso que da 409: el aviso sí llegó, se
+        # cortó la respuesta y el reintento chocó con su propio cambio.
+        inicio = f"$ python {_como_se_ve(cmd)}   [{semestre}] · ejecución {uuid.uuid4().hex[:8]}\n"
         try:
-            # El sitio solo lo pasa a "corriendo" si seguía "pendiente": si dos
-            # intentos llegan a la vez, uno solo lo ejecuta.
-            sitio.informar(id_trabajo, estado="corriendo",
-                           salida=f"$ python {_como_se_ve(cmd)}   [{semestre}]\n")
+            sitio.informar(id_trabajo, estado="corriendo", salida=inicio)
         except RuntimeError as e:
-            if " 409 " in f" {e} ":
+            if " 409 " not in f" {e} ":
+                raise
+            if inicio not in (sitio.ver_trabajo(id_trabajo).get("salida") or ""):
                 raise _YaTomado() from e
-            raise
         base = Path(tempfile.mkdtemp(prefix="in5162-trabajo-"))
         huellas, etags = _preparar(semestre, perfil, base)
         preparado = (semestre, perfil, huellas, etags)

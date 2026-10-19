@@ -32,8 +32,11 @@ if (!correos.length || correos.some((c) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c)
 }
 
 const SITIO = new URL(env.WEB_URL || "https://in5162.in5162-web.workers.dev").host;
-const NOMBRE = "IN5162 sitio";
-const EXCEPCIONES = [["IN5162 motor", `${SITIO}/api/motor`], ["IN5162 subir", `${SITIO}/api/subir`]];
+// Los nombres de las aplicaciones de Access. Con otro CURSO en el .env, otro
+// curso en la misma cuenta de Cloudflare no pisa las de este.
+const CURSO = (env.CURSO || "IN5162").toUpperCase();
+const NOMBRE = `${CURSO} sitio`;
+const EXCEPCIONES = [[`${CURSO} motor`, `${SITIO}/api/motor`], [`${CURSO} subir`, `${SITIO}/api/subir`]];
 
 async function cf(metodo, ruta, cuerpo) {
   const r = await fetch(`https://api.cloudflare.com/client/v4${ruta}`, {
@@ -46,7 +49,8 @@ async function cf(metodo, ruta, cuerpo) {
   return j.result;
 }
 
-// La cuenta de Cloudflare de in5162@uchile.cl (sale en `npx wrangler whoami`).
+// La cuenta de Cloudflare (sale en `npx wrangler whoami`). Sin CLOUDFLARE_ACCOUNT_ID
+// en el .env, la de in5162@uchile.cl.
 const cuenta = env.CLOUDFLARE_ACCOUNT_ID || "5b630024b4683ba044bca1ad69f07a3c";
 const base = `/accounts/${cuenta}/access`;
 

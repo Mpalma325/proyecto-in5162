@@ -21,6 +21,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from modulos import datos as _datos
+from modulos import ia as _ia
 from modulos.datos import candidatos as _candidatos
 
 from . import config, storage
@@ -60,6 +61,10 @@ def _corregir_una(client: OpenAI, system_prompt: str, fila: dict) -> dict:
         max_completion_tokens=1500,
         response_format={"type": "json_object"},
     )
+    # Esta llamada no pasa por ia.completar(): su consumo se suma a mano para
+    # que quede en la línea "Consumo de API" del trabajo.
+    _ia.registrar_uso(config.MODELO, getattr(resp.usage, "prompt_tokens", 0),
+                      getattr(resp.usage, "completion_tokens", 0))
 
     return json.loads(resp.choices[0].message.content)
 
@@ -160,7 +165,7 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
 
         fila_actualizada = {**fila_con_respuesta, "nota": nota, "comentario": comentario}
         try:
-            asunto = f"Revisión de tu respuesta — IN5162 {fila['tarea']}"
+            asunto = f"Revisión de tu respuesta — {config.CURSO} {fila['tarea']}"
             cuerpo = _construir_cuerpo_feedback(template_feedback, fila_actualizada)
             enviar_correo(fila["alumno_correo"], asunto, cuerpo)
             print(f"     ✉ feedback enviado a {fila['alumno_correo']}")

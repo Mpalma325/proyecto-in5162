@@ -1,6 +1,10 @@
 ﻿# Despliega el motor en Google Cloud Run y deja todo conectado.
 #
 #   .\motor\desplegar.ps1 -Proyecto in5162-motor -WebUrl https://in5162.<tu-cuenta>.workers.dev
+#   .\motor\desplegar.ps1 -Curso in3401 -Proyecto in3401-motor -WebUrl https://in3401.<tu-cuenta>.workers.dev
+#
+# -Curso da nombre a todo lo que se crea (servicio, cola, secretos). Por
+# defecto in5162, que es como se llama lo que ya está desplegado.
 #
 # Se puede correr las veces que haga falta: cada paso revisa si ya está hecho.
 # Necesita gcloud instalado y con sesión iniciada (gcloud auth login), y un
@@ -16,12 +20,17 @@ param(
     # recargo. El motor no guarda datos (su carpeta de trabajo se borra al
     # terminar), así que estar lejos de Chile no cambia nada.
     [string] $Region = "us-central1",
-    [string] $Servicio = "in5162-motor",
-    [string] $Cola = "in5162-trabajos"
+    [string] $Curso = "in5162",
+    [string] $Servicio = "",
+    [string] $Cola = ""
 )
 
 $ErrorActionPreference = "Stop"
 $raiz = Split-Path -Parent $PSScriptRoot
+$c = $Curso.ToLower()
+if ($c -notmatch '^[a-z][a-z0-9-]{1,20}$') { throw "-Curso: solo minúsculas, números y guiones (ej. in5162)." }
+if (-not $Servicio) { $Servicio = "$c-motor" }
+if (-not $Cola) { $Cola = "$c-trabajos" }
 
 function Paso($texto) { Write-Host "`n=== $texto" -ForegroundColor Cyan }
 
@@ -94,13 +103,13 @@ if (-not (Existe tasks queues describe $Cola --location $Region)) {
 }
 
 Paso "Secretos"
-Secreto "in5162-openai" (LeerEnv "OPENAI_API_KEY")
-Secreto "in5162-correo-remitente" (LeerEnv "CORREO_REMITENTE")
-Secreto "in5162-correo-clave" ((LeerEnv "CORREO_APP_PASSWORD") -replace " ", "")
+Secreto "$c-openai" (LeerEnv "OPENAI_API_KEY")
+Secreto "$c-correo-remitente" (LeerEnv "CORREO_REMITENTE")
+Secreto "$c-correo-clave" ((LeerEnv "CORREO_APP_PASSWORD") -replace " ", "")
 # Los tokens entre el sitio y el motor son los mismos que ya tiene el Worker:
 # WEB_TOKEN (el TOKEN_MOTOR del Worker) y TOKEN_WEB, del .env. Si no están, se
 # crean la primera vez y hay que cargarlos también en el Worker (ver al final).
-$tokens = @{ "in5162-token-motor" = "WEB_TOKEN"; "in5162-token-web" = "TOKEN_WEB" }
+$tokens = @{ "$c-token-motor" = "WEB_TOKEN"; "$c-token-web" = "TOKEN_WEB" }
 foreach ($t in $tokens.Keys) {
     $linea = Get-Content (Join-Path $raiz ".env") | Where-Object { $_ -match "^\s*$($tokens[$t])\s*=" } | Select-Object -First 1
     if ($linea) {
@@ -129,8 +138,8 @@ try {
     G run deploy $Servicio --source . --region $Region `
         --allow-unauthenticated `
         --memory 1Gi --cpu 1 --timeout 1800 --concurrency 4 --max-instances 1 `
-        --set-secrets "OPENAI_API_KEY=in5162-openai:latest,CORREO_REMITENTE=in5162-correo-remitente:latest,CORREO_APP_PASSWORD=in5162-correo-clave:latest,TOKEN_MOTOR=in5162-token-motor:latest,TOKEN_WEB=in5162-token-web:latest" `
-        --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,WEB_URL=$WebUrl" | Out-Host
+        --set-secrets "OPENAI_API_KEY=$c-openai:latest,CORREO_REMITENTE=$c-correo-remitente:latest,CORREO_APP_PASSWORD=$c-correo-clave:latest,TOKEN_MOTOR=$c-token-motor:latest,TOKEN_WEB=$c-token-web:latest" `
+        --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,WEB_URL=$WebUrl,CURSO=$($Curso.ToUpper())" | Out-Host
 } finally {
     Pop-Location
 }
@@ -162,5 +171,5 @@ Write-Host "  npx wrangler secret put TOKEN_WEB"
 Write-Host "  y en wrangler.toml: MOTOR_URL = `"$url`""
 Write-Host ""
 Write-Host "Los valores están en Secret Manager:"
-Write-Host "  gcloud secrets versions access latest --secret in5162-token-motor"
-Write-Host "  gcloud secrets versions access latest --secret in5162-token-web"
+Write-Host "  gcloud secrets versions access latest --secret $c-token-motor"
+Write-Host "  gcloud secrets versions access latest --secret $c-token-web"

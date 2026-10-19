@@ -27,6 +27,8 @@ binding = "ARCHIVOS"
 bucket_name = "in5162-semestres"
 
 [vars]
+# El código del curso: va en el título de las páginas. Lo escribe instalar.ps1.
+CURSO = "IN5162"
 # "cloudflare": exige que la petición venga autenticada por Cloudflare Access.
 # "abierto": solo para desarrollo local. Por defecto se exige: si alguien olvida
 # configurar Access al desplegar, la página no muestra datos en vez de

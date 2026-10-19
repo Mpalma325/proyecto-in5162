@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -8,10 +9,22 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from modulos import datos
+
+
+def _curso() -> str:
+    """El código del curso, del .env. No se importa de modulos.config porque
+    ese módulo exige un semestre activo, y esta página tiene que abrir sin él."""
+    env = Path(__file__).resolve().parent.parent / ".env"
+    lineas = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
+    valor = next((l.split("=", 1)[1] for l in lineas if l.strip().startswith("CURSO=")), "")
+    return (os.environ.get("CURSO") or valor).strip().strip("\"'") or "IN5162"
+
+
+CURSO = _curso()
 from utils import runner
 
 st.set_page_config(
-    page_title="IN5162",
+    page_title=CURSO,
     page_icon="📚",
     layout="wide",
 )
@@ -392,7 +405,7 @@ def _seccion_pendientes(df: pd.DataFrame):
 
 def _inicio():
     activo = runner.semestre_activo()
-    st.title("IN5162 — Reportería")
+    st.title(f"{CURSO} — Reportería")
 
     if not activo:
         st.warning(

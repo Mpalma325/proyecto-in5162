@@ -40,7 +40,8 @@ WORKER = RAIZ / "web" / "src" / "index.ts"
 
 FUNCIONES = ("resumen", "por_item", "por_grupo", "por_alumno", "distribucion_notas",
              "distribucion_originalidad", "originalidad_por_item", "originalidad_vs_nota",
-             "correlacion_originalidad_nota", "sin_responder", "pendientes_de_evaluar")
+             "correlacion_originalidad_nota", "sin_responder", "pendientes_de_evaluar",
+             "correlaciones_por_alumno", "correlaciones_por_respuesta")
 
 
 def como_javascript(filas):
@@ -194,6 +195,101 @@ if shutil.which("node"):
         check(nombre, estado == "OK", linea)
     if r.returncode and not r.stdout:
         check("probar-rutas.mjs corre", False, r.stderr[-300:])
+
+titulo("7c. el editor de preguntas por semana escribe solo esa fila y muestra el correo real")
+# Preguntas inventadas: el repo es público. Casos que rompen un CSV a mano:
+# comas, comillas y saltos de línea dentro de una celda, una semana sin
+# Tratamiento (se le manda lo de Control) y una fila en blanco al final.
+if shutil.which("node"):
+    import csv as _csv
+    import io as _io
+    import tempfile as _tempfile
+
+    from modulos.tests import enviar as _enviar
+    from modulos.tests.preguntas import _parsear_fila
+
+    columnas = ["Semana", "Tema", "Fecha de Entrega"] + [
+        f"{g} {'Pauta ' if pauta else ''}P{i}"
+        for g in ("Control", "Tratamiento") for i in (1, 2, 3) for pauta in (False, True)]
+    columnas = columnas[:3] + sorted(columnas[3:], key=lambda c: (c.split()[0] != "Control", "Pauta" in c, c[-1]))
+
+    def _fila(semana, tema, fecha, control, tratamiento):
+        f = {"Semana": semana, "Tema": tema, "Fecha de Entrega": fecha}
+        for grupo, preguntas in (("Control", control), ("Tratamiento", tratamiento)):
+            for i, (p, pauta) in enumerate(preguntas, 1):
+                f[f"{grupo} P{i}"], f[f"{grupo} Pauta P{i}"] = p, pauta
+        return f
+
+    comun = ("¿Por qué se estima con una grilla, y no \"dentro\" de la verosimilitud?", "Por complejidad numérica.")
+    filas = [
+        _fila("1", "Regresión", "lunes 10/08, 10:15", [comun, ("Explique, con un ejemplo:\nla lealtad.", "Costos de cambio.")],
+              [comun, ("¿Qué resuelve un logit anidado?", "Correlación dentro del nido.")]),
+        _fila("2", "Sin grupos", "", [("Una sola pregunta.", "Una pauta.")], []),
+        _fila("3", "Tres", "viernes", [("A", "a"), ("B", "b"), ("C", "c")], [("A", "a"), ("B", "b"), ("C", "c")]),
+        _fila("", "", "", [], []),
+    ]
+    buf = _io.StringIO()
+    escritor = _csv.DictWriter(buf, fieldnames=columnas, lineterminator="\n")
+    escritor.writeheader()
+    escritor.writerows([{c: f.get(c, "") for c in columnas} for f in filas])
+
+    plantilla = ("<p>Hola {NOMBRE},</p><p>Videos de \"{TEMA}\". Entrega: <b>{FECHA_ENTREGA}</b>.</p>\n"
+                 "  {BLOQUE_PREGUNTAS}\n<p>Módulo {SEMANA}</p>")
+    correos = {}
+    for f in filas[:3]:
+        info = _parsear_fila({c: f.get(c, "") for c in columnas}, int(f["Semana"]))
+        correos[f["Semana"]] = {g: _enviar._construir_cuerpo(plantilla, {"Nombre": "Ana Pérez", "Grupo": g}, info)
+                                for g in ("control", "tratamiento")}
+    esperado = {"plantilla": plantilla, "semanas": [1, 2, 3], "sin_tratamiento": [2], "correos": correos,
+                "iguales": {"1": [True, False], "2": [True], "3": [True, True, True]}}
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "preguntas.csv").write_text(buf.getvalue(), encoding="utf-8", newline="")
+        (Path(tmp) / "esperado.json").write_text(json.dumps(esperado, ensure_ascii=False), encoding="utf-8")
+        r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-preguntas.mjs"),
+                            str(Path(tmp) / "preguntas.csv"), str(Path(tmp) / "esperado.json")],
+                           capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-preguntas.mjs corre", False, r.stderr[-300:])
+else:
+    print("  (sin node en el PATH: no se prueba preguntas.js)")
+
+titulo("7d. la sábana se vuelve a armar sola cuando cambió algo de lo que lee")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-sabana.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-sabana.mjs corre", False, r.stderr[-300:])
+
+titulo("7e. editar un prompt avisa antes de guardar algo que haría fallar un envío")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-prompts.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-prompts.mjs corre", False, r.stderr[-300:])
+
+titulo("7f. el gasto en la API y en qué va el curso")
+# La línea de consumo la escribe el Python de verdad: si cambia su forma sin
+# cambiar el lector de la página, el costo deja de verse sin que nadie lo note.
+if shutil.which("node"):
+    from modulos import ia as _ia
+    linea = _ia.linea_consumo("gpt-prueba", 2, 4900, 1250)
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-consumo.mjs"), linea],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea_salida in (r.stdout or "").splitlines():
+        estado, _, nombre = linea_salida.partition("\t")
+        check(nombre, estado == "OK", linea_salida)
+    if r.returncode and not r.stdout:
+        check("probar-consumo.mjs corre", False, r.stderr[-300:])
 
 titulo("8. solo entra quien trae un token de Access firmado")
 # El Worker no confía en el encabezado de correo: verifica la firma del token.

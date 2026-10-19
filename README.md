@@ -92,7 +92,7 @@ python -m modulos.semestre
 
 ## El sitio web
 
-Las cuatro páginas de la app también existen como sitio web, para operar el curso desde cualquier equipo sin depender de un PC encendido. La página y los archivos viven en Cloudflare; los scripts de `modulos/` corren tal cual en un servicio de Google Cloud Run, el motor. Cómo funciona, cómo probarlo en local y cómo publicarlo: `web/SITIO.md` y `motor/MOTOR.md`.
+Las cuatro páginas de la app también existen como sitio web, para operar el curso desde cualquier equipo sin depender de un PC encendido. La página y los archivos viven en Cloudflare; los scripts de `modulos/` corren tal cual en un servicio de Google Cloud Run, el motor. Cómo funciona, cómo probarlo en local y cómo publicarlo: `web/SITIO.md` y `motor/MOTOR.md`. Para montarlo en otro curso: `INSTALAR.md` y `instalar.ps1`.
 
 ## La reportería
 

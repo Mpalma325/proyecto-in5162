@@ -15,7 +15,8 @@ Si se agrega una función, que no importe nada del proyecto: rompería la págin
 
 from __future__ import annotations
 
-
+import math
+from datetime import datetime
 
 # Cómo se ordenan las categorías de originalidad al graficar. El modelo las
 # escribe en texto libre, así que se comparan en minúscula y sin depender de
@@ -208,6 +209,11 @@ def ficha(correo: str, filas: list[dict]) -> dict:
     }
 
 
+# La escala termina en 7,0. Un 7 va en el último tramo (6,5–7,0): con tramos
+# abiertos a la derecha abría uno propio, "7,0–7,5", que no existe.
+NOTA_MAXIMA = 7.0
+
+
 def _tramo(nota: float, ancho: float) -> float:
     """El tramo del histograma en que cae una nota: 6,3 con ancho 0,5 cae en 6,0.
 
@@ -215,7 +221,8 @@ def _tramo(nota: float, ancho: float) -> float:
     lado, al hacer clic en una barra podría aparecer una lista con más o menos
     alumnos que los que dice la barra.
     """
-    return round((nota // ancho) * ancho, 2)
+    piso = round((nota // ancho) * ancho, 2)
+    return round(NOTA_MAXIMA - ancho, 2) if piso >= NOTA_MAXIMA else piso
 
 
 def distribucion_notas(filas: list[dict], ancho: float = 0.5) -> list[dict]:
@@ -346,23 +353,183 @@ def correlacion_originalidad_nota(filas: list[dict]) -> dict:
     if n < 3:
         return base
 
-    niveles = [p[0] for p in pares]
-    notas = [p[1] for p in pares]
-    mx = sum(niveles) / n
-    my = sum(notas) / n
-    base["NivelMedio"] = round(mx, 2)
-    base["NotaMedia"] = round(my, 2)
-
-    cov = sum((x - mx) * (y - my) for x, y in pares)
-    varx = sum((x - mx) ** 2 for x in niveles)
-    vary = sum((y - my) ** 2 for y in notas)
-    if varx == 0 or vary == 0:
-        # Todas las respuestas cayeron en la misma categoría, o todas sacaron
-        # la misma nota: no hay variación que correlacionar.
-        return base
-
-    base["R"] = round(cov / (varx ** 0.5 * vary ** 0.5), 3)
+    base["NivelMedio"] = round(sum(p[0] for p in pares) / n, 2)
+    base["NotaMedia"] = round(sum(p[1] for p in pares) / n, 2)
+    r = _pearson(pares)
+    base["R"] = None if r is None else round(r, 3)
     return base
+
+
+def _pearson(pares: list[tuple[float, float]]) -> float | None:
+    """La correlación de Pearson, o None si no se puede calcular.
+
+    Con menos de tres pares no significaría nada, y si una de las dos variables
+    no varía (todas las respuestas en la misma categoría, todos con la misma
+    nota) no hay nada que correlacionar.
+    """
+    n = len(pares)
+    if n < 3:
+        return None
+    mx = sum(x for x, _ in pares) / n
+    my = sum(y for _, y in pares) / n
+    cov = sum((x - mx) * (y - my) for x, y in pares)
+    varx = sum((x - mx) ** 2 for x, _ in pares)
+    vary = sum((y - my) ** 2 for _, y in pares)
+    if varx == 0 or vary == 0:
+        return None
+    return max(-1.0, min(1.0, cov / (varx ** 0.5 * vary ** 0.5)))
+
+
+def intervalo_r(r: float | None, n: int) -> tuple[float, float] | None:
+    """Intervalo de confianza del 95 % para una correlación (transformación de Fisher).
+
+    Supone pares independientes: vale para una fila por alumno. Con las
+    respuestas de un mismo alumno repetidas saldría más angosto de lo que es.
+    """
+    if r is None or n < 4 or abs(r) >= 1:
+        return None
+    z, ancho = math.atanh(r), 1.96 / math.sqrt(n - 3)
+    return math.tanh(z - ancho), math.tanh(z + ancho)
+
+
+def palabras(texto: str | None) -> int | None:
+    """Cuántas palabras tiene una respuesta, o None si no hay texto."""
+    largo = len((texto or "").split())
+    return largo or None
+
+
+def horas_en_responder(envio: str | None, respuesta: str | None) -> float | None:
+    """Horas entre el envío de la pregunta y la respuesta del alumno.
+
+    Las fechas vienen del log en ISO con zona horaria. Los semestres migrados
+    no las tienen, o traen otro formato: ahí devuelve None en vez de adivinar.
+    """
+    try:
+        a = datetime.fromisoformat((envio or "").strip())
+        b = datetime.fromisoformat((respuesta or "").strip())
+        horas = (b - a).total_seconds() / 3600
+    except (ValueError, TypeError):
+        return None
+    return round(horas, 1) if horas >= 0 else None
+
+
+def _mediana(valores: list[float]) -> float | None:
+    v = sorted(valores)
+    if not v:
+        return None
+    medio = len(v) // 2
+    return v[medio] if len(v) % 2 else (v[medio - 1] + v[medio]) / 2
+
+
+# Lo que se puede correlacionar. "Tratamiento" vale 1 o 0, así que su
+# correlación con otra variable es la diferencia entre grupos en otra escala:
+# solo aparece si el corte tiene alumnos de los dos grupos.
+VARIABLES_ALUMNO = [
+    ("NotaMedia", "Nota media"),
+    ("TasaRespuesta", "Tasa de respuesta"),
+    ("OriginalidadMedia", "Originalidad"),
+    ("Palabras", "Palabras"),
+    ("Horas", "Horas en responder"),
+    ("Tratamiento", "Tratamiento"),
+]
+VARIABLES_RESPUESTA = [
+    ("Nota", "Nota"),
+    ("Originalidad", "Originalidad"),
+    ("Palabras", "Palabras"),
+    ("Horas", "Horas en responder"),
+    ("Tratamiento", "Tratamiento"),
+]
+
+
+def _tratamiento(grupo: str | None) -> int | None:
+    return {"tratamiento": 1, "control": 0}.get((grupo or "").strip().lower())
+
+
+def variables_por_respuesta(filas: list[dict]) -> list[dict]:
+    """Una fila por respuesta, con lo que se puede medir de ella."""
+    salida = []
+    for f in filas:
+        if not f["Respondio"]:
+            continue
+        salida.append({
+            "Correo": f["Correo"], "Nombre": f["Nombre"], "Grupo": f["Grupo"], "Item": f["Item"],
+            "Nota": f["Nota"],
+            "Originalidad": nivel_originalidad(f.get("Originalidad")),
+            "Palabras": palabras(f.get("Respuesta")),
+            "Horas": horas_en_responder(f.get("FechaEnvio"), f.get("FechaRespuesta")),
+            "Tratamiento": _tratamiento(f["Grupo"]),
+        })
+    return salida
+
+
+def variables_por_alumno(filas: list[dict]) -> list[dict]:
+    """Una fila por alumno: sus promedios en el corte.
+
+    Las horas van en mediana: una sola respuesta tardía de una semana pesaría
+    demasiado en un promedio.
+    """
+    respuestas: dict[str, list] = {}
+    for r in variables_por_respuesta(filas):
+        respuestas.setdefault(r["Correo"], []).append(r)
+    gente: dict[str, list] = {}
+    for f in filas:
+        gente.setdefault(f["Correo"], []).append(f)
+
+    def media(valores):
+        v = [x for x in valores if x is not None]
+        return round(sum(v) / len(v), 2) if v else None
+
+    salida = []
+    for correo, sub in gente.items():
+        suyas = respuestas.get(correo, [])
+        horas = _mediana([r["Horas"] for r in suyas if r["Horas"] is not None])
+        salida.append({
+            "Correo": correo, "Nombre": sub[0]["Nombre"], "Grupo": sub[0]["Grupo"],
+            "NotaMedia": _agregar(sub)["NotaMedia"],
+            "TasaRespuesta": _agregar(sub)["TasaRespuesta"],
+            "OriginalidadMedia": media(r["Originalidad"] for r in suyas),
+            "Palabras": media(r["Palabras"] for r in suyas),
+            "Horas": None if horas is None else round(horas, 1),
+            "Tratamiento": _tratamiento(sub[0]["Grupo"]),
+        })
+    salida.sort(key=lambda f: (f["Nombre"].lower(), f["Correo"]))
+    return salida
+
+
+def _matriz(puntos: list[dict], variables: list[tuple[str, str]], con_intervalo: bool) -> dict:
+    """Todas las correlaciones entre pares de variables, con cuántos datos tiene cada una."""
+    # Una variable que no varía en el corte (un solo grupo, nadie con fechas) no entra.
+    usables = [(c, e) for c, e in variables
+               if len({p[c] for p in puntos if p[c] is not None}) > 1]
+    celdas = []
+    for i, (cx, ex) in enumerate(usables):
+        for cy, ey in usables[i + 1:]:
+            pares = [(float(p[cx]), float(p[cy])) for p in puntos
+                     if p[cx] is not None and p[cy] is not None]
+            r = _pearson(pares)
+            ic = intervalo_r(r, len(pares)) if con_intervalo else None
+            celdas.append({
+                "X": cx, "Y": cy, "EtiquetaX": ex, "EtiquetaY": ey, "N": len(pares),
+                "R": None if r is None else round(r, 3),
+                "Bajo": None if ic is None else round(ic[0], 3),
+                "Alto": None if ic is None else round(ic[1], 3),
+            })
+    return {"Variables": [{"Campo": c, "Etiqueta": e} for c, e in usables],
+            "Celdas": celdas, "Puntos": puntos}
+
+
+def correlaciones_por_alumno(filas: list[dict]) -> dict:
+    """La matriz de correlaciones con una fila por alumno, con su intervalo del 95 %."""
+    return _matriz(variables_por_alumno(filas), VARIABLES_ALUMNO, con_intervalo=True)
+
+
+def correlaciones_por_respuesta(filas: list[dict]) -> dict:
+    """La matriz con una fila por respuesta.
+
+    Sin intervalo: las respuestas de un mismo alumno se parecen entre sí, y el
+    intervalo que supone independencia saldría más angosto de lo que es.
+    """
+    return _matriz(variables_por_respuesta(filas), VARIABLES_RESPUESTA, con_intervalo=False)
 
 
 def sin_responder(filas: list[dict]) -> list[dict]:
