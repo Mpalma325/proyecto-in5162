@@ -13,6 +13,10 @@ export const PROMPTS = {
     titulo: "Cómo corrige la IA cada respuesta",
     uso: "Antes de cambiarlo, conviene probarlo en Tests Semanales › Probar criterio.",
     variables: ["{{PREGUNTAS}}", "{{PAUTAS}}"], obligatorias: ["NOTA FINAL:", "ORIGINALIDAD:"] },
+  "tests_semanales/prompts/correo_correccion.md": {
+    titulo: "Correo con la corrección",
+    uso: "{EVALUACION} es lo que escribe la IA; lo demás sale igual para todos.",
+    variables: ["{NOMBRE}", "{EVALUACION}"] },
   "tests_semanales/prompts/tutoria.md": {
     titulo: "Cómo responde la IA las dudas de los alumnos",
     variables: ["{NOMBRE}"] },

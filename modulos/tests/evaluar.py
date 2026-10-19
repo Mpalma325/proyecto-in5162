@@ -54,6 +54,27 @@ def _construir_cuerpo_duplicado(template: str, nombre: str) -> str:
     return template.replace("{NOMBRE}", nombre_corto)
 
 
+def _cargar_template_correccion() -> str | None:
+    """El correo que envuelve la corrección de la IA, si el semestre lo tiene.
+
+    Lo fijo del correo (el cierre con las dudas y la nota a la corrección) va
+    en correo_correccion.md y no en el prompt: así la IA solo corrige y no
+    tiene que copiar párrafos al pie de la letra. Un semestre sin ese archivo
+    manda la corrección sola, como antes.
+    """
+    ruta = config.PROMPTS / "correo_correccion.md"
+    return ruta.read_text(encoding="utf-8") if ruta.exists() else None
+
+
+def _construir_cuerpo_correccion(template: str | None, evaluacion_html: str, nombre: str) -> str:
+    evaluacion = _normalizar_html_gpt(evaluacion_html)
+    if not template:
+        return evaluacion
+    nombre_corto = nombre.split()[0] if nombre else "estudiante"
+    # La corrección entra al final: si trajera "{NOMBRE}" escrito, no se toca.
+    return template.replace("{NOMBRE}", nombre_corto).replace("{EVALUACION}", evaluacion)
+
+
 def _construir_asunto_respuesta(info: SemanaInfo) -> str:
     return f"Re: Evaluación de Progreso Individual Módulo {info.semana}: {info.tema}"
 
@@ -131,6 +152,9 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
     print(f"Módulo {semana} — {len(correos)} respuesta(s) encontrada(s)")
 
     template_duplicado = _cargar_template_duplicado()
+    template_correccion = _cargar_template_correccion()
+    if template_correccion is None:
+        print("Sin correo_correccion.md: el correo lleva solo la corrección de la IA.")
     asunto_respuesta = _construir_asunto_respuesta(info)
 
     procesados = []
@@ -227,7 +251,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             id_feedback = enviar_correo(
                 correo_alumno,
                 asunto_respuesta,
-                html_eval,
+                _construir_cuerpo_correccion(template_correccion, html_eval, nombre),
                 html=True,
                 in_reply_to=corr.get("in_reply_to") or None,
             )

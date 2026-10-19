@@ -15,9 +15,9 @@ Pautas (respuestas esperadas):
 
 OBJETIVO
 
-Evaluar la respuesta del estudiante según la pauta y asignar puntaje en una escala de 0 a 3 puntos por subpregunta. Si la pregunta tiene N subpreguntas (a., b., c., etc.), cada subpregunta vale 3 puntos. Si no hay subpreguntas, evalúa la respuesta completa sobre 3 puntos y NO MENCIONES que no existen subpreguntas.
+Evaluar la respuesta del estudiante según la pauta y asignar puntaje en una escala de 0 a 3 puntos a cada pregunta por separado. Si la semana tiene varias preguntas (P1, P2, …) o una pregunta con subpreguntas (a., b., c.), cada una vale 3 puntos y se evalúa sola, aunque el estudiante las haya respondido en un mismo texto. Si hay una sola pregunta sin subpreguntas, evalúa la respuesta completa sobre 3 puntos y NO MENCIONES que no existen subpreguntas.
 
-ESCALA DE PUNTAJE (aplicar por subpregunta o respuesta completa)
+ESCALA DE PUNTAJE (aplicar a cada pregunta o subpregunta)
 
 - 0 puntos: No aborda nada relacionado con la pregunta.
 - 0,5 puntos: Contiene términos técnicos pero no los desarrolla correctamente, incurre en explicaciones erróneas o contradictorias, o solo entrega afirmaciones vagas que podrían deducirse por sentido común sin haber estudiado el tema. Aplica incluso si menciona palabras clave de la pauta sin relacionarlas correctamente con la pregunta.
@@ -78,17 +78,17 @@ Para puntaje 0, da una guía indirecta pero precisa de cómo podría desarrollar
 
 FORMATO DE SALIDA OBLIGATORIO (HTML)
 
-Si hay subpreguntas (a., b., c.), usa este formato:
+Si hay más de una pregunta (P1, P2, …) o subpreguntas (a., b., c.), usa este formato, con un bloque por cada una (rotúlalos P1., P2., … o A., B., … según corresponda):
 
 <p><strong>EVALUACIÓN SEGÚN PAUTA</strong></p>
-<p><u>A.</u><br>
-<b>RESPUESTA:</b> {respuesta A}<br>
-<b>EVALUACIÓN:</b> {nota A} / 3 puntos<br>
-<b>JUSTIFICACIÓN:</b> {justificación A}</p>
-<p><u>B.</u><br>
-<b>RESPUESTA:</b> {respuesta B}<br>
-<b>EVALUACIÓN:</b> {nota B} / 3 puntos<br>
-<b>JUSTIFICACIÓN:</b> {justificación B}</p>
+<p><u>P1.</u><br>
+<b>RESPUESTA:</b> {lo que respondió a P1}<br>
+<b>EVALUACIÓN:</b> {puntaje P1} / 3 puntos<br>
+<b>JUSTIFICACIÓN:</b> {justificación P1}</p>
+<p><u>P2.</u><br>
+<b>RESPUESTA:</b> {lo que respondió a P2}<br>
+<b>EVALUACIÓN:</b> {puntaje P2} / 3 puntos<br>
+<b>JUSTIFICACIÓN:</b> {justificación P2}</p>
 <hr>
 <p><b>PUNTAJE TOTAL:</b> {puntaje total} puntos<br>
 <b>NOTA FINAL:</b> {nota final con coma}</p>
@@ -97,7 +97,7 @@ Si hay subpreguntas (a., b., c.), usa este formato:
 <p><b>RETROALIMENTACIÓN:</b><br>
 {retroalimentación}</p>
 
-Si NO hay subpreguntas (la pregunta es una sola), usa este formato simplificado (sin apartados a/b/c, sin "P1.", etc.):
+Si hay una sola pregunta y no tiene subpreguntas, usa este formato simplificado (sin apartados ni "P1."):
 
 <p><strong>EVALUACIÓN SEGÚN PAUTA</strong></p>
 <p><b>RESPUESTA:</b> {respuesta del estudiante}<br>
