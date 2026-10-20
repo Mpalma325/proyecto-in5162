@@ -26,6 +26,7 @@ from modulos.mail import buscar_no_leidos, enviar_correo, marcar_leidos
 from . import config
 from .ia_prompts import responder_duda
 from .preguntas import cargar_semana
+from modulos.progreso import avanzar
 
 # Tope de vueltas por alumno y semana. La conversación es para resolver una
 # duda, no para negociar la nota indefinidamente; pasado esto conviene que
@@ -76,7 +77,7 @@ def main(semana: int | None = None, dry_run: bool = False) -> None:
 
     procesados, respondidas, fallidas = [], 0, 0
 
-    for corr, origen in pendientes:
+    for corr, origen in avanzar(pendientes, "dudas"):
         correo = (origen.get("Correo") or "").strip().lower()
         item = str(origen.get("Item"))
         alumno = gente.get(correo, {})

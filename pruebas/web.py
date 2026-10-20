@@ -277,13 +277,21 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-prompts.mjs corre", False, r.stderr[-300:])
 
-titulo("7f. el gasto en la API y en qué va el curso")
-# La línea de consumo la escribe el Python de verdad: si cambia su forma sin
-# cambiar el lector de la página, el costo deja de verse sin que nadie lo note.
+titulo("7f. el gasto en la API, en qué va el curso y la barra de avance")
+# La línea de consumo y las de avance las escribe el Python de verdad: si cambia
+# su forma sin cambiar el lector de la página, el costo o la barra dejan de verse
+# sin que nadie lo note.
 if shutil.which("node"):
+    import contextlib
+    import io
     from modulos import ia as _ia
+    from modulos.progreso import avanzar
     linea = _ia.linea_consumo("gpt-prueba", 2, 4900, 1250)
-    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-consumo.mjs"), linea],
+    avance = io.StringIO()
+    with contextlib.redirect_stdout(avance):
+        for _ in avanzar(["a", "b", "c"], "respuestas"):
+            print("✓ una respuesta")
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-consumo.mjs"), linea, avance.getvalue()],
                        capture_output=True, text=True, encoding="utf-8")
     for linea_salida in (r.stdout or "").splitlines():
         estado, _, nombre = linea_salida.partition("\t")

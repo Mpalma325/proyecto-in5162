@@ -12,6 +12,7 @@ from modulos.mail import enviar_correo, buscar_respuestas_semana, marcar_leido
 from modulos.datos import candidatos as _candidatos
 from .ia_prompts import evaluar_respuesta
 from .preguntas import cargar_semana, SemanaInfo
+from modulos.progreso import avanzar
 
 
 def _normalizar_html_gpt(html: str) -> str:
@@ -167,7 +168,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
     candidatos = []  # lo que se evaluaría, para elegir en la página
     no_elegidos = 0
 
-    for corr in correos:
+    for corr in avanzar(correos, "respuestas"):
         # Si contesta a un feedback que ya le mandamos, no es una respuesta
         # atrasada: es una duda sobre su corrección. Se deja sin leer para que
         # la recoja `python -m modulos.tests.tutoria`. Sin esto el alumno

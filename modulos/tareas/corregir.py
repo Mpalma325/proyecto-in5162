@@ -27,6 +27,7 @@ from modulos.datos import candidatos as _candidatos
 from . import config, storage
 from .escala import validar_nota
 from modulos.mail import enviar_correo
+from modulos.progreso import avanzar
 
 
 def _cargar_prompt_correccion() -> str:
@@ -125,7 +126,7 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
 
     print(f"Corrigiendo {len(pendientes)} respuesta(s)...\n")
 
-    for fila in pendientes:
+    for fila in avanzar(pendientes, "respuestas"):
         nombre = fila["alumno_nombre"]
 
         if dry_run:

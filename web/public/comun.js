@@ -311,9 +311,36 @@ export function preciosApi() {
   return preciosPedidos;
 }
 
+// El avance que imprimen los flujos (modulos/progreso.py): "@@progreso 3/24 respuestas".
+const LINEA_PROGRESO = /^@@progreso (\d+)\/(\d+)(?: (.*))?$/gm;
+
+/** El último avance de una salida, o null si el flujo no lo informa. */
+export function progresoDe(salida) {
+  const todas = [...String(salida || "").matchAll(LINEA_PROGRESO)];
+  if (!todas.length) return null;
+  const [, hechos, total, unidad] = todas[todas.length - 1];
+  return { hechos: Number(hechos), total: Number(total), unidad: unidad || "" };
+}
+
+/** La salida sin las líneas de avance, que no son para leer: la línea entera, con su salto. */
+export const sinProgreso = (salida) => String(salida || "").replace(/^@@progreso [^\n]*(?:\n|$)/gm, "");
+
+/** La barra mientras corre: cuántos van de cuántos. */
+function barraProgreso(t) {
+  const p = t.estado === "corriendo" ? progresoDe(t.salida) : null;
+  if (!p) return null;
+  const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
+  return el("div", {
+    class: "progreso-trabajo", role: "progressbar",
+    "aria-valuemin": "0", "aria-valuemax": String(p.total), "aria-valuenow": String(p.hechos),
+  },
+    el("div", { class: "barra-progreso" }, el("span", { style: `width: ${pct}%` })),
+    el("span", { class: "texto-progreso" }, `${p.hechos} de ${p.total}${p.unidad ? ` ${p.unidad}` : ""}`));
+}
+
 function vistaTrabajo(t, extra, precios = {}) {
   const simulacion = Boolean(t.prueba) && simula(t);
-  const [tecnico, resto] = separarTecnico(t.salida || "");
+  const [tecnico, resto] = separarTecnico(sinProgreso(t.salida));
   const cuenta = contarLineas(resto);
   const conteo = CONTEO_SALIDA.filter(([s]) => cuenta[s])
     .flatMap(([s, clase, texto], i) => [i ? " · " : "", el("span", { class: `l-${clase}` }, `${s} ${texto(cuenta[s], simulacion)}`)]);
@@ -326,6 +353,7 @@ function vistaTrabajo(t, extra, precios = {}) {
       el("span", { class: "tenue" }, detalle)),
     simulacion && t.estado !== "fallido"
       ? el("p", { class: "titulo-salida" }, "Esto es lo que pasaría (no se hizo nada)") : null,
+    barraProgreso(t),
     conteo.length ? el("p", { class: "resumen-salida" }, "En la salida: ", conteo) : null,
     consumoDe(t, precios),
     tecnico ? el("details", { class: "detalle-tecnico" }, el("summary", {}, "Detalle técnico"),

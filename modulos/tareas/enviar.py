@@ -19,6 +19,7 @@ from modulos import datos as _datos
 
 from . import config, storage
 from modulos.mail import enviar_correo
+from modulos.progreso import avanzar
 
 
 def _cargar_template() -> str:
@@ -80,7 +81,7 @@ def main(tarea: str, dry_run: bool = False) -> None:
     else:
         print("\n--- ENVIANDO ---")
 
-    for fila in pendientes:
+    for fila in avanzar(pendientes, "correos"):
         asunto = _construir_asunto(fila)
         cuerpo = _construir_cuerpo(template, fila)
 

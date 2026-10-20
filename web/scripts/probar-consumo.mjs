@@ -75,4 +75,16 @@ check("una simulación fallida no se marca (no hizo nada)", !ids.includes("c"), 
 check("un envío real fallido sigue marcado si solo se simuló después", ids.includes("d"), JSON.stringify(ids));
 check("un resumen fallido se marca (escribe aunque no mande correos)", ids.includes("f"), JSON.stringify(ids));
 
+// ---------------------------------------------------------------- la barra de avance
+// Lo que imprime modulos/progreso.py al recorrer tres respuestas.
+const { progresoDe, sinProgreso } = await import(new URL("../public/comun.js", import.meta.url));
+const avance = process.argv[3] || "";
+const mitad = avance.split("\n").slice(0, 5).join("\n"); // 0/3, ✓, 1/3, ✓, 2/3
+check("lee cuántos van de cuántos", JSON.stringify(progresoDe(mitad)) === '{"hechos":2,"total":3,"unidad":"respuestas"}',
+  JSON.stringify(progresoDe(mitad)));
+check("al terminar, van todos", progresoDe(avance)?.hechos === 3, JSON.stringify(progresoDe(avance)));
+check("las líneas de avance no se muestran ni dejan huecos",
+  sinProgreso(avance) === "✓ una respuesta\n✓ una respuesta\n✓ una respuesta\n", JSON.stringify(sinProgreso(avance)));
+check("una salida sin avance no tiene barra", progresoDe("✓ algo\n") === null);
+
 process.exit(fallas ? 1 : 0);

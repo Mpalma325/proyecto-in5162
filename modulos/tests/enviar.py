@@ -13,6 +13,7 @@ from modulos.mail import enviar_correo
 
 from . import config
 from .preguntas import SemanaInfo, cargar_semana
+from modulos.progreso import avanzar
 
 SEMILLA_GRUPOS = config.GRUPO_SEED
 
@@ -100,7 +101,7 @@ def main(semana: int, dry_run: bool = False) -> None:
         return
 
     enviados = fallidos = 0
-    for alumno in pendientes:
+    for alumno in avanzar(pendientes, "correos"):
         correo = alumno["Correo"].strip()
         grupo = alumno.get("Grupo", "control").strip().lower()
         try:

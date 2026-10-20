@@ -5,6 +5,7 @@ from modulos import datos
 from . import config
 from .ia_prompts import evaluar_respuesta, generar_resumen
 from .preguntas import cargar_semana
+from modulos.progreso import avanzar
 
 
 def main(semana: int) -> None:
@@ -38,7 +39,7 @@ def main(semana: int) -> None:
     print(f"Procesando {len(con_respuesta)} respuesta(s)...")
 
     evaluaciones_html = []
-    for fila in con_respuesta:
+    for fila in avanzar(con_respuesta, "respuestas"):
         nombre = fila.get("Nombre", "?")
         respuesta = textos[fila["Correo"].strip().lower()]
         try:

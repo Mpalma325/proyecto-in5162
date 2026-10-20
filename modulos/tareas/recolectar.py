@@ -16,6 +16,7 @@ from modulos import datos as _datos
 
 from . import config, storage
 from modulos.mail import buscar_respuestas
+from modulos.progreso import avanzar
 
 
 def main(tarea: str) -> None:
@@ -43,7 +44,7 @@ def main(tarea: str) -> None:
     encontradas = buscar_respuestas(message_ids)
     print(f"Encontradas {len(encontradas)} respuesta(s) nuevas.\n")
 
-    for fila in pendientes:
+    for fila in avanzar(pendientes, "alumnos"):
         mid = fila["message_id"]
         if mid not in encontradas:
             print(f"  ⋯ {fila['alumno_nombre']:30s}: sin respuesta aún")
