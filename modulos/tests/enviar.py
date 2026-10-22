@@ -97,6 +97,9 @@ def main(semana: int, dry_run: bool = False) -> None:
                 print(f"\nEjemplo {grupo.upper()} — {ej.get('Nombre')} → {ej.get('Correo')}")
                 print(f"Asunto: {asunto}")
                 print(_construir_cuerpo(template, ej, info))
+        # Se recorre igual, sin mandar nada, para que la página muestre la barra.
+        for _ in avanzar(pendientes, "correos"):
+            pass
         print(f"\nSe enviaría a {len(pendientes)} alumno(s).")
         return
 

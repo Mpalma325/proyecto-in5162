@@ -329,9 +329,12 @@ export function progresoDe(salida) {
 /** La salida sin las líneas de avance, que no son para leer: la línea entera, con su salto. */
 export const sinProgreso = (salida) => String(salida || "").replace(/^@@progreso [^\n]*(?:\n|$)/gm, "");
 
-/** La barra mientras corre: cuántos van de cuántos. */
+/**
+ * La barra: cuántos van de cuántos. Queda a la vista al terminar, también en una
+ * simulación (que dura un segundo) o en un trabajo detenido a medio camino.
+ */
 function barraProgreso(t) {
-  const p = t.estado === "corriendo" || t.estado === "cancelando" ? progresoDe(t.salida) : null;
+  const p = t.estado === "pendiente" ? null : progresoDe(t.salida);
   if (!p) return null;
   const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
   return el("div", {
