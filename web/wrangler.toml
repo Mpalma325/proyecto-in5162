@@ -8,6 +8,12 @@ name = "in5162"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
+# Responder dudas todos los días a las 18:00 de Santiago. Va en UTC y Chile
+# cambia de horario: 21:00 UTC en verano y 22:00 en invierno. El Worker deja
+# pasar solo la que corresponde (programado() en src/index.ts).
+[triggers]
+crons = ["0 21 * * *", "0 22 * * *"]
+
 [assets]
 directory = "public"
 binding = "ASSETS"

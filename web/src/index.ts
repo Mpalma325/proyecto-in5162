@@ -379,6 +379,12 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
   if (!FLUJOS.has(p.flujo)) return error(400, `Flujo desconocido: ${p.flujo}`);
   const args = p.argumentos && typeof p.argumentos === "object" ? p.argumentos : {};
   // Salvo que se pida explícitamente lo contrario, todo trabajo es de prueba.
+  return json({ id: await crearTrabajo(env, p.semestre, p.flujo, args, quien) }, 201);
+}
+
+/** Registra el trabajo y le avisa al motor. Lo usan la página y el cron. */
+async function crearTrabajo(env: Env, semestre: string, flujo: string,
+                            args: Record<string, unknown>, quien: string): Promise<string> {
   const prueba = args.prueba !== false;
   args.prueba = prueba;
 
@@ -387,7 +393,7 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
   await env.DB.prepare(
     `INSERT INTO trabajos (id, semestre, flujo, argumentos, prueba, estado, pedido_por, creado, actualizado)
      VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?)`,
-  ).bind(id, p.semestre, p.flujo, JSON.stringify(args), prueba ? 1 : 0, quien, t, t).run();
+  ).bind(id, semestre, flujo, JSON.stringify(args), prueba ? 1 : 0, quien, t, t).run();
 
   // Se le avisa al motor, que lo pone en su cola y responde enseguida. Si no
   // contesta, el trabajo queda marcado como fallido con el motivo, en vez de
@@ -404,7 +410,23 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
       "UPDATE trabajos SET estado = 'fallido', salida = ?, actualizado = ? WHERE id = ?",
     ).bind(`No pude avisarle al motor: ${(e as Error).message}\n`, ahora(), id).run();
   }
-  return json({ id }, 201);
+  return id;
+}
+
+// Lo que corre solo, todos los días: responder las dudas sobre las correcciones,
+// de verdad (manda correos), en el semestre activo. El cron de wrangler.toml va
+// en UTC y Chile cambia de horario, así que se agenda a las dos horas posibles y
+// acá se deja pasar solo la que en Santiago son las 18.
+const HORA_RESPONDER_DUDAS = 18;
+
+async function programado(env: Env, cuando: number): Promise<void> {
+  const hora = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Santiago", hour: "numeric", hourCycle: "h23",
+  }).format(new Date(cuando)));
+  if (hora !== HORA_RESPONDER_DUDAS) return;
+  const activo = await env.DB.prepare("SELECT id FROM semestres WHERE activo = 1 LIMIT 1").first<{ id: string }>();
+  if (!activo) return;
+  await crearTrabajo(env, activo.id, "tests.tutoria", { prueba: false }, `programado (${HORA_RESPONDER_DUDAS}:00)`);
 }
 
 // Detener un trabajo. Si no empezó, queda "cancelado" y el motor ya no lo toma
@@ -554,6 +576,9 @@ async function cambiarSemestre(req: Request, env: Env): Promise<Response> {
 // ---------------------------------------------------------------- rutas
 
 export default {
+  async scheduled(evento: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(programado(env, evento.scheduledTime));
+  },
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
