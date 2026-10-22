@@ -173,6 +173,8 @@ pre.salida {
 .estado.pendiente, .estado.corriendo { background: var(--info-fondo); color: var(--acento); }
 .estado.terminado { background: var(--ok-fondo); color: var(--ok); }
 .estado.fallido { background: var(--aviso-fondo); color: var(--aviso); }
+.estado.cancelando, .estado.cancelado { background: var(--linea); color: var(--tenue); }
+.cabeza-trabajo button.detener { margin-left: 8px; min-height: 0; padding: 2px 0; color: var(--aviso); }
 .historial td { cursor: pointer; }
 .historial tr:hover td { background: var(--fondo); }
 

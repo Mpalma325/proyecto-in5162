@@ -16,6 +16,7 @@
  *   GET  /api/trabajos?semestre=X       los últimos trabajos de un semestre
  *   GET  /api/consumo/:semestre         lo que gastó en la API cada trabajo
  *   GET  /api/trabajos/:id              estado y salida de un trabajo
+ *   POST /api/trabajos/:id/cancelar     detenerlo (antes de empezar, o entre un alumno y otro)
  *
  * Para el motor (Cloud Run), con su propio token:
  *   GET  /api/motor/archivos/:semestre        qué archivos tiene el semestre en R2
@@ -406,6 +407,25 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
   return json({ id }, 201);
 }
 
+// Detener un trabajo. Si no empezó, queda "cancelado" y el motor ya no lo toma
+// (solo toma los "pendiente"). Si está corriendo, queda "cancelando": el motor lo
+// ve en su próxima vuelta y lo para entre un alumno y otro (motor/trabajo.py).
+async function cancelarTrabajo(env: Env, id: string, quien: string): Promise<Response> {
+  const t = ahora();
+  const antes = await env.DB.prepare(
+    `UPDATE trabajos SET estado = 'cancelado', salida = salida || ?, actualizado = ?
+     WHERE id = ? AND estado = 'pendiente'`,
+  ).bind(`⊘ ${quien} lo canceló antes de que empezara.\n`, t, id).run();
+  if (antes.meta.changes) return json({ estado: "cancelado" });
+  const durante = await env.DB.prepare(
+    `UPDATE trabajos SET estado = 'cancelando', salida = salida || ?, actualizado = ?
+     WHERE id = ? AND estado = 'corriendo'`,
+  ).bind(`\n⊘ ${quien} pidió detenerlo: para antes del alumno siguiente.\n`, t, id).run();
+  if (durante.meta.changes) return json({ estado: "cancelando" });
+  const existe = await env.DB.prepare("SELECT estado FROM trabajos WHERE id = ?").bind(id).first();
+  return existe ? error(409, `El trabajo ya está ${existe.estado}.`) : error(404, "No existe ese trabajo.");
+}
+
 async function verTrabajo(env: Env, id: string): Promise<Response> {
   const t = await env.DB.prepare("SELECT * FROM trabajos WHERE id = ?").bind(id).first();
   if (!t) return error(404, "No existe ese trabajo.");
@@ -444,15 +464,17 @@ interface Avance {
   codigo?: number;
 }
 
-const ESTADOS = new Set(["corriendo", "terminado", "fallido"]);
+const ESTADOS = new Set(["corriendo", "terminado", "fallido", "cancelado"]);
 
 async function informarAvance(req: Request, env: Env, id: string): Promise<Response> {
   const a = await req.json<Avance>();
   if (a.estado && !ESTADOS.has(a.estado)) return error(400, "Estado inválido.");
   // Tomarlo ("corriendo") solo vale desde "pendiente", en una sola sentencia:
   // si la cola entrega el mismo trabajo dos veces a la vez, uno solo lo toma.
-  // Y un trabajo terminado o fallido no se reabre.
-  const permitido = a.estado === "corriendo" ? "estado = 'pendiente'" : "estado IN ('pendiente', 'corriendo')";
+  // Y un trabajo terminado, fallido o cancelado no se reabre. Uno "cancelando"
+  // sigue informando hasta que el motor lo cierra.
+  const permitido = a.estado === "corriendo" ? "estado = 'pendiente'"
+    : "estado IN ('pendiente', 'corriendo', 'cancelando')";
   // La salida se va agregando al final, así la página la ve crecer.
   const r = await env.DB.prepare(
     `UPDATE trabajos SET salida = salida || ?, estado = COALESCE(?, estado),
@@ -640,6 +662,9 @@ export default {
       }
       if (partes[1] === "trabajos") {
         if (req.method === "POST" && !partes[2]) return await pedirTrabajo(req, env, quien);
+        if (req.method === "POST" && partes[2] && partes[3] === "cancelar" && !partes[4]) {
+          return await cancelarTrabajo(env, partes[2], quien);
+        }
         if (req.method === "GET" && partes[2]) return await verTrabajo(env, partes[2]);
         if (req.method === "GET") {
           const sem = url.searchParams.get("semestre") || "";

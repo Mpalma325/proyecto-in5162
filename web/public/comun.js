@@ -165,7 +165,7 @@ export function salidaColoreada(texto, clase = "salida") {
 // Pedir un trabajo al motor, mirar su salida en vivo y listar los últimos.
 // Lo usan Tests Semanales y Tareas.
 
-const ESTADOS_FINALES = new Set(["terminado", "fallido"]);
+const ESTADOS_FINALES = new Set(["terminado", "fallido", "cancelado"]);
 
 export async function pedirTrabajo(semestre, flujo, argumentos) {
   const { id } = await api("/api/trabajos", {
@@ -290,6 +290,10 @@ function cierreTrabajo(t, cuenta, simulacion) {
     return caja("aviso", `Terminó con ${partes}: revisa en la salida las líneas marcadas con ${
       [errores && "✗", avisos && "⚠"].filter(Boolean).join(" o ")}.`);
   }
+  if (t.estado === "cancelado") {
+    return caja("info", simulacion ? "Se detuvo antes de terminar. Era una simulación: no se mandó ni guardó nada."
+      : "Se detuvo antes de terminar. Lo que alcanzó a hacer quedó guardado; si lo vuelves a ejecutar, sigue con lo que faltó.");
+  }
   if (t.estado === "fallido") {
     let que;
     if (t.prueba && simula(t)) que = "No se mandó ni guardó nada; puedes volver a ejecutarlo.";
@@ -327,7 +331,7 @@ export const sinProgreso = (salida) => String(salida || "").replace(/^@@progreso
 
 /** La barra mientras corre: cuántos van de cuántos. */
 function barraProgreso(t) {
-  const p = t.estado === "corriendo" ? progresoDe(t.salida) : null;
+  const p = t.estado === "corriendo" || t.estado === "cancelando" ? progresoDe(t.salida) : null;
   if (!p) return null;
   const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
   return el("div", {
@@ -347,10 +351,11 @@ function vistaTrabajo(t, extra, precios = {}) {
   const detalle = [nombreFlujo(t), sobreQue(t.argumentos || {}), `pedido por ${t.pedido_por}`]
     .filter(Boolean).join(" · ");
   const esperando = t.estado === "pendiente" ? "Esperando que el motor lo tome…"
-    : ESTADOS_FINALES.has(t.estado) ? "(el trabajo no dejó salida)" : "Corriendo…";
+    : t.estado === "cancelando" ? "Deteniéndose…"
+      : ESTADOS_FINALES.has(t.estado) ? "(el trabajo no dejó salida)" : "Corriendo…";
   return [
     el("p", { class: "cabeza-trabajo" }, el("span", { class: `estado ${t.estado}` }, t.estado), " ", insigniaModo(t), " ",
-      el("span", { class: "tenue" }, detalle)),
+      el("span", { class: "tenue" }, detalle), botonDetener(t)),
     simulacion && t.estado !== "fallido"
       ? el("p", { class: "titulo-salida" }, "Esto es lo que pasaría (no se hizo nada)") : null,
     barraProgreso(t),
@@ -362,6 +367,27 @@ function vistaTrabajo(t, extra, precios = {}) {
     cierreTrabajo(t, cuenta, simulacion),
     extra ? extra(t) : null,
   ].filter(Boolean);
+}
+
+/**
+ * Detener un trabajo que no ha terminado. El motor lo para entre un alumno y
+ * otro, nunca a la mitad de un correo; lo hecho hasta ahí queda guardado.
+ */
+function botonDetener(t) {
+  if (t.estado !== "pendiente" && t.estado !== "corriendo") return null;
+  return el("button", {
+    class: "enlace detener", type: "button",
+    onclick: async (e) => {
+      if (!confirm("¿Detener este trabajo? Para antes del alumno siguiente; lo que ya hizo queda guardado.")) return;
+      e.target.disabled = true;
+      try {
+        await api(`/api/trabajos/${t.id}/cancelar`, { method: "POST" });
+      } catch (err) {
+        alert(`No pude detenerlo: ${err.message}`);
+        e.target.disabled = false;
+      }
+    },
+  }, "Detener");
 }
 
 /** Lo que gastó el trabajo en la API, si llamó al modelo. */

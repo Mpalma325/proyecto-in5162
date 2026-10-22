@@ -363,6 +363,38 @@ trabajo.LIMITE_SEGUNDOS = limite
 check("se cortó y quedó fallido", t["estado"] == "fallido" and "pasó de" in t["salida"], t["salida"][-200:])
 check("lo que alcanzó a escribir se guardó", "tests_semanales/data/hecho.txt" in sitio.subidos)
 
+titulo("13b. detener a pedido: para entre un alumno y otro, y lo hecho se guarda")
+import re  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+vigilancia = trabajo.VIGILANCIA_SEGUNDOS
+trabajo.VIGILANCIA_SEGUNDOS = 0.2
+# Diez "alumnos" de medio segundo: cada uno se registra apenas sale su correo.
+DIEZ = ("\nfrom modulos.progreso import avanzar\n"
+        "for i in avanzar(range(10), 'correos'):\n"
+        "    time.sleep(0.5); print(f'✓ correo {i}', flush=True)\n"
+        "    with (d / 'registro.txt').open('a', encoding='utf-8') as f: f.write(f'{i}\\n')\n")
+threading.Timer(1.2, lambda: sitio.trabajos["t11b"].update(estado="cancelando")).start()
+t = correr("t11b", "prueba.detener", DIEZ)
+registro = sitio.subidos.get("tests_semanales/data/registro.txt", b"").decode()
+check("quedó cancelado", t["estado"] == "cancelado", t.get("estado"))
+check("paró antes de terminar", 0 < registro.count("\n") < 10, registro)
+check("cada correo que salió quedó registrado (cortó entre uno y otro)",
+      len(re.findall(r"✓ correo \d", t["salida"])) == registro.count("\n"), (t["salida"][-400:], registro))
+check("dice cuántos quedaron sin procesar", "Detenido a pedido: quedaron" in t["salida"], t["salida"][-300:])
+
+trabajo.FLUJOS["tests.chequeo_lento"] = ("tests", lambda a: ["-c", "import time; print('leyendo', flush=True); time.sleep(60)"])
+trabajo.CORTABLES.add("tests.chequeo_lento")
+sitio.trabajos["t11c"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "tests.chequeo_lento",
+                          "argumentos": {}}
+threading.Timer(1.0, lambda: sitio.trabajos["t11c"].update(estado="cancelando")).start()
+inicio = time.monotonic()
+trabajo.ejecutar("t11c")
+check("un flujo sin correos se corta en seco", time.monotonic() - inicio < 20
+      and sitio.trabajos["t11c"]["estado"] == "cancelado", sitio.trabajos["t11c"].get("estado"))
+trabajo.VIGILANCIA_SEGUNDOS = vigilancia
+
 titulo("14. si el aviso de inicio llegó pero se cortó la respuesta, el trabajo corre igual")
 real_informar = sitio.informar
 

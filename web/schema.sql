@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS trabajos (
   flujo       TEXT NOT NULL,             -- "tests.evaluar", "tests.enviar", ...
   argumentos  TEXT NOT NULL,             -- JSON: {"semana": 4, "prueba": true}
   prueba      INTEGER NOT NULL DEFAULT 1, -- 1 = no manda correos
-  estado      TEXT NOT NULL,             -- pendiente | corriendo | terminado | fallido
+  estado      TEXT NOT NULL,             -- pendiente | corriendo | cancelando | terminado | fallido | cancelado
   salida      TEXT NOT NULL DEFAULT '',  -- lo que va imprimiendo el script
   codigo      INTEGER,                   -- código de salida del script
   pedido_por  TEXT,                      -- correo de quien lo pidió (Cloudflare Access)

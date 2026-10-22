@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 
 from modulos import datos, ia
 from modulos.mail import enviar_correo
+from modulos.progreso import avanzar
 
 from . import config, storage
 from . import ia_prompts  # noqa: F401  (configura el modelo al importarse)
@@ -192,7 +193,7 @@ def enviar(tarea: str) -> None:
     faltan = [a["nombre"] for a in filas if not a["pregunta"].strip() or not a["pauta"].strip()]
     if faltan:
         raise ValueError(f"Faltan preguntas o pautas para: {', '.join(faltan)}")
-    for alumno in filas:
+    for alumno in avanzar(filas, "alumnos"):
         if alumno["message_id"]:
             continue  # ya enviado: correrlo dos veces no repite correos
         alumno["message_id"] = enviar_correo(alumno["correo"], _asunto(tarea),
