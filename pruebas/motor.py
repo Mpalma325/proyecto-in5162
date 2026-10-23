@@ -151,7 +151,9 @@ cmd = ajuste({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5",
               "motivo": "castigó la firma", "_pedido_por": "profe@x.cl", "por": "otro@x.cl"})
 check("quién ajusta lo pone el sitio, no la página", cmd[-1] == "profe@x.cl", cmd)
 check("el motivo va como un solo argumento", "castigó la firma" in cmd)
-for malo in ({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5", "motivo": "x"},
+check("el motivo es opcional", ajuste({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5",
+                                     "_pedido_por": "profe@x.cl"})[-3] == "")
+for malo in ({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5", "motivo": "x" * 501},
              {"flujo": "test", "item": "T1", "correo": "ana@x.cl", "nota": "6,5", "motivo": "motivo ok"},
              {"flujo": "test", "item": "3", "correo": "no-es-correo", "nota": "6,5", "motivo": "motivo ok"},
              {"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5; rm", "motivo": "motivo ok"}):

@@ -91,9 +91,10 @@ def _ajuste(a: dict) -> list[str]:
     nota = str(a.get("nota", ""))
     if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota):
         raise ValueError(f"Nota inválida: {nota!r}")
+    # El motivo es opcional; si viene, a lo más 500 caracteres.
     motivo = " ".join(str(a.get("motivo", "")).split())
-    if not 5 <= len(motivo) <= 500:
-        raise ValueError("El motivo es obligatorio (entre 5 y 500 caracteres).")
+    if len(motivo) > 500:
+        raise ValueError("El motivo es muy largo (más de 500 caracteres).")
     return ["-m", "modulos.datos.ajustar", "--flujo", flujo, "--item", item, "--correo", correo,
             "--nota", nota, "--motivo", motivo, "--por", a.get("_pedido_por") or "desconocido"]
 

@@ -5,7 +5,9 @@
 // las preguntas, los prompts y las entregas. El resto de los archivos solo los
 // escriben los trabajos, y el Worker rechaza cualquier otra ruta.
 
-import { api, barraPestanas, caja, el, navegacion, tareasConocidas } from "./comun.js";
+import {
+  api, barraPestanas, caja, conDetalle, el, navegacion, resumenCsv, tareasConocidas, textoEdicion,
+} from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 import { editorPreguntas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
@@ -73,10 +75,12 @@ async function leerTexto(ruta) {
  * se cargó. Si alguien lo cambió mientras tanto, el sitio responde 409 y la
  * edición no se pierde: queda en pantalla para copiarla y recargar.
  */
-async function guardarArchivo(ruta, cuerpo, tipo) {
+async function guardarArchivo(ruta, cuerpo, tipo, detalle) {
   const previo = archivos.find((a) => a.ruta === ruta);
   const condicion = previo ? { "if-match": previo.etag } : { "if-none-match": "*" };
-  await api(urlArchivo(ruta), { method: "PUT", headers: { "content-type": tipo, ...condicion }, body: cuerpo });
+  await api(urlArchivo(ruta), {
+    method: "PUT", headers: { "content-type": tipo, ...condicion, ...conDetalle(detalle) }, body: cuerpo,
+  });
   archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
 }
 
@@ -139,6 +143,8 @@ function editorCsv(ruta, { alGuardar } = {}) {
   const contenedor = el("div", {}, el("p", { class: "cargando" }, "Cargando…"));
 
   function montar(datos, desdeArchivo) {
+    // Cómo estaba al cargarse: para anotar en el registro qué filas cambiaron.
+    let base = desdeArchivo ? datos.filas.map((f) => [...f]) : [];
     const mensaje = el("div");
     const guardar = el("button", { class: "primario", type: "button", disabled: !desdeArchivo },
       "Guardar cambios");
@@ -176,7 +182,9 @@ function editorCsv(ruta, { alGuardar } = {}) {
     guardar.addEventListener("click", async () => {
       guardar.disabled = true;
       try {
-        await guardarArchivo(ruta, escribirCsv(datos), "text/csv; charset=utf-8");
+        await guardarArchivo(ruta, escribirCsv(datos), "text/csv; charset=utf-8",
+          `${nombre(ruta)}: ${resumenCsv(datos.columnas, base, datos.filas)}`);
+        base = datos.filas.map((f) => [...f]);
         sinGuardar = false;
         for (const c of cuerpo.querySelectorAll(".cambiado")) c.classList.remove("cambiado");
         mensaje.replaceChildren(caja("exito", "Guardado."));
@@ -337,7 +345,8 @@ async function procesarEntregas(tarea, ficheros, destino) {
       await api(urlArchivo(carpeta + seguro), {
         method: "PUT", body: datos,
         // Una entrega ya subida no se reemplaza (el sitio responde 409).
-        headers: { "content-type": seguro.endsWith(".html") ? "text/html" : "text/plain" },
+        headers: { "content-type": seguro.endsWith(".html") ? "text/html" : "text/plain",
+          ...conDetalle(`Subió la entrega ${seguro} de ${tarea}`) },
       });
       agregados.push(seguro);
     } catch {
@@ -454,7 +463,8 @@ function editorPrompt(ruta) {
       if (problemas.length && !confirm(`${problemas.join("\n\n")}\n\n¿Guardar igual?`)) return;
       guardar.disabled = true;
       try {
-        await guardarArchivo(ruta, area.value, "text/markdown; charset=utf-8");
+        await guardarArchivo(ruta, area.value, "text/markdown; charset=utf-8",
+          `Editó «${info?.titulo || nombre(ruta)}»`);
         texto = area.value;
         sinGuardar = false;
         estadoTexto.textContent = "Sin cambios";
@@ -522,8 +532,9 @@ function vistaContexto() {
     try {
       for (const f of elegidos) {
         mensaje.replaceChildren(caja("info", `Subiendo ${f.name}…`));
-        await guardarArchivo(CARPETA_CONTEXTO + nombreContexto(f.name), await f.arrayBuffer(),
-          f.type || "application/octet-stream");
+        const rutaNueva = CARPETA_CONTEXTO + nombreContexto(f.name);
+        await guardarArchivo(rutaNueva, await f.arrayBuffer(), f.type || "application/octet-stream",
+          `${existe(rutaNueva) ? "Reemplazó" : "Subió"} material del curso: ${f.name}`);
         listos.push(f.name);
       }
       dibujar();
@@ -537,7 +548,7 @@ function vistaContexto() {
   const borrar = async (ruta) => {
     if (!confirm(`¿Borrar ${nombre(ruta)} del contexto? Queda una copia en el historial.`)) return;
     try {
-      await api(urlArchivo(ruta), { method: "DELETE" });
+      await api(urlArchivo(ruta), { method: "DELETE", headers: conDetalle(`Borró material del curso: ${nombre(ruta)}`) });
       archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
       dibujar();
     } catch (e) {
@@ -578,16 +589,18 @@ function vistaHistorial() {
   const dibujarTabla = (ediciones) => {
     const lista = filtro.value ? ediciones.filter((e) => e.ruta === filtro.value) : ediciones;
     destino.replaceChildren(lista.length ? el("div", { class: "tabla-envoltura editor-envoltura" }, el("table", {},
-      el("thead", {}, el("tr", {}, ["Cuándo", "Archivo", "Quién", "Antes", "Después", ""].map((c) => el("th", {}, c)))),
+      el("thead", {}, el("tr", {}, ["Cuándo", "Qué", "Archivo", "Quién", "Antes", "Después", ""]
+        .map((c) => el("th", {}, c)))),
       el("tbody", {}, lista.map((e) => el("tr", {},
         el("td", {}, new Date(e.cuando).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })),
+        el("td", {}, textoEdicion(e) || el("span", { class: "tenue" }, "—")),
         el("td", {}, el("code", {}, e.ruta)),
         el("td", {}, e.quien),
         el("td", {}, tamano(e.bytes_antes)),
         el("td", {}, tamano(e.bytes_despues)),
         el("td", {}, e.hay_anterior
           ? el("a", { class: "descarga", href: `/api/version/${e.id}` }, "Bajar versión anterior")
-          : el("span", { class: "tenue" }, "archivo nuevo"))))))) : caja("info", "Sin ediciones registradas."));
+          : el("span", { class: "tenue" }, e.ruta.includes("/") || e.ruta.includes(".") ? "archivo nuevo" : ""))))))) : caja("info", "Sin ediciones registradas."));
   };
   api(`/api/historial/${encodeURIComponent(semestre)}`).then((ediciones) => {
     const rutas = [...new Set(ediciones.map((e) => e.ruta))].sort();
@@ -824,7 +837,13 @@ function cabecera() {
       return;
     }
     if (!descartarCambios()) return;
-    cambiarSemestre({ id, crear: true, activo: true }, mensaje);
+    // Mientras copia la plantilla, el botón no se puede volver a apretar.
+    crear.disabled = true;
+    crear.textContent = "Creando…";
+    cambiarSemestre({ id, crear: true, activo: true }, mensaje).finally(() => {
+      crear.disabled = false;
+      crear.textContent = "Crear y activar";
+    });
   });
   const nuevoSemestre = el("details", { class: "nuevo-semestre", open: !semestres.length },
     el("summary", {}, "Nuevo semestre…"),

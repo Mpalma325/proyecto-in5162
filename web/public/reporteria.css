@@ -93,3 +93,9 @@ details.columnas-a-mano { margin: 10px 0; }
 details.columnas-a-mano > .contenido { padding-top: 12px; }
 .paso-valor.texto { font-size: 17px; }
 .paso-valor a { color: var(--acento); }
+
+/* ---------------------------------------------------------- filtros y ficha */
+/* "Todas"/"Ninguna": de otro tono que las semanas, para que no se lea como una más. */
+.chip.alternar { background: transparent; border-style: dashed; color: var(--tenue); }
+.enunciados { margin: 4px 0 12px; padding-left: 22px; }
+.enunciados li { margin: 4px 0; }

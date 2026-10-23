@@ -287,6 +287,7 @@ async function bajarArchivo(env: Env, semestre: string, ruta: string): Promise<R
  */
 async function subirArchivo(req: Request, env: Env, semestre: string, ruta: string,
   quien: string): Promise<Response> {
+  const detalle = await detalleDe(req, env, quien);
   const cuerpo = await req.arrayBuffer();
   const actual = await env.ARCHIVOS.get(clave(semestre, ruta));
   // Escritura condicional: If-Match con el etag de la versión que se leyó, o
@@ -311,14 +312,16 @@ async function subirArchivo(req: Request, env: Env, semestre: string, ruta: stri
     actual ? { onlyIf: { etagMatches: actual.etag } } : undefined);
   if (!escrito) return error(409, "El archivo cambió en la nube mientras se guardaba. Vuelve a intentarlo.");
   await env.DB.prepare(
-    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(semestre, ruta, quien, t, actual ? actual.size : null, cuerpo.byteLength, versionAnterior).run();
+    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior, detalle)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(semestre, ruta, quien, t, actual ? actual.size : null, cuerpo.byteLength, versionAnterior, detalle).run();
   return json({ ruta, bytes: cuerpo.byteLength });
 }
 
 /** Borra un archivo, dejando antes su última versión en el historial. */
-async function borrarArchivo(env: Env, semestre: string, ruta: string, quien: string): Promise<Response> {
+async function borrarArchivo(req: Request, env: Env, semestre: string, ruta: string,
+  quien: string): Promise<Response> {
+  const detalle = await detalleDe(req, env, quien);
   const actual = await env.ARCHIVOS.get(clave(semestre, ruta));
   if (!actual) return error(404, "No existe ese archivo.");
   const t = ahora();
@@ -326,10 +329,41 @@ async function borrarArchivo(env: Env, semestre: string, ruta: string, quien: st
   await env.ARCHIVOS.put(versionAnterior, actual.body);
   await env.ARCHIVOS.delete(clave(semestre, ruta));
   await env.DB.prepare(
-    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior)
-     VALUES (?, ?, ?, ?, ?, 0, ?)`,
-  ).bind(semestre, ruta, quien, t, actual.size, versionAnterior).run();
+    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior, detalle)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+  ).bind(semestre, ruta, quien, t, actual.size, versionAnterior, detalle).run();
   return json({ ruta, borrado: true });
+}
+
+/**
+ * Qué cambió, para el registro. La página lo dice en X-In5162-Detalle ("Semana 11:
+ * cambió la fecha de entrega"). Si escribe un trabajo del motor, se anota cuál
+ * era (flujo y argumentos, en JSON), y la página lo muestra con su nombre.
+ */
+async function detalleDe(req: Request, env: Env, quien: string): Promise<string | null> {
+  const id = /^trabajo ([A-Za-z0-9-]{8,64})$/.exec(quien)?.[1];
+  if (id) {
+    const t = await env.DB.prepare("SELECT flujo, argumentos, prueba FROM trabajos WHERE id = ?").bind(id)
+      .first<{ flujo: string; argumentos: string; prueba: number }>();
+    return t ? JSON.stringify({ flujo: t.flujo, argumentos: JSON.parse(t.argumentos || "{}"), prueba: t.prueba }) : null;
+  }
+  return textoDetalle(req.headers.get("X-In5162-Detalle"));
+}
+
+function textoDetalle(crudo: string | null): string | null {
+  if (!crudo) return null;
+  let texto = crudo;
+  try { texto = decodeURIComponent(crudo); } catch { /* se guarda como vino */ }
+  // eslint-disable-next-line no-control-regex
+  return texto.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 400) || null;
+}
+
+/** Anota en el registro algo que no es un archivo: parámetros, semestres. */
+async function anotar(env: Env, semestre: string, que: string, quien: string, detalle: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior, detalle)
+     VALUES (?, ?, ?, ?, NULL, 0, NULL, ?)`,
+  ).bind(semestre, que, quien, ahora(), detalle).run();
 }
 
 /** Quién escribe desde el motor: "trabajo <id>" o "subida desde el PC". Solo texto simple. */
@@ -340,7 +374,7 @@ function origenMotor(req: Request): string {
 
 async function listarEdiciones(env: Env, semestre: string, ruta: string): Promise<Response> {
   const { results } = await env.DB.prepare(
-    `SELECT id, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior IS NOT NULL AS hay_anterior
+    `SELECT id, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior IS NOT NULL AS hay_anterior, detalle
      FROM ediciones WHERE semestre = ? AND (? = '' OR ruta = ?) ORDER BY cuando DESC LIMIT 300`,
   ).bind(semestre, ruta, ruta).all();
   return json(results);
@@ -534,23 +568,34 @@ async function guardarParametros(req: Request, env: Env, quien: string): Promise
     return error(400, "La nota mínima tiene que ser menor que la máxima.");
   }
   const t = ahora();
+  const { results: antes } = await env.DB.prepare("SELECT clave, valor FROM parametros").all<{ clave: string; valor: string }>();
+  const previo = new Map(antes.map((p) => [p.clave, p.valor]));
+  const cambios = Object.entries(datos).filter(([k, v]) => previo.get(k) !== String(v))
+    .map(([k, v]) => `${k}: ${previo.get(k) ?? "(sin valor)"} → ${v}`);
   await env.DB.batch(Object.entries(datos).map(([k, v]) => env.DB.prepare(
     `INSERT INTO parametros (clave, valor, actualizado, por) VALUES (?, ?, ?, ?)
      ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor, actualizado = excluded.actualizado,
                                       por = excluded.por`,
   ).bind(k, String(v), t, quien)));
+  const activo = await env.DB.prepare("SELECT id FROM semestres WHERE activo = 1 LIMIT 1").first<{ id: string }>();
+  if (cambios.length && activo) await anotar(env, activo.id, "parámetros", quien, cambios.join(" · ").slice(0, 400));
   return json({ guardados: Object.keys(datos) });
 }
 
 // ---------------------------------------------------------------- semestres
 
 /** Crea un semestre copiando la plantilla, o cambia cuál es el activo. */
-async function cambiarSemestre(req: Request, env: Env): Promise<Response> {
+async function cambiarSemestre(req: Request, env: Env, quien: string): Promise<Response> {
   const { id, crear, activo } = await req.json<{ id: string; crear?: boolean; activo?: boolean }>();
   if (!id || !ID_VALIDO.test(id) || id.startsWith("_")) return error(400, "Nombre de semestre inválido.");
   if (crear) {
+    const registrado = await env.DB.prepare("SELECT 1 FROM semestres WHERE id = ?").bind(id).first();
+    if (registrado) return error(409, `El semestre ${id} ya existe: elígelo en la lista de arriba.`);
     const ya = await env.ARCHIVOS.list({ prefix: `semestres/${id}/`, limit: 1 });
-    if (ya.objects.length) return error(409, `El semestre ${id} ya existe.`);
+    if (ya.objects.length) {
+      return error(409, `Quedaron archivos de un semestre ${id} anterior que no está en la lista. `
+        + "Usa otro nombre, o pide que se limpien esos archivos.");
+    }
     // Igual que en el PC: se copia siempre desde la plantilla, nunca desde el
     // semestre activo, para no arrastrar datos de otro curso.
     const plantilla = "semestres/_template/";
@@ -558,18 +603,22 @@ async function cambiarSemestre(req: Request, env: Env): Promise<Response> {
     let cursor: string | undefined;
     do {
       const pagina = await env.ARCHIVOS.list({ prefix: plantilla, cursor, limit: 1000 });
-      for (const o of pagina.objects) {
+      // En paralelo: de a uno, la copia tardaba lo bastante como para que se
+      // volviera a apretar el botón, y el segundo intento decía "ya existe".
+      const hechos = await Promise.all(pagina.objects.map(async (o) => {
         const obj = await env.ARCHIVOS.get(o.key);
-        if (!obj) continue;
+        if (!obj) return 0;
         await env.ARCHIVOS.put(`semestres/${id}/${o.key.slice(plantilla.length)}`, obj.body);
-        copiados++;
-      }
+        return 1;
+      }));
+      copiados += hechos.reduce((a, b) => a + b, 0);
       cursor = pagina.truncated ? pagina.cursor : undefined;
     } while (cursor);
     if (!copiados) return error(500, "No encontré la plantilla de semestre en R2.");
     await env.DB.prepare(
       "INSERT OR IGNORE INTO semestres (id, activo, filas, actualizado) VALUES (?, 0, 0, ?)",
     ).bind(id, ahora()).run();
+    await anotar(env, id, "semestre", quien, `Creó el semestre ${id} desde la plantilla (${copiados} archivos).`);
   }
   if (activo) {
     const existe = await env.DB.prepare("SELECT 1 FROM semestres WHERE id = ?").bind(id).first();
@@ -578,6 +627,7 @@ async function cambiarSemestre(req: Request, env: Env): Promise<Response> {
       env.DB.prepare("UPDATE semestres SET activo = 0"),
       env.DB.prepare("UPDATE semestres SET activo = 1 WHERE id = ?").bind(id),
     ]);
+    await anotar(env, id, "semestre", quien, `Dejó activo el semestre ${id}.`);
   }
   return json({ id, creado: Boolean(crear), activo: Boolean(activo) });
 }
@@ -634,7 +684,7 @@ export default {
 
       if (partes[1] === "curso" && req.method === "GET") return json({ curso: env.CURSO || "IN5162" });
       if (partes[1] === "semestres" && req.method === "GET") return await listarSemestres(env);
-      if (partes[1] === "semestres" && req.method === "POST") return await cambiarSemestre(req, env);
+      if (partes[1] === "semestres" && req.method === "POST") return await cambiarSemestre(req, env, quien);
       if (partes[1] === "parametros") {
         if (req.method === "GET") return await leerParametros(env);
         if (req.method === "PUT") return await guardarParametros(req, env, quien);
@@ -682,7 +732,7 @@ export default {
         const ruta = partes.slice(3).join("/");
         if (!ID_VALIDO.test(partes[2]) || !RUTA_VALIDA.test(ruta)) return error(400, "Ruta inválida.");
         if (!CONTEXTO.test(ruta)) return error(403, "Ese archivo no se borra desde la página.");
-        return await borrarArchivo(env, partes[2], ruta, quien);
+        return await borrarArchivo(req, env, partes[2], ruta, quien);
       }
       // Historial de ediciones de un semestre (o de un archivo) y sus versiones anteriores.
       if (partes[1] === "historial" && partes[2] && req.method === "GET") {

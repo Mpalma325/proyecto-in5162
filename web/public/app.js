@@ -6,8 +6,9 @@
 // La excepción es la franja de la semana en curso, que es solo contar filas de
 // la última semana enviada y no existe en Streamlit (ver semanaActual()).
 
-import { api, caja, el, navegacion, pedirTrabajo, seguirTrabajo } from "./comun.js";
-import { descargar, exportarCsv } from "./csv.js";
+import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo } from "./comun.js";
+import { descargar, exportarCsv, leerCsv } from "./csv.js";
+import { leerSemana } from "./preguntas.js";
 import { seccionSabana } from "./sabana.js";
 
 document.getElementById("nav")?.replaceWith(navegacion());
@@ -22,10 +23,10 @@ const RAMPA_OSCURA = ["#4a72a3", "#5f8bc0", "#7aa9dd", "#a3c6ec", "#cfe2f7"];
 const SIN_NIVEL = "#9e9e9e";
 const MEDIA_OSCURO = matchMedia("(prefers-color-scheme: dark)");
 const MEDIA_ANGOSTA = matchMedia("(max-width: 720px)");
-const rampa = () => (MEDIA_OSCURO.matches ? RAMPA_OSCURA : RAMPA_CLARA);
+const rampa = () => (esOscuro() ? RAMPA_OSCURA : RAMPA_CLARA);
 
 const PESTANAS = [
-  { id: "Curso" }, { id: "Originalidad" }, { id: "Grupos" }, { id: "Correlaciones" }, { id: "Alumnos" },
+  { id: "Alumnos" }, { id: "Curso" }, { id: "Originalidad" }, { id: "Grupos" }, { id: "Correlaciones" },
   { id: "Pendientes" },
   { id: "Descargar", etiqueta: "Descargar datos" },
 ];
@@ -34,7 +35,9 @@ const app = document.getElementById("app");
 const estado = {
   semestres: [], semestre: null, activo: null,
   items: [], grupos: [], selItems: new Set(), selGrupos: new Set(),
-  pestana: "Curso", alumno: null,
+  pestana: "Alumnos", alumno: null,
+  // preguntas.csv del semestre, para mostrar en la ficha lo que se le preguntó a cada uno.
+  preguntas: null,
   // Filas del semestre tal como llegan (solo las del roster, como en Python).
   filas: [],
   // La última semana enviada (semanaActual), sobre todo el semestre.
@@ -171,7 +174,7 @@ function htmlSeguro(html) {
 function colores() {
   const css = getComputedStyle(document.documentElement);
   const v = (n) => css.getPropertyValue(n).trim();
-  const oscuro = MEDIA_OSCURO.matches;
+  const oscuro = esOscuro();
   return {
     texto: v("--texto"), tenue: v("--tenue"), linea: v("--linea"), caja: v("--caja"),
     acento: v("--acento"), ok: v("--ok"), rojo: oscuro ? "#ef7a7a" : "#c62828",
@@ -305,6 +308,11 @@ def _calc(nombre):
 def _ficha(correo):
     return json.dumps(ficha(correo, _VISTA), ensure_ascii=False)
 
+def _ficha_todas(correo):
+    # La ficha muestra todo lo del alumno, sin los filtros de arriba: si no, había
+    # que volver a marcar semanas para ver lo que ya estaba.
+    return json.dumps(ficha(correo, filtrar(_TODAS, grupos=None)), ensure_ascii=False)
+
 def _casillas(criterio_j):
     filas = casillas(_VISTA, **json.loads(criterio_j))
     # El nivel lo calcula Python, que es donde vive la escala, para pintar la
@@ -348,6 +356,15 @@ async function cargarSemestre(id) {
   estado.selGrupos = new Set(meta.grupos);
   estado.filas = filas.filter((f) => f.EnRoster);
   estado.semana = semanaActual(estado.filas, estado.items);
+  estado.preguntas = null;
+  fetch(`/api/archivo/${encodeURIComponent(id)}/tests_semanales/data/preguntas.csv`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((texto) => {
+      if (!texto || estado.semestre !== id) return;
+      estado.preguntas = leerCsv(texto);
+      if (estado.pestana === "Alumnos") dibujarPestana();
+    })
+    .catch(() => {});
 }
 
 /**
@@ -912,7 +929,7 @@ function seccionAlumnos() {
           pintarCabeza();
           pintarFilas();
         },
-      }, col.titulo, el("span", { class: "flecha", "aria-hidden": "true" }, activa ? (o.asc ? " ▲" : " ▼") : "")));
+      }, col.titulo, el("span", { class: "flecha-orden", "aria-hidden": "true" }, activa ? (o.asc ? " ▲" : " ▼") : "")));
     }));
   }
 
@@ -955,18 +972,17 @@ function seccionAlumnos() {
 }
 
 function fichaAlumno(correo) {
-  const f = llamar("_ficha", correo);
-  if (!f || !f.Resumen) return [el("p", { class: "tenue" }, "No hay ficha para este alumno con estos filtros.")];
+  const f = llamar("_ficha_todas", correo);
+  if (!f || !f.Resumen) return [el("p", { class: "tenue" }, "No hay datos de este alumno.")];
   const r = f.Resumen;
   const partes = [
     el("h3", { class: "titulo-ficha" }, `Ficha de ${f.Nombre}`),
     el("p", { class: "nota-pie" }, `${f.Correo} · grupo ${f.Grupo || "sin grupo"}`),
-    el("div", { class: "kpis k4" },
+    el("div", { class: "kpis k3" },
       kpi({ etiqueta: "Nota media", valor: numero(r.NotaMedia, 1),
         sub: hay(r.NotaMin) ? `mín ${numero(r.NotaMin)} · máx ${numero(r.NotaMax)}` : null }),
       kpi({ etiqueta: "Respondió", valor: `${r.Respondieron} de ${r.Enviados}`, sub: "semanas que la recibió" }),
-      kpi({ etiqueta: "Con nota", valor: entero(r.Evaluados) }),
-      kpi({ etiqueta: "Sin responder", valor: entero(r.SinResponder) })),
+      kpi({ etiqueta: "Con nota", valor: entero(r.Evaluados) })),
   ];
 
   const serie = f.Casillas.filter((c) => hay(c.Nota));
@@ -983,10 +999,21 @@ function fichaAlumno(correo) {
   }
 
   partes.push(el("h4", {}, "Semana a semana"));
+  // Si arriba se eligieron algunas semanas (no todas), esas parten abiertas.
+  const elegidas = estado.selItems.size && estado.selItems.size < estado.items.length ? estado.selItems : null;
+  const grupo = f.Grupo === "tratamiento" ? "tratamiento" : "control";
   for (const c of f.Casillas) {
     const est = c.NotaTexto ? `nota ${c.NotaTexto}` : c.Respondio ? "respondió, sin evaluar"
       : c.Item === itemEnCurso() ? "semana en curso, aún sin evaluar" : "sin responder";
-    partes.push(desplegable(`Semana ${c.Item} — ${est}`,
+    const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
+    const enunciados = semana ? semana.preguntas.map((p) => p[grupo].texto).filter((x) => x.trim()) : [];
+    partes.push(el("details", { open: Boolean(elegidas && elegidas.has(c.Item)) },
+      el("summary", {}, `Semana ${c.Item} — ${est}`),
+      el("div", { class: "contenido" },
+      enunciados.length
+        ? [el("p", {}, el("strong", {}, "Lo que se le preguntó")),
+          el("ol", { class: "enunciados" }, enunciados.map((x) => el("li", {}, x)))]
+        : null,
       c.Respuesta
         ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, c.Respuesta)]
         : el("p", { class: "tenue" }, "No hay texto de respuesta guardado."),
@@ -994,7 +1021,7 @@ function fichaAlumno(correo) {
         ? [el("p", {}, el("strong", {}, "Lo que le respondió el agente")), evaluacionLegible(c.EvaluacionIA)]
         : null,
       c.Modelo ? el("p", { class: "tenue" }, `Modelo: ${c.Modelo}`) : null,
-      c.Respondio || c.NotaTexto ? formularioAjuste(c) : null));
+      c.Respondio || c.NotaTexto ? formularioAjuste(c) : null)));
   }
   return partes;
 }
@@ -1006,17 +1033,13 @@ function fichaAlumno(correo) {
  */
 function formularioAjuste(c) {
   const nota = el("input", { type: "text", size: 5, placeholder: "6,5", "aria-label": "Nota nueva" });
-  const motivo = el("input", { type: "text", size: 40, placeholder: "por qué se ajusta", "aria-label": "Motivo" });
+  const motivo = el("input", { type: "text", size: 40, placeholder: "opcional", "aria-label": "Motivo (opcional)" });
   const destino = el("div");
   const boton = el("button", { class: "descarga", type: "button" }, "Guardar ajuste");
   boton.addEventListener("click", async () => {
     const n = nota.value.trim().replace(".", ",");
     if (!/^\d{1,2}(,\d)?$/.test(n) || Number(n.replace(",", ".")) > 7) {
       destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
-      return;
-    }
-    if (motivo.value.trim().length < 5) {
-      destino.replaceChildren(caja("aviso", "Falta el motivo."));
       return;
     }
     if (!confirm(`Cambiar la nota de ${c.Nombre}, semana ${c.Item}: ${c.NotaTexto || "sin nota"} → ${n}.
@@ -1042,9 +1065,9 @@ function formularioAjuste(c) {
   });
   return el("details", { class: "ajuste" }, el("summary", {}, "Ajustar nota a mano"),
     el("div", { class: "contenido" },
-      el("p", { class: "nota-pie" }, "Queda registrado con su motivo. No se envía correo."),
+      el("p", { class: "nota-pie" }, "Queda registrado, con el motivo si lo escribes. No se envía correo."),
       el("div", { class: "fila-campos" }, el("label", { class: "campo" }, "Nota nueva", nota),
-        el("label", { class: "campo" }, "Motivo", motivo), boton),
+        el("label", { class: "campo" }, "Motivo (opcional)", motivo), boton),
       destino));
 }
 
@@ -1105,12 +1128,36 @@ function descargarCsv() {
   descargar(`panel_${estado.semestre}_tests.csv`, exportarCsv(cols, filas.map((f) => cols.map((c) => f[c]))));
 }
 
+// Un clic marca o desmarca; dos clics seguidos dejan solo esa. Se espera un
+// momento antes de aplicar el primero: si se redibujara al tiro, el segundo clic
+// caería en otro botón.
+let clicPendiente = null;
 function chips(opciones, seleccion) {
-  return el("div", { class: "chips" }, opciones.map((o) => el("button", {
-    class: "chip", type: "button", "aria-pressed": String(seleccion.has(o)),
+  const todas = opciones.length && opciones.every((o) => seleccion.has(o));
+  const alternar = el("button", {
+    class: "chip alternar", type: "button",
     onclick: () => {
-      if (seleccion.has(o)) seleccion.delete(o); else seleccion.add(o);
+      if (todas) seleccion.clear(); else opciones.forEach((o) => seleccion.add(o));
       dibujar();
+    },
+  }, todas ? "Ninguna" : "Todas");
+  return el("div", { class: "chips" }, alternar, opciones.map((o) => el("button", {
+    class: "chip", type: "button", "aria-pressed": String(seleccion.has(o)), title: "Doble clic: solo esta",
+    onclick: () => {
+      if (clicPendiente && clicPendiente.o === o && clicPendiente.seleccion === seleccion) {
+        clearTimeout(clicPendiente.reloj);
+        clicPendiente = null;
+        seleccion.clear();
+        seleccion.add(o);
+        dibujar();
+        return;
+      }
+      const reloj = setTimeout(() => {
+        clicPendiente = null;
+        if (seleccion.has(o)) seleccion.delete(o); else seleccion.add(o);
+        dibujar();
+      }, 250);
+      clicPendiente = { o, seleccion, reloj };
     },
   }, o)));
 }
@@ -1260,12 +1307,15 @@ function dibujar() {
 // Al cruzar el ancho de celular, los filtros pasan a plegarse o a verse siempre.
 const redibujar = () => { if (py && estado.semestre) dibujar(); };
 MEDIA_OSCURO.addEventListener("change", redibujar);
+window.addEventListener("cambio-tema", redibujar);
 MEDIA_ANGOSTA.addEventListener("change", redibujar);
 
 async function iniciar() {
   // La pestaña va en la dirección (#Grupos), para poder mandar un enlace directo.
-  const pedida = decodeURIComponent(location.hash.slice(1));
+  // #Alumnos/<correo> abre directo la ficha de ese alumno (el buscador de Inicio).
+  const [pedida, correo] = decodeURIComponent(location.hash.slice(1)).split("/");
   if (PESTANAS.some((p) => p.id === pedida)) estado.pestana = pedida;
+  const alumnoPedido = pedida === "Alumnos" && correo ? correo.toLowerCase() : null;
   try {
     app.replaceChildren(el("p", { class: "cargando" }, "Cargando…"));
     const [semestres] = await Promise.all([api("/api/semestres"), iniciarPython()]);
@@ -1278,6 +1328,7 @@ async function iniciar() {
     const activo = semestres.find((s) => s.activo);
     estado.activo = activo ? activo.id : null;
     await cargarSemestre(estado.activo || semestres[semestres.length - 1].id);
+    if (alumnoPedido) { estado.alumno = alumnoPedido; estado.irAFicha = true; }
     dibujar();
   } catch (e) {
     app.replaceChildren(caja("aviso", `No pude cargar los resultados: ${e.message}`));

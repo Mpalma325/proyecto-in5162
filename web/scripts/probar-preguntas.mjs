@@ -127,4 +127,18 @@ check("el aviso dice qué día es en realidad",
   P.diaQueNoCalza("lunes 13/06 10:15", hoy) === "La fecha dice lunes, pero el 13/06/2026 es sábado.",
   P.diaQueNoCalza("lunes 13/06 10:15", hoy));
 
+// El registro de ediciones dice qué cambió en la semana.
+const sem = (fecha, p2) => ({ tema: "T", fecha, preguntas: [
+  { control: { texto: "a", pauta: "b" }, tratamiento: { texto: "a", pauta: "b" }, igual: true },
+  { control: { texto: p2, pauta: "y" }, tratamiento: { texto: "z", pauta: "y" }, igual: false }] });
+check("anota la fecha y la pregunta cambiadas",
+  P.cambiosSemana(11, sem("viejo", "x"), sem("lunes 26/10", "x2"))
+    === "Semana 11: cambió la fecha de entrega (lunes 26/10) y la pregunta 2 (enunciado, control)",
+  P.cambiosSemana(11, sem("viejo", "x"), sem("lunes 26/10", "x2")));
+check("una semana nueva se anota como nueva", P.cambiosSemana(12, null, sem("f", "x")) === "Semana 12: semana nueva");
+const { resumenCsv } = await import(new URL("../public/comun.js", import.meta.url));
+check("cuenta filas agregadas, quitadas y cambiadas por correo",
+  resumenCsv(["Nombre", "Correo"], [["Ana", "a@x"], ["Bea", "b@x"]], [["Ana M", "a@x"], ["Caro", "c@x"]])
+    === "1 fila agregada, 1 fila quitada, 1 fila cambiada");
+
 process.exit(fallas ? 1 : 0);

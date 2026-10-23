@@ -36,13 +36,14 @@ with semestre_desechable(sid="_tmp_ajuste") as (sid, tmp), sin_red():
 
     titulo("3. lo que no corresponde se rechaza")
     for nombre, args in (("nota fuera de escala", ("8,0", "motivo largo")),
-                         ("nota mal escrita", ("seis", "motivo largo")),
-                         ("sin motivo", ("6,0", "  "))):
+                         ("nota mal escrita", ("seis", "motivo largo"))):
         try:
             ajustar.ajustar(datos.TESTS, item, correo, *args, "profe@x.cl", sid)
             check(nombre, False)
         except ValueError:
             check(nombre, True)
+    r = ajustar.ajustar(datos.TESTS, item, correo, "6,0", "  ", "profe@x.cl", sid)
+    check("sin motivo también se puede", r["despues"] == "6,0", r)
     try:
         ajustar.ajustar(datos.TESTS, "99", correo, "6,0", "motivo largo", "profe@x.cl", sid)
         check("un alumno sin registro en esa semana", False)

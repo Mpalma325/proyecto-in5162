@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS ediciones (
   cuando           TEXT NOT NULL,
   bytes_antes      INTEGER,           -- NULL si el archivo no existía
   bytes_despues    INTEGER NOT NULL,
-  version_anterior TEXT               -- clave en R2 de la copia; NULL si no había nada
+  version_anterior TEXT,              -- clave en R2 de la copia; NULL si no había nada
+  detalle          TEXT               -- qué cambió; para un trabajo, JSON con flujo y argumentos
 );
+-- Base ya creada antes de `detalle`: ALTER TABLE ediciones ADD COLUMN detalle TEXT;
 CREATE INDEX IF NOT EXISTS ediciones_por_semestre ON ediciones (semestre, cuando);

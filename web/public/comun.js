@@ -78,11 +78,45 @@ const PAGINAS = [
 ];
 
 /** La barra de arriba, igual en todas las páginas. */
+// ---------------------------------------------------------------- tema
+
+// "sistema" (sigue al computador), "claro" u "oscuro". Se recuerda en este
+// navegador; si no se puede guardar, queda el del sistema.
+const TEMAS = ["sistema", "claro", "oscuro"];
+function leerTema() {
+  try { return TEMAS.includes(localStorage.getItem("tema")) ? localStorage.getItem("tema") : "sistema"; } catch { return "sistema"; }
+}
+function aplicarTema(tema) {
+  if (tema === "sistema") delete document.documentElement.dataset.tema;
+  else document.documentElement.dataset.tema = tema;
+}
+if (typeof document !== "undefined" && document.documentElement) aplicarTema(leerTema());
+
+/** Si la página se ve en oscuro ahora, por elección o por el sistema. Lo usan los gráficos. */
+export function esOscuro() {
+  const t = document.documentElement.dataset.tema;
+  return t ? t === "oscuro" : matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function botonTema() {
+  const nombre = { sistema: "Tema: sistema", claro: "Tema: claro", oscuro: "Tema: oscuro" };
+  const b = el("button", { class: "tema", type: "button", title: "Cambiar entre sistema, claro y oscuro" },
+    nombre[leerTema()]);
+  b.addEventListener("click", () => {
+    const sigue = TEMAS[(TEMAS.indexOf(leerTema()) + 1) % TEMAS.length];
+    try { localStorage.setItem("tema", sigue); } catch { /* queda solo en esta vista */ }
+    aplicarTema(sigue);
+    b.textContent = nombre[sigue];
+    window.dispatchEvent(new Event("cambio-tema"));
+  });
+  return b;
+}
+
 export function navegacion() {
   // Cloudflare sirve las páginas sin ".html" (tests.html se ve en /tests).
   const aqui = location.pathname.replace(/\.html$/, "").replace(/^\/index$/, "/");
   const nav = el("nav", { class: "navegacion" }, PAGINAS.map(([ruta, nombre]) =>
-    el("a", { href: ruta, "aria-current": ruta === aqui ? "page" : null }, nombre)));
+    el("a", { href: ruta, "aria-current": ruta === aqui ? "page" : null }, nombre)), botonTema());
   centrarSeleccion(nav);
   return nav;
 }
@@ -197,6 +231,41 @@ function nombreFlujo(t) {
   const nombre = NOMBRE_FLUJO[t.flujo] || sinPrefijo(t.flujo);
   const paso = t.flujo === "tareas.segunda" && t.argumentos?.paso;
   return paso ? `${nombre} (${paso})` : nombre;
+}
+
+// ---------------------------------------------------------------- registro de ediciones
+
+/** El encabezado que le dice al sitio qué cambió, para el registro (Configuración › Registro). */
+export const conDetalle = (texto) => ({ "x-in5162-detalle": encodeURIComponent(String(texto || "").slice(0, 380)) });
+
+/** Qué dice una fila del registro: lo que contó la página, o el trabajo que escribió el archivo. */
+export function textoEdicion(e) {
+  if (!e.detalle) return "";
+  try {
+    const j = JSON.parse(e.detalle);
+    if (j && j.flujo) {
+      const args = j.argumentos || {};
+      return [nombreFlujo({ flujo: j.flujo, argumentos: args }), sobreQue(args), j.prueba ? "simulación" : null]
+        .filter(Boolean).join(" · ");
+    }
+  } catch { /* es texto */ }
+  return e.detalle;
+}
+
+/** "2 filas agregadas, 1 cambiada": qué cambió entre dos versiones de una tabla, fila por fila. */
+export function resumenCsv(columnas, antes, despues) {
+  const k = Math.max(0, columnas.findIndex((c) => /correo/i.test(c)));
+  const clave = (f) => String(f[k] ?? "").trim().toLowerCase();
+  const a = new Map(antes.map((f) => [clave(f), JSON.stringify(f)]));
+  const d = new Map(despues.map((f) => [clave(f), JSON.stringify(f)]));
+  const agregadas = [...d.keys()].filter((x) => !a.has(x)).length;
+  const quitadas = [...a.keys()].filter((x) => !d.has(x)).length;
+  const cambiadas = [...d.keys()].filter((x) => a.has(x) && a.get(x) !== d.get(x)).length;
+  const n = (c, uno, varios) => `${c} ${c === 1 ? uno : varios}`;
+  const partes = [agregadas && n(agregadas, "fila agregada", "filas agregadas"),
+    quitadas && n(quitadas, "fila quitada", "filas quitadas"),
+    cambiadas && n(cambiadas, "fila cambiada", "filas cambiadas")].filter(Boolean);
+  return partes.length ? partes.join(", ") : "sin cambios en las filas";
 }
 
 // Los flujos cuyo modo prueba es una simulación: no mandan correos ni guardan

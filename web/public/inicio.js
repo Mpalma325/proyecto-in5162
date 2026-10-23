@@ -6,6 +6,7 @@ import {
   seguirTrabajo,
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
+import { leerCsv } from "./csv.js";
 import { formatoUsd, leerConsumo, sumarConsumo } from "./consumo.js";
 
 document.getElementById("nav").replaceWith(navegacion());
@@ -111,6 +112,34 @@ const historial = historialTrabajos({
   alElegir: verTrabajo,
 });
 
+/** Un campo chico para ir directo a la ficha de un alumno (Resultados › Alumnos). */
+function buscadorAlumno(semestre) {
+  const lista = el("datalist", { id: "lista-alumnos" });
+  const campo = el("input", {
+    type: "search", list: "lista-alumnos", placeholder: "Buscar alumno…", "aria-label": "Buscar alumno",
+  });
+  let alumnos = [];
+  fetch(`/api/archivo/${encodeURIComponent(semestre)}/alumnos.csv`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((texto) => {
+      if (!texto) return;
+      const d = leerCsv(texto);
+      const [iN, iC] = [d.columnas.indexOf("Nombre"), d.columnas.indexOf("Correo")];
+      alumnos = d.filas.map((f) => ({ nombre: (f[iN] || "").trim(), correo: (f[iC] || "").trim().toLowerCase() }))
+        .filter((a) => a.correo);
+      lista.replaceChildren(...alumnos.map((a) => el("option", { value: `${a.nombre} · ${a.correo}` })));
+    })
+    .catch(() => {});
+  const ir = () => {
+    const q = campo.value.trim().toLowerCase();
+    const a = alumnos.find((x) => q.endsWith(x.correo)) || alumnos.find((x) => x.nombre.toLowerCase().includes(q));
+    if (q && a) location.href = `/resultados#Alumnos/${encodeURIComponent(a.correo)}`;
+  };
+  campo.addEventListener("change", ir);
+  return el("form", { class: "buscar-alumno", role: "search", onsubmit: (e) => { e.preventDefault(); ir(); } },
+    campo, lista);
+}
+
 async function iniciar() {
   try {
     const semestres = await api("/api/semestres");
@@ -128,7 +157,7 @@ async function iniciar() {
       preciosApi(),
     ]);
     app.replaceChildren(...[
-      el("div", { class: "cabeza-operacion" }, chipSemestre(semestre)),
+      el("div", { class: "cabeza-operacion cabeza-inicio" }, chipSemestre(semestre), buscadorAlumno(semestre)),
       c ? tarjetaSemana(c)
         : caja("aviso", "No pude leer en qué va el curso (notas.csv)."),
       c ? atencion(c, trabajos, consumo, precios) : null,

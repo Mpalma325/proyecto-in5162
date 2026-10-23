@@ -6,7 +6,7 @@
 // preguntas como las va a recibir el alumno, y al guardar se reescribe solo esa
 // fila: el resto del archivo queda igual, byte a byte (csv.js respeta su formato).
 
-import { api, caja, centrarSeleccion, el } from "./comun.js";
+import { api, caja, centrarSeleccion, conDetalle, el } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
 export const RUTA = "tests_semanales/data/preguntas.csv";
@@ -64,6 +64,32 @@ export function leerSemana(datos, numero) {
     preguntas.push({ control, tratamiento, igual });
   }
   return { numero, tema: v("Tema"), fecha: v("Fecha de Entrega"), preguntas };
+}
+
+/**
+ * Qué cambió en una semana, en una frase para el registro: "Semana 11: cambió
+ * la fecha de entrega y la pregunta 2 (control)". `antes` es null si es nueva.
+ */
+export function cambiosSemana(numero, antes, despues) {
+  if (!antes) return `Semana ${numero}: semana nueva`;
+  const cambios = [];
+  if (antes.tema !== despues.tema) cambios.push("el tema");
+  if (antes.fecha !== despues.fecha) cambios.push(`la fecha de entrega (${despues.fecha.trim() || "vacía"})`);
+  const n = Math.max(antes.preguntas.length, despues.preguntas.length);
+  for (let i = 0; i < n; i++) {
+    const a = antes.preguntas[i];
+    const d = despues.preguntas[i];
+    if (!a) { cambios.push(`agregó la pregunta ${i + 1}`); continue; }
+    if (!d) { cambios.push(`quitó la pregunta ${i + 1}`); continue; }
+    const grupos = GRUPOS.filter((g) => a[g].texto !== d[g].texto || a[g].pauta !== d[g].pauta);
+    if (!grupos.length) continue;
+    const partes = [...new Set(grupos.flatMap((g) => [a[g].texto !== d[g].texto && "enunciado",
+      a[g].pauta !== d[g].pauta && "pauta"]).filter(Boolean))].join(" y ");
+    cambios.push(`la pregunta ${i + 1} (${partes}${d.igual ? "" : `, ${grupos.join(" y ")}`})`);
+  }
+  if (!cambios.length) return `Semana ${numero}: sin cambios`;
+  const lista = cambios.length > 1 ? `${cambios.slice(0, -1).join(", ")} y ${cambios[cambios.length - 1]}` : cambios[0];
+  return `Semana ${numero}: cambió ${lista}`.replace(/cambió (agregó|quitó)/, "$1");
 }
 
 /**
@@ -436,7 +462,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
       const texto = escribirCsv(nuevos);
       await api(urlArchivo(semestre, RUTA), {
         method: "PUT", body: texto,
-        headers: { "content-type": "text/csv; charset=utf-8", ...(etag ? { "if-match": etag } : { "if-none-match": "*" }) },
+        headers: { "content-type": "text/csv; charset=utf-8", ...(etag ? { "if-match": etag } : { "if-none-match": "*" }),
+          ...conDetalle(cambiosSemana(actual, original ? JSON.parse(original) : null, borrador)) },
       });
       datos = leerCsv(texto);
       guardado = texto;

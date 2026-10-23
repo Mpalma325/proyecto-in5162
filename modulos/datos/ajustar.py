@@ -34,9 +34,8 @@ def ajustar(flujo: str, item: str, correo: str, nota: str, motivo: str, por: str
         raise ValueError(f"Nota inválida: {nota!r} (se escribe como 6,5)")
     if not 0.0 <= float(nota.replace(",", ".")) <= 7.0:
         raise ValueError(f"Nota fuera de la escala: {nota}")
-    motivo = " ".join(motivo.split())
-    if len(motivo) < 5:
-        raise ValueError("Falta el motivo: queda registrado junto al ajuste.")
+    # El motivo es opcional: si no se da, el log igual guarda la nota anterior y quién.
+    motivo = " ".join((motivo or "").split()) or "sin motivo indicado"
 
     correo = correo.strip().lower()
     antes = _notas.estado(correo, flujo, str(item), semestre_id)
@@ -60,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--item", required=True, help="semana (tests) o tarea, p. ej. T1")
     p.add_argument("--correo", required=True)
     p.add_argument("--nota", required=True)
-    p.add_argument("--motivo", required=True)
+    p.add_argument("--motivo", default="")
     p.add_argument("--por", required=True, help="quién hace el ajuste")
     a = p.parse_args(argv)
     print(f"[AJUSTAR] semestre {_semestre.activo_o_error()}")

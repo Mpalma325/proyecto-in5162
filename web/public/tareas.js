@@ -7,7 +7,7 @@
 
 import {
   api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, historialTrabajos, navegacion, pedirTrabajo,
-  seguirTrabajo, tareasConocidas,
+  seguirTrabajo, tareasConocidas, conDetalle,
 } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
@@ -366,6 +366,7 @@ async function guardarAsignacion(selects, mensaje) {
   await api(urlArchivo(rutaAsignacion()), {
     method: "PUT", body: texto, headers: {
       "content-type": "text/csv; charset=utf-8",
+      ...conDetalle(`Eligió a mano las preguntas de ${tarea} (${filas.length} alumnos)`),
       // Sin pisar una asignación que otra persona guardó mientras tanto.
       ...(previo ? { "if-match": previo.etag } : { "if-none-match": "*" }),
     },

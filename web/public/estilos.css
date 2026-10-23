@@ -1,15 +1,19 @@
+/* Tema: sigue al sistema; con data-tema="claro" u "oscuro" en <html> se fuerza (comun.js). */
 :root {
   --fondo: #fbfbfa; --texto: #1c1b1a; --tenue: #6b6866; --linea: #e4e1dd;
   --caja: #ffffff; --acento: #1a5490; --aviso: #b4532a; --ok: #2f7d4f;
   --aviso-fondo: #fdf3ec; --info-fondo: #eef4fb; --ok-fondo: #eef7f1;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) {
+    --fondo: #191817; --texto: #eceae7; --tenue: #9a9693; --linea: #332f2c;
+    --caja: #211f1e; --acento: #7aa9dd; --aviso: #e08a5f; --ok: #69b98a;
+    --aviso-fondo: #2b211b; --info-fondo: #1b2530; --ok-fondo: #1b2a21;
+  } }
+:root[data-tema="oscuro"] {
     --fondo: #191817; --texto: #eceae7; --tenue: #9a9693; --linea: #332f2c;
     --caja: #211f1e; --acento: #7aa9dd; --aviso: #e08a5f; --ok: #69b98a;
     --aviso-fondo: #2b211b; --info-fondo: #1b2530; --ok-fondo: #1b2a21;
   }
-}
 * { box-sizing: border-box; }
 /* Un elemento con hidden no se ve, aunque su clase le dé otro display. */
 [hidden] { display: none !important; }
@@ -139,6 +143,15 @@ details.casilla .orig { grid-row: 1 / span 2; grid-column: 3; }
 }
 .navegacion a:hover { background: var(--caja); }
 .navegacion a[aria-current="page"] { color: var(--texto); background: var(--caja); font-weight: 600; }
+/* El tema elegido a mano también cambia los controles del navegador (selects, barras). */
+:root { color-scheme: light dark; }
+:root[data-tema="claro"] { color-scheme: light; }
+:root[data-tema="oscuro"] { color-scheme: dark; }
+.navegacion .tema {
+  margin-left: auto; border: 0; background: none; color: var(--tenue); font: inherit; font-size: 13px;
+  padding: 6px 10px; border-radius: 8px; cursor: pointer; min-height: 0;
+}
+.navegacion .tema:hover { background: var(--caja); color: var(--texto); }
 
 /* ---------------------------------------------------------- operación */
 .form-trabajo { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
@@ -166,9 +179,8 @@ pre.salida {
 .l-ok { color: #2e7d32; font-weight: 600; } .l-mal { color: #c62828; font-weight: 600; }
 .l-aviso { color: #e65100; font-weight: 600; } .l-omitido { color: var(--tenue); }
 .l-accion { color: #1565c0; }
-@media (prefers-color-scheme: dark) {
-  .l-ok { color: #69b98a; } .l-mal { color: #ef7a7a; } .l-aviso { color: #f0a060; } .l-accion { color: #7aa9dd; }
-}
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) .l-ok { color: #69b98a; } :root:not([data-tema="claro"]) .l-mal { color: #ef7a7a; } :root:not([data-tema="claro"]) .l-aviso { color: #f0a060; } :root:not([data-tema="claro"]) .l-accion { color: #7aa9dd; } }
+:root[data-tema="oscuro"] .l-ok { color: #69b98a; } :root[data-tema="oscuro"] .l-mal { color: #ef7a7a; } :root[data-tema="oscuro"] .l-aviso { color: #f0a060; } :root[data-tema="oscuro"] .l-accion { color: #7aa9dd; }
 .estado { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600; }
 .estado.pendiente, .estado.corriendo { background: var(--info-fondo); color: var(--acento); }
 .estado.terminado { background: var(--ok-fondo); color: var(--ok); }
@@ -426,7 +438,8 @@ details.detalle-tecnico pre.salida {
    Agrupadas, con un rótulo chico sobre cada grupo (barraPestanas en comun.js);
    las de una sola fila, como las de la Reportería, se ven igual. */
 :root { --pestana-fondo: #f0eeeb; }
-@media (prefers-color-scheme: dark) { :root { --pestana-fondo: #232120; } }
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) { --pestana-fondo: #232120; } }
+:root[data-tema="oscuro"] { --pestana-fondo: #232120; }
 .pestanas {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px;
   border-bottom: 1px solid var(--linea); margin: 18px 0 14px; padding: 0 2px;
@@ -509,9 +522,8 @@ details.detalle-tecnico pre.salida {
 .flujo .pestana[aria-selected="true"] .detalle-pestana { color: rgba(255, 255, 255, .85); }
 .flujo .pestana.toca:not([aria-selected="true"]) .detalle-pestana { color: var(--acento); font-weight: 600; }
 .flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(.97); }
-@media (prefers-color-scheme: dark) {
-  .flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(1.15); }
-}
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) .flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(1.15); } }
+:root[data-tema="oscuro"] .flujo .pestana:not([aria-selected="true"]):hover { filter: brightness(1.15); }
 @media (max-width: 860px) {
   .flujo .pestana { border-radius: 8px; }
   .flechas .pestana { border-radius: 0; border: 0; }
@@ -571,7 +583,8 @@ details.detalle-tecnico pre.salida {
 }
 
 /* En oscuro, el gris de lo que sigue se perdía contra la tarjeta. */
-@media (prefers-color-scheme: dark) { .flecha { background: #2c2a28; } }
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) .flecha { background: #2c2a28; } }
+:root[data-tema="oscuro"] .flecha { background: #2c2a28; }
 
 /* ---------------------------------------------------------- inicio */
 .kpis.k3 { grid-template-columns: repeat(3, 1fr); }
@@ -597,3 +610,7 @@ details.detalle-tecnico pre.salida {
   .franja-titulo .fecha { display: block; font-size: 13px; }
   .franja-titulo .fecha::before { content: none; }
 }
+
+/* Inicio: el semestre a la izquierda y el buscador de alumno, chico, a la derecha. */
+.cabeza-inicio { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.buscar-alumno input { width: 240px; max-width: 100%; font-size: 14px; padding: 6px 10px; }
