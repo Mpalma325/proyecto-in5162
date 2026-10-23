@@ -87,4 +87,14 @@ check("las líneas de avance no se muestran ni dejan huecos",
   sinProgreso(avance) === "✓ una respuesta\n✓ una respuesta\n✓ una respuesta\n", JSON.stringify(sinProgreso(avance)));
 check("una salida sin avance no tiene barra", progresoDe("✓ algo\n") === null);
 
+const { avanceDe } = await import(new URL("../public/comun.js", import.meta.url));
+const ahora = Date.parse("2026-10-22T20:00:20Z");
+const corriendo = { id: "x", flujo: "tests.evaluar", prueba: 0, estado: "corriendo", creado: "2026-10-22T20:00:00Z" };
+const mitadDeDiez = avanceDe(corriendo, { hechos: 5, total: 10, unidad: "respuestas" }, ahora);
+check("a la mitad en 20 s, quedan ~20 s", mitadDeDiez?.pct === 50 && mitadDeDiez.texto === "5/10 respuestas · quedan ~20 s",
+  JSON.stringify(mitadDeDiez));
+check("sin avance ni historial no inventa un tiempo", avanceDe(corriendo, null, ahora) === null);
+check("al terminar muestra lo hecho, sin tiempo", avanceDe({ ...corriendo, estado: "cancelado" },
+  { hechos: 3, total: 10, unidad: "correos" }, ahora)?.texto === "3/10 correos");
+
 process.exit(fallas ? 1 : 0);

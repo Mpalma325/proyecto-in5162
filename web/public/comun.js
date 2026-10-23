@@ -334,15 +334,57 @@ export const sinProgreso = (salida) => String(salida || "").replace(/^@@progreso
  * simulación (que dura un segundo) o en un trabajo detenido a medio camino.
  */
 function barraProgreso(t) {
-  const p = t.estado === "pendiente" ? null : progresoDe(t.salida);
-  if (!p) return null;
-  const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
+  const a = avanceDe(t, t.estado === "pendiente" ? null : progresoDe(t.salida));
+  if (!a) return null;
   return el("div", {
     class: "progreso-trabajo", role: "progressbar",
-    "aria-valuemin": "0", "aria-valuemax": String(p.total), "aria-valuenow": String(p.hechos),
+    "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(a.pct),
   },
-    el("div", { class: "barra-progreso" }, el("span", { style: `width: ${pct}%` })),
-    el("span", { class: "texto-progreso" }, `${p.hechos} de ${p.total}${p.unidad ? ` ${p.unidad}` : ""}`));
+    el("div", { class: "barra-progreso" }, el("span", { style: `width: ${a.pct}%` })),
+    el("span", { class: "texto-progreso" }, a.texto));
+}
+
+// Los últimos trabajos que vio la página: de ahí sale cuánto suele tardar cada tipo.
+let historialVisto = [];
+
+const mediana = (xs) => {
+  const v = [...xs].sort((a, b) => a - b);
+  return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null;
+};
+
+/** Cuánto tardaron, en ms, los últimos trabajos del mismo tipo y modo que terminaron. */
+function duracionTipica(t) {
+  const iguales = historialVisto.filter((o) => o.id !== t.id && o.flujo === t.flujo
+    && Boolean(o.prueba) === Boolean(t.prueba) && o.estado === "terminado").slice(0, 5);
+  return mediana(iguales.map((o) => new Date(o.actualizado) - new Date(o.creado)).filter((d) => d > 0));
+}
+
+function textoRestante(ms) {
+  if (ms <= 0) return "terminando…";
+  const s = Math.ceil(ms / 1000);
+  return s < 60 ? `quedan ~${Math.max(5, Math.ceil(s / 5) * 5)} s` : `quedan ~${Math.ceil(s / 60)} min`;
+}
+
+/**
+ * Cuánto va y cuánto le queda. Con alumnos ya contados, al ritmo que lleva; si
+ * todavía prepara o no recorre alumnos, según lo que tardaron los anteriores del
+ * mismo tipo (la barra avanza con el reloj). Al terminar, lo que alcanzó a hacer.
+ */
+export function avanceDe(t, p, ahora = Date.now()) {
+  const cuenta = p && p.total ? `${p.hechos}/${p.total}${p.unidad ? ` ${p.unidad}` : ""}` : "";
+  if (t.estado === "pendiente") return null;
+  if (ESTADOS_FINALES.has(t.estado)) {
+    return cuenta ? { pct: Math.min(100, Math.round((p.hechos / p.total) * 100)), texto: cuenta, final: true } : null;
+  }
+  const pasado = ahora - new Date(t.creado).getTime();
+  let total = null;
+  if (p && p.total && p.hechos > 0 && p.hechos < p.total) total = (pasado * p.total) / p.hechos;
+  else total = duracionTipica(t);
+  const pctCuenta = p && p.total ? (p.hechos / p.total) * 100 : 0;
+  const pctReloj = total ? Math.min(95, (pasado / total) * 100) : 0;
+  if (!total && !cuenta) return null;
+  const pct = Math.round(Math.max(pctCuenta, pctReloj));
+  return { pct, texto: [cuenta, total ? textoRestante(total - pasado) : null].filter(Boolean).join(" · ") };
 }
 
 function vistaTrabajo(t, extra, precios = {}) {
@@ -446,11 +488,10 @@ function seguirConReintentos(id, destino, opciones, fallos = 0) {
  */
 /** La barra chica de una fila de la tabla: "12/36". */
 function avanceEnFila(t) {
-  const p = t.estado === "pendiente" ? null : t.progreso;
-  if (!p || !p.total) return null;
-  const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
-  return el("span", { class: "avance-fila", title: `${p.hechos} de ${p.total} ${p.unidad}`.trim() },
-    el("span", { class: "barra-progreso" }, el("span", { style: `width: ${pct}%` })), `${p.hechos}/${p.total}`);
+  const a = avanceDe(t, t.progreso);
+  if (!a) return null;
+  return el("span", { class: "avance-fila", title: a.texto },
+    el("span", { class: "barra-progreso" }, el("span", { style: `width: ${a.pct}%` })), a.texto);
 }
 
 /** El costo de un trabajo en la tabla: dólares si hay precio, tokens si no, nada si no llamó al modelo. */
@@ -471,6 +512,7 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
         api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`),
         api(`/api/consumo/${encodeURIComponent(semestre)}`).catch(() => []),
         preciosApi()]);
+      historialVisto = trabajos;
       lista = trabajos.filter(incluye);
       costos = new Map(consumo.map((c) => [c.id, sumarConsumo(leerConsumo(c.lineas.join("\n")), precios)]));
     } catch {
