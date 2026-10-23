@@ -347,22 +347,19 @@ function barraProgreso(t) {
 // Los últimos trabajos que vio la página: de ahí sale cuánto suele tardar cada tipo.
 let historialVisto = [];
 
-const mediana = (xs) => {
-  const v = [...xs].sort((a, b) => a - b);
-  return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null;
-};
+const promedio = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
-/** Cuánto tardaron, en ms, los últimos trabajos del mismo tipo y modo que terminaron. */
+/** Cuánto tardaron en promedio, en ms, los últimos 10 del mismo tipo y modo que terminaron. */
 function duracionTipica(t) {
   const iguales = historialVisto.filter((o) => o.id !== t.id && o.flujo === t.flujo
-    && Boolean(o.prueba) === Boolean(t.prueba) && o.estado === "terminado").slice(0, 5);
-  return mediana(iguales.map((o) => new Date(o.actualizado) - new Date(o.creado)).filter((d) => d > 0));
+    && Boolean(o.prueba) === Boolean(t.prueba) && o.estado === "terminado").slice(0, 10);
+  return promedio(iguales.map((o) => new Date(o.actualizado) - new Date(o.creado)).filter((d) => d > 0));
 }
 
 function textoRestante(ms) {
   if (ms <= 0) return "terminando…";
   const s = Math.ceil(ms / 1000);
-  return s < 60 ? `quedan ~${Math.max(5, Math.ceil(s / 5) * 5)} s` : `quedan ~${Math.ceil(s / 60)} min`;
+  return s < 60 ? `quedan ~${s} s` : `quedan ~${Math.ceil(s / 60)} min`;
 }
 
 /**
