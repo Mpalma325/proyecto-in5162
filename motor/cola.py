@@ -13,9 +13,12 @@ entera de cuál se está usando:
     COLA=cloudtasks   Cloud Tasks. Necesita GCP_PROYECTO, GCP_REGION,
                       GCP_COLA y MOTOR_URL_PUBLICA.
 
-Los trabajos corren de a uno. Dos a la vez podrían escribir el mismo archivo
-del semestre y perder lo del otro; en Cloud Tasks la cola se crea con
-max-concurrent-dispatches=1 por la misma razón.
+Los trabajos reales corren de a uno. Dos a la vez podrían escribir el mismo
+archivo del semestre y perder lo del otro; en Cloud Tasks su cola se crea con
+max-concurrent-dispatches=1 por la misma razón. Las simulaciones no mandan
+correos ni cambian notas, y van a otra cola (GCP_COLA_SIMULACIONES) que deja
+correr varias a la vez; si alguna llegara a escribir el mismo archivo, la subida
+con etag lo rechaza en vez de pisarlo.
 """
 
 from __future__ import annotations
@@ -64,10 +67,18 @@ def _token_google() -> str:
         return json.loads(r.read())["access_token"]
 
 
+def _es_simulacion(id_trabajo: str) -> bool:
+    try:
+        return bool(trabajo.sitio.ver_trabajo(id_trabajo).get("prueba"))
+    except Exception:  # noqa: BLE001  (si no se sabe, va a la cola de a uno)
+        return False
+
+
 def _cloudtasks(id_trabajo: str) -> None:
     proyecto = os.environ["GCP_PROYECTO"]
     region = os.environ["GCP_REGION"]
-    cola = os.environ["GCP_COLA"]
+    simulaciones = os.environ.get("GCP_COLA_SIMULACIONES")
+    cola = simulaciones if simulaciones and _es_simulacion(id_trabajo) else os.environ["GCP_COLA"]
     destino = os.environ["MOTOR_URL_PUBLICA"].rstrip("/") + "/ejecutar"
     tarea = {
         "task": {

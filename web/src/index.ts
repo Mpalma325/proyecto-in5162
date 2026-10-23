@@ -474,10 +474,19 @@ async function consumoDelSemestre(env: Env, semestre: string): Promise<Response>
 
 async function listarTrabajos(env: Env, semestre: string): Promise<Response> {
   const { results } = await env.DB.prepare(
-    `SELECT id, flujo, argumentos, prueba, estado, codigo, pedido_por, creado, actualizado
+    `SELECT id, flujo, argumentos, prueba, estado, codigo, pedido_por, creado, actualizado, salida
      FROM trabajos WHERE semestre = ? ORDER BY creado DESC LIMIT 30`,
   ).bind(semestre).all();
-  return json(results.map((t) => ({ ...t, argumentos: JSON.parse(String(t.argumentos || "{}")) })));
+  // De la salida solo va el último avance ("@@progreso 3/24 respuestas", de
+  // modulos/progreso.py), para la barra de cada fila; la salida entera es por trabajo.
+  return json(results.map(({ salida, ...t }) => {
+    const avances = [...String(salida || "").matchAll(/^@@progreso (\d+)\/(\d+)(?: (.*))?$/gm)];
+    const ultimo = avances[avances.length - 1];
+    return {
+      ...t, argumentos: JSON.parse(String(t.argumentos || "{}")),
+      progreso: ultimo ? { hechos: Number(ultimo[1]), total: Number(ultimo[2]), unidad: ultimo[3] || "" } : null,
+    };
+  }));
 }
 
 interface Avance {

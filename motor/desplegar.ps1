@@ -31,6 +31,7 @@ $c = $Curso.ToLower()
 if ($c -notmatch '^[a-z][a-z0-9-]{1,20}$') { throw "-Curso: solo minúsculas, números y guiones (ej. in5162)." }
 if (-not $Servicio) { $Servicio = "$c-motor" }
 if (-not $Cola) { $Cola = "$c-trabajos" }
+$ColaSimulaciones = "$c-simulaciones"
 
 function Paso($texto) { Write-Host "`n=== $texto" -ForegroundColor Cyan }
 
@@ -101,6 +102,11 @@ if (-not (Existe tasks queues describe $Cola --location $Region)) {
     G tasks queues create $Cola --location $Region `
         --max-concurrent-dispatches 1 --max-attempts 1 | Out-Null
 }
+# Las simulaciones no mandan correos ni cambian notas: pueden ir de a tres.
+if (-not (Existe tasks queues describe $ColaSimulaciones --location $Region)) {
+    G tasks queues create $ColaSimulaciones --location $Region `
+        --max-concurrent-dispatches 3 --max-attempts 1 | Out-Null
+}
 
 Paso "Secretos"
 Secreto "$c-openai" (LeerEnv "OPENAI_API_KEY")
@@ -137,9 +143,9 @@ Push-Location $raiz
 try {
     G run deploy $Servicio --source . --region $Region `
         --allow-unauthenticated `
-        --memory 1Gi --cpu 1 --timeout 1800 --concurrency 4 --max-instances 1 `
+        --memory 1Gi --cpu 1 --timeout 1800 --concurrency 8 --max-instances 1 `
         --set-secrets "OPENAI_API_KEY=$c-openai:latest,CORREO_REMITENTE=$c-correo-remitente:latest,CORREO_APP_PASSWORD=$c-correo-clave:latest,TOKEN_MOTOR=$c-token-motor:latest,TOKEN_WEB=$c-token-web:latest" `
-        --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,WEB_URL=$WebUrl,CURSO=$($Curso.ToUpper())" | Out-Host
+        --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,GCP_COLA_SIMULACIONES=$ColaSimulaciones,WEB_URL=$WebUrl,CURSO=$($Curso.ToUpper())" | Out-Host
 } finally {
     Pop-Location
 }

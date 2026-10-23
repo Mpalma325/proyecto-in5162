@@ -444,6 +444,15 @@ function seguirConReintentos(id, destino, opciones, fallos = 0) {
  * La tabla "Últimos trabajos" de una página: los trabajos para los que
  * `incluye(t)` es verdadero. Clic en uno lo muestra con `alElegir(t)`.
  */
+/** La barra chica de una fila de la tabla: "12/36". */
+function avanceEnFila(t) {
+  const p = t.estado === "pendiente" ? null : t.progreso;
+  if (!p || !p.total) return null;
+  const pct = Math.min(100, Math.round((p.hechos / p.total) * 100));
+  return el("span", { class: "avance-fila", title: `${p.hechos} de ${p.total} ${p.unidad}`.trim() },
+    el("span", { class: "barra-progreso" }, el("span", { style: `width: ${pct}%` })), `${p.hechos}/${p.total}`);
+}
+
 /** El costo de un trabajo en la tabla: dólares si hay precio, tokens si no, nada si no llamó al modelo. */
 function costoCorto(total) {
   if (!total || !total.llamadas) return "";
@@ -454,6 +463,7 @@ function costoCorto(total) {
 export function historialTrabajos({ incluye, columna, alElegir }) {
   const nodo = el("div");
   async function dibujar(semestre) {
+    clearTimeout(nodo._refresco);
     let lista = [];
     let costos = new Map();
     try {
@@ -467,6 +477,11 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
       return;
     }
     if (!lista.length) { nodo.replaceChildren(); return; }
+    // Mientras haya algo en la fila o corriendo, la tabla se pone al día sola:
+    // así se ve avanzar cada trabajo, también varias simulaciones a la vez.
+    if (lista.some((t) => !ESTADOS_FINALES.has(t.estado))) {
+      nodo._refresco = setTimeout(() => { if (nodo.isConnected) dibujar(semestre); }, 3000);
+    }
     const [titulo, valor] = columna;
     // La fila entera abre el trabajo, también con el teclado (Tab y Enter).
     const fila = (t) => el("tr", {
@@ -479,7 +494,7 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
     el("td", {}, nombreFlujo(t)),
     el("td", {}, valor(t.argumentos)),
     el("td", {}, insigniaModo(t)),
-    el("td", {}, el("span", { class: `estado ${t.estado}` }, t.estado)),
+    el("td", {}, el("span", { class: `estado ${t.estado}` }, t.estado), avanceEnFila(t)),
     el("td", { class: "col-costo" }, costoCorto(costos.get(t.id))),
     el("td", { class: "col-quien" }, t.pedido_por));
     nodo.replaceChildren(
