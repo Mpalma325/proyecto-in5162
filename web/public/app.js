@@ -6,7 +6,7 @@
 // La excepción es la franja de la semana en curso, que es solo contar filas de
 // la última semana enviada y no existe en Streamlit (ver semanaActual()).
 
-import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo } from "./comun.js";
+import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo, vistaCorreo } from "./comun.js";
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
 import { leerSemana } from "./preguntas.js";
 import { seccionSabana } from "./sabana.js";
@@ -38,6 +38,8 @@ const estado = {
   pestana: "Alumnos", alumno: null,
   // preguntas.csv del semestre, para mostrar en la ficha lo que se le preguntó a cada uno.
   preguntas: null,
+  // correo_correccion.md, que envuelve la corrección del agente en el correo.
+  plantillaCorreccion: null,
   // Filas del semestre tal como llegan (solo las del roster, como en Python).
   filas: [],
   // La última semana enviada (semanaActual), sobre todo el semestre.
@@ -131,41 +133,30 @@ const fechaValida = (iso) => {
 const fechaLarga = (d) => d.toLocaleDateString("es-CL", { day: "numeric", month: "long" });
 const fechaHora = (d) => d.toLocaleString("es-CL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
-// La evaluación del agente es HTML generado por el modelo a partir del texto
-// del alumno. Streamlit lo muestra tal cual; acá se deja pasar solo el formato
-// básico, para que un texto manipulado no pueda meter scripts en la página.
-const ETIQUETAS_PERMITIDAS = new Set(["P", "B", "STRONG", "U", "I", "EM", "BR", "HR", "UL", "OL", "LI"]);
-function evaluacionLegible(texto) {
-  // Las evaluaciones enviadas desde el sistema son HTML; las reconstruidas
-  // desde el buzón quedaron como texto plano, y en HTML se les juntaban todas
-  // las líneas en un solo bloque.
-  if (/<(p|br|b|strong|hr)/i.test(texto)) return htmlSeguro(texto);
-  return el("div", { class: "texto-plano" }, texto);
-}
-
-function htmlSeguro(html) {
-  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
-  const limpiar = (nodo) => {
-    for (const hijo of [...nodo.childNodes]) {
-      if (hijo.nodeType === Node.ELEMENT_NODE) {
-        if (!ETIQUETAS_PERMITIDAS.has(hijo.tagName)) {
-          hijo.replaceWith(...hijo.childNodes);
-          continue;
-        }
-        for (const a of [...hijo.attributes]) hijo.removeAttribute(a.name);
-        limpiar(hijo);
-      } else if (hijo.nodeType !== Node.TEXT_NODE) {
-        hijo.remove();
-      }
-    }
-  };
-  const raiz = doc.body.firstChild;
-  limpiar(raiz);
-  // Una etiqueta no permitida se reemplaza por sus hijos, que pueden traer
-  // otras no permitidas: se repite hasta que no quede nada que limpiar.
-  let antes;
-  do { antes = raiz.innerHTML; limpiar(raiz); } while (raiz.innerHTML !== antes);
-  return raiz;
+/**
+ * La corrección como le llegó al alumno: dentro de correo_correccion.md si el
+ * semestre lo tiene, con el asunto del hilo. El cuerpo enviado no se guarda,
+ * así que se rearma con la plantilla de hoy; las reconstruidas desde el buzón
+ * son texto plano y se muestran así.
+ */
+function correoEvaluacion(c) {
+  // Lo mismo que _normalizar_html_gpt y _construir_cuerpo_correccion (evaluar.py).
+  let evaluacion = String(c.EvaluacionIA).trim();
+  if (evaluacion.startsWith("```")) evaluacion = evaluacion.replace(/^```(?:html)?\s*/, "").replace(/\s*```$/, "").trim();
+  const html = /<(p|br|b|strong|hr|div)\b/i.test(evaluacion);
+  const plantilla = html ? estado.plantillaCorreccion : null;
+  // Sin nombre en el roster, el panel pone el correo en Nombre; Python escribía "estudiante".
+  const nombre = (c.Nombre && c.Nombre !== c.Correo && c.Nombre.trim().split(/\s+/)[0]) || "estudiante";
+  const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
+  return vistaCorreo({
+    asunto: semana ? `Re: Evaluación de Progreso Individual Módulo ${c.Item}: ${semana.tema}` : "",
+    para: c.Correo, nombre: c.Nombre, html,
+    // Con función: como texto de reemplazo, un "$&" o "$'" de la evaluación se interpretaría.
+    cuerpo: plantilla ? plantilla.replaceAll("{NOMBRE}", () => nombre).replaceAll("{EVALUACION}", () => evaluacion) : evaluacion,
+  }, {
+    aviso: plantilla ? "Rearmado con la plantilla actual del correo: el saludo o el pie pueden diferir de lo enviado."
+      : html ? null : "Texto recuperado del buzón: se ve sin el formato original.",
+  });
 }
 
 // ---------------------------------------------------------------- gráficos
@@ -357,6 +348,15 @@ async function cargarSemestre(id) {
   estado.filas = filas.filter((f) => f.EnRoster);
   estado.semana = semanaActual(estado.filas, estado.items);
   estado.preguntas = null;
+  estado.plantillaCorreccion = null;
+  fetch(`/api/archivo/${encodeURIComponent(id)}/tests_semanales/prompts/correo_correccion.md`, { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((texto) => {
+      if (!texto || estado.semestre !== id) return;
+      estado.plantillaCorreccion = texto;
+      if (estado.pestana === "Alumnos") dibujarPestana();
+    })
+    .catch(() => {});
   fetch(`/api/archivo/${encodeURIComponent(id)}/tests_semanales/data/preguntas.csv`, { cache: "no-store" })
     .then((r) => (r.ok ? r.text() : ""))
     .then((texto) => {
@@ -433,8 +433,8 @@ function tarjetaCasilla(c) {
         ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, c.Respuesta)]
         : el("p", { class: "tenue" }, c.Respondio ? "No hay texto de respuesta guardado." : "No respondió esta semana."),
       c.EvaluacionIA
-        ? el("div", { class: "evaluacion" }, el("p", {}, el("strong", {}, "Lo que le respondió el agente")),
-          evaluacionLegible(c.EvaluacionIA))
+        ? el("div", { class: "evaluacion" }, el("p", {}, el("strong", {}, "El correo que recibió")),
+          correoEvaluacion(c))
         : null,
       el("button", { class: "ir-ficha", type: "button", onclick: () => irAFicha(c.Correo) },
         "Ver su ficha completa →")));
@@ -1018,7 +1018,7 @@ function fichaAlumno(correo) {
         ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, c.Respuesta)]
         : el("p", { class: "tenue" }, "No hay texto de respuesta guardado."),
       c.EvaluacionIA
-        ? [el("p", {}, el("strong", {}, "Lo que le respondió el agente")), evaluacionLegible(c.EvaluacionIA)]
+        ? [el("p", {}, el("strong", {}, "El correo que recibió")), correoEvaluacion({ ...c, Nombre: f.Nombre, Correo: f.Correo })]
         : null,
       c.Modelo ? el("p", { class: "tenue" }, `Modelo: ${c.Modelo}`) : null,
       c.Respondio || c.NotaTexto ? formularioAjuste(c) : null)));

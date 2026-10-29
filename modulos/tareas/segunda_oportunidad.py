@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 
 from modulos import datos, ia
 from modulos.mail import enviar_correo
+from modulos.mail.vista import mostrar_correo
 from modulos.progreso import avanzar
 
 from . import config, storage
@@ -185,6 +186,8 @@ def borradores(tarea: str):
         f"Para: {a['correo']}\nAsunto: {_asunto(tarea)}\n\n{_cuerpo(tarea, a)}\n"
         for a in filas), encoding="utf-8")
     print(destino)
+    for a in filas:
+        mostrar_correo(a["correo"], _asunto(tarea), _cuerpo(tarea, a), nombre=a.get("nombre", ""))
     return destino
 
 

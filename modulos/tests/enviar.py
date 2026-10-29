@@ -10,6 +10,7 @@ import sys
 
 from modulos import datos
 from modulos.mail import enviar_correo
+from modulos.mail.vista import mostrar_correo
 
 from . import config
 from .preguntas import SemanaInfo, cargar_semana
@@ -95,8 +96,8 @@ def main(semana: int, dry_run: bool = False) -> None:
                        if a.get("Grupo", "control").strip().lower() == grupo), None)
             if ej:
                 print(f"\nEjemplo {grupo.upper()} — {ej.get('Nombre')} → {ej.get('Correo')}")
-                print(f"Asunto: {asunto}")
-                print(_construir_cuerpo(template, ej, info))
+                mostrar_correo(ej["Correo"].strip(), asunto, _construir_cuerpo(template, ej, info),
+                               html=True, nombre=ej.get("Nombre", ""))
         # Se recorre igual, sin mandar nada, para que la página muestre la barra.
         for _ in avanzar(pendientes, "correos"):
             pass

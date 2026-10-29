@@ -186,6 +186,16 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-el.mjs corre", False, r.stderr[-300:])
 
+titulo("7a2. un correo en la salida de un trabajo se dibuja, no se ven sus etiquetas")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-correos.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-correos.mjs corre", False, r.stderr[-300:])
+
 titulo("7b. las rutas de archivos: nombres raros sí, salirse de la carpeta no")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-rutas.mjs")],

@@ -195,6 +195,117 @@ export function salidaColoreada(texto, clase = "salida") {
   return pre;
 }
 
+// ---------------------------------------------------------------- correos
+// Un correo se muestra como lo ve el alumno en Gmail: el HTML dibujado, no sus
+// etiquetas. Va en un iframe sin scripts (como Gmail, que tampoco los corre);
+// allow-same-origin solo deja medir el alto para que no quede barra de scroll.
+
+const escapar = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+/**
+ * El documento del iframe: la letra y los márgenes de un correo abierto en
+ * Gmail. El cuerpo va tal cual se envió. La corrección viene del modelo, que
+ * lee texto del alumno: nada se pide afuera (ni imágenes ni CSS remotos), para
+ * que una respuesta manipulada no avise a nadie cuándo se abre la ficha.
+ */
+function documentoCorreo(cuerpo, html) {
+  const contenido = html ? String(cuerpo) : `<div style="white-space:pre-wrap">${escapar(cuerpo)}</div>`;
+  return `<!doctype html><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<base target="_blank">
+<style>html{background:#fff}body{margin:0;padding:4px 2px;font:small Arial,Helvetica,sans-serif;color:#222;
+overflow-wrap:anywhere}img{max-width:100%}</style>${contenido}`;
+}
+
+// El último alto de cada correo. Mientras un trabajo corre la salida se
+// redibuja cada 1,5 s y los iframes se rehacen: parten con su alto ya medido
+// y la página no salta.
+const altosCorreo = new Map();
+
+function ajustarAlto(iframe) {
+  const clave = iframe.getAttribute("srcdoc");
+  if (altosCorreo.has(clave)) iframe.style.height = altosCorreo.get(clave);
+  const medir = () => {
+    const doc = iframe.contentDocument;
+    // Antes de cargar, el iframe tiene un about:blank vacío: medirlo daría 0.
+    if (!doc?.documentElement || doc.URL !== "about:srcdoc" || !iframe.clientWidth) return;
+    // Se mide con el iframe en 0: así un cuerpo con 100vh o height:100% no
+    // crece con cada medida, y el alto puede bajar si el contenido se achica.
+    const antes = iframe.style.height;
+    iframe.style.height = "0px";
+    const alto = `${Math.ceil(doc.documentElement.scrollHeight)}px`;
+    iframe.style.height = antes;
+    altosCorreo.set(clave, alto);
+    if (antes !== alto) iframe.style.height = alto;
+  };
+  iframe.addEventListener("load", medir);
+  // Dentro de un <details> cerrado el iframe no tiene ancho: se mide al abrirse.
+  new ResizeObserver(medir).observe(iframe);
+}
+
+/**
+ * `{asunto, para, nombre, de, cuerpo, html, enviado}`: lo que deja la línea
+ * `@@correo` de un trabajo (modulos/mail/vista.py). `aviso` va bajo la cabecera.
+ */
+export function vistaCorreo(c, { aviso } = {}) {
+  const iframe = el("iframe", {
+    class: "cuerpo-correo", title: c.asunto || "Correo",
+    sandbox: "allow-same-origin allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer",
+    srcdoc: documentoCorreo(c.cuerpo || "", c.html),
+  });
+  ajustarAlto(iframe);
+  const para = c.nombre ? `${c.nombre} <${c.para}>` : c.para;
+  return el("article", { class: "correo-gmail" },
+    c.asunto ? el("h4", { class: "asunto-correo" }, c.asunto) : null,
+    el("p", { class: "cabecera-correo" },
+      c.de ? [el("strong", {}, c.de), " "] : null,
+      para ? el("span", { class: "tenue" }, `para ${para}`) : null,
+      c.enviado === false ? el("span", { class: "estado modo simulacion" }, "no se envió") : null),
+    aviso ? el("p", { class: "aviso-correo tenue" }, aviso) : null,
+    iframe);
+}
+
+const MARCA_CORREO = "@@correo ";
+
+/**
+ * La salida de un trabajo con sus correos dibujados: el texto va coloreado
+ * como siempre y cada línea `@@correo` se vuelve un correo plegable. Sin
+ * correos es la caja de siempre; con correos, una caja más alta, para no leer
+ * un correo entero dentro de un scroll chico.
+ */
+export function salidaConCorreos(texto, clase = "salida") {
+  if (!texto.split("\n").some((l) => l.startsWith(MARCA_CORREO))) return salidaColoreada(texto, clase);
+  const partes = [];
+  let lineas = [];
+  let correos = null;
+  const cerrarTexto = () => {
+    if (lineas.join("").trim()) partes.push(salidaColoreada(lineas.join("\n").replace(/^\n+|\n+$/g, ""), clase));
+    lineas = [];
+  };
+  for (const linea of texto.split("\n")) {
+    let c = null;
+    if (linea.startsWith(MARCA_CORREO)) {
+      try { c = JSON.parse(linea.slice(MARCA_CORREO.length)); } catch { c = null; }
+    }
+    if (!c) {
+      if (linea.trim()) correos = null;
+      lineas.push(linea);
+      continue;
+    }
+    cerrarTexto();
+    if (!correos) {
+      correos = el("div", { class: "correos-trabajo" });
+      partes.push(correos);
+    }
+    correos.append(el("details", { class: "correo-plegable" },
+      el("summary", {}, el("span", { class: "tenue" }, c.enviado ? "Enviado a " : "Para "),
+        c.nombre || c.para, el("span", { class: "tenue" }, ` · ${c.asunto}`)),
+      vistaCorreo({ ...c, enviado: c.enviado ? undefined : false })));
+  }
+  cerrarTexto();
+  return el("div", { class: `${clase} con-correos` }, partes);
+}
+
 // ---------------------------------------------------------------- trabajos
 // Pedir un trabajo al motor, mirar su salida en vivo y listar los últimos.
 // Lo usan Tests Semanales y Tareas.
@@ -474,7 +585,7 @@ function vistaTrabajo(t, extra, precios = {}) {
     consumoDe(t, precios),
     tecnico ? el("details", { class: "detalle-tecnico" }, el("summary", {}, "Detalle técnico"),
       salidaColoreada(tecnico, "salida tecnica")) : null,
-    salidaColoreada(resto.trim() ? resto : esperando),
+    resto.trim() ? salidaConCorreos(resto) : salidaColoreada(esperando),
     cierreTrabajo(t, cuenta, simulacion),
     extra ? extra(t) : null,
   ].filter(Boolean);
@@ -518,10 +629,17 @@ export async function seguirTrabajo(id, destino, { extra, alTerminar } = {}) {
   const [t, precios] = await Promise.all([api(`/api/trabajos/${id}`), preciosApi()]);
   // Se redibuja cada 1,5 s: el detalle técnico queda como lo dejó quien mira.
   const abierto = destino.querySelector("details.detalle-tecnico")?.open;
+  const correosAbiertos = [...destino.querySelectorAll("details.correo-plegable")].map((d) => d.open);
+  const previa = destino.querySelector(":scope > .salida:not(.tecnica)");
+  const arriba = previa ? previa.scrollTop : 0;
+  const alFinal = !previa || previa.scrollTop + previa.clientHeight >= previa.scrollHeight - 30;
   destino.replaceChildren(...vistaTrabajo(t, extra, precios));
   if (abierto) destino.querySelector("details.detalle-tecnico")?.setAttribute("open", "");
-  const pre = destino.querySelector("pre.salida:not(.tecnica)");
-  if (pre) pre.scrollTop = pre.scrollHeight;
+  destino.querySelectorAll("details.correo-plegable").forEach((d, i) => { if (correosAbiertos[i]) d.open = true; });
+  // Sigue la cola de la salida solo si quien mira ya estaba al final: si subió
+  // a leer un correo, no se le mueve.
+  const caja = destino.querySelector(":scope > .salida:not(.tecnica)");
+  if (caja) caja.scrollTop = alFinal ? caja.scrollHeight : arriba;
   if (!ESTADOS_FINALES.has(t.estado)) {
     destino._seguimiento = setTimeout(() => seguirConReintentos(id, destino, { extra, alTerminar }), 1500);
   } else if (alTerminar) {

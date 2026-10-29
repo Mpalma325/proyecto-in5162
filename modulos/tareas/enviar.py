@@ -19,6 +19,7 @@ from modulos import datos as _datos
 
 from . import config, storage
 from modulos.mail import enviar_correo
+from modulos.mail.vista import mostrar_correo
 from modulos.progreso import avanzar
 
 
@@ -87,8 +88,7 @@ def main(tarea: str, dry_run: bool = False) -> None:
 
         if dry_run:
             print(f"\n→ A: {fila['alumno_correo']}")
-            print(f"  Asunto: {asunto}")
-            print(f"  Cuerpo: {cuerpo[:200]}...")
+            mostrar_correo(fila["alumno_correo"], asunto, cuerpo, nombre=fila.get("alumno_nombre", ""))
             continue
 
         try:

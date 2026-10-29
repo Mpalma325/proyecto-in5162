@@ -9,6 +9,7 @@ from modulos.datos import esquema as _esquema
 
 from . import config
 from modulos.mail import enviar_correo, buscar_respuestas_semana, marcar_leido
+from modulos.mail.vista import mostrar_correo
 from modulos.datos import candidatos as _candidatos
 from .ia_prompts import evaluar_respuesta
 from .preguntas import cargar_semana, SemanaInfo
@@ -218,6 +219,10 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
                     )
                 except Exception as e:
                     print(f"     ✗ Error mandando correo de duplicado: {e}")
+            else:
+                mostrar_correo(correo_alumno, asunto_respuesta,
+                               _construir_cuerpo_duplicado(template_duplicado, nombre),
+                               html=True, nombre=nombre)
 
             procesados.append(corr["uid"])
             continue
@@ -233,6 +238,9 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
 
         if dry_run:
             print(f"→ {nombre}: evaluaría ({len(respuesta_alumno)} chars) [{grupo}]")
+            # Como en la corrida real: una segunda respuesta suya recibe el
+            # correo de duplicado, y la simulación tiene que mostrarlo.
+            ya_evaluados_en_esta_corrida.add(correo_alumno.lower())
             continue
 
         try:

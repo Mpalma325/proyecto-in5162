@@ -13,6 +13,7 @@ from email.mime.text import MIMEText
 from email.utils import make_msgid
 
 from . import credenciales
+from .vista import en_motor, mostrar_correo
 
 
 def enviar_correo(destinatario: str, asunto: str, cuerpo: str,
@@ -43,4 +44,8 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str,
         servidor.login(c["remitente"], c["password"])
         servidor.send_message(msg)
 
+    # En el motor, lo enviado queda en la salida del trabajo y la página lo
+    # muestra como le llegó al alumno. En la consola no: serían cuerpos enteros.
+    if en_motor():
+        mostrar_correo(destinatario, asunto, cuerpo, html=html, remitente=c["remitente"], enviado=True)
     return message_id
