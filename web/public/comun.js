@@ -195,6 +195,70 @@ export function salidaColoreada(texto, clase = "salida") {
   return pre;
 }
 
+// ---------------------------------------------------------------- texto de correos
+// Lo que se leyó del buzón viene cortado cada ~75 caracteres, como lo parte un
+// cliente de correo: el párrafo quedaba roto en líneas a media frase.
+
+const ITEM = /^\s*([-*•]|\d+[.)]|[A-Za-z][.)]|P\d+\.?)(\s|$)/;
+const ETIQUETA = /^\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{2,40}):\s*(.*)$/;
+
+/** Une las líneas que el correo cortó por largo; deja los saltos de verdad. */
+export function desenvolver(texto) {
+  const lineas = String(texto ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const salida = [];
+  for (const linea of lineas) {
+    const previa = salida[salida.length - 1];
+    // Es la continuación de la misma frase si la línea anterior no cerró la
+    // frase y esta no abre un ítem ni una etiqueta, y además la anterior tiene
+    // el largo de un corte automático o esta sigue en minúscula. Algunos
+    // clientes vuelven a cortar lo ya cortado y dejan una línea larga seguida
+    // de una o dos palabras ("…es solo 8" / "eventos por unidad").
+    const continua = previa !== undefined && previa.trim() && !/[.:;!?]$/.test(previa.trimEnd())
+      && linea.trim() && !ITEM.test(linea) && !ETIQUETA.test(linea);
+    const corte = continua && ((previa.length >= 55 && previa.length <= 80) || /^\s*[a-záéíóúñü(“"]/.test(linea));
+    if (corte) salida[salida.length - 1] = `${previa.trimEnd()} ${linea.trim()}`;
+    else salida.push(linea);
+  }
+  return salida.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * La respuesta del alumno para leerla: sin cortes de línea y sin el
+ * "El vie, … escribió:" que algunos clientes dejan al final, antes de la cita.
+ */
+export const respuestaLegible = (texto) =>
+  desenvolver(texto).replace(/\n*\s*(El|On) [^\n]{5,160}(escribió|wrote):\s*$/, "").trimEnd();
+
+/**
+ * Una corrección guardada como texto (las recuperadas del buzón) vuelta al
+ * formato del correo: "RESPUESTA:" sola en su línea y el contenido abajo era
+ * <b>RESPUESTA:</b> contenido en el original.
+ */
+export function evaluacionDeTexto(texto) {
+  const lineas = desenvolver(texto).split("\n");
+  const parrafos = [];
+  let actual = [];
+  const cerrar = () => { if (actual.length) parrafos.push(`<p>${actual.join("<br>\n")}</p>`); actual = []; };
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i].trim();
+    if (!linea) { cerrar(); continue; }
+    if (/^EVALUACI[OÓ]N SEG[UÚ]N PAUTA:?$/i.test(linea)) { cerrar(); parrafos.push(`<p><strong>${escapar(linea)}</strong></p>`); continue; }
+    if (/^(P\d+|[A-Z])\.$/.test(linea)) { cerrar(); actual.push(`<u>${escapar(linea)}</u>`); continue; }
+    const m = linea.match(ETIQUETA);
+    if (m) {
+      let valor = m[2];
+      // El valor venía en la línea siguiente.
+      if (!valor && lineas[i + 1]?.trim() && !ETIQUETA.test(lineas[i + 1])) valor = lineas[++i].trim();
+      if (/^(NOTA FINAL|PUNTAJE TOTAL|ORIGINALIDAD|JUSTIFICACI[OÓ]N ORIGINALIDAD|RETROALIMENTACI[OÓ]N)$/.test(m[1])) cerrar();
+      actual.push(`<b>${escapar(m[1])}:</b> ${escapar(valor)}`);
+      continue;
+    }
+    actual.push(escapar(linea));
+  }
+  cerrar();
+  return parrafos.join("\n");
+}
+
 // ---------------------------------------------------------------- correos
 // Un correo se muestra como lo ve el alumno en Gmail: el HTML dibujado, no sus
 // etiquetas. Va en un iframe sin scripts (como Gmail, que tampoco los corre);
@@ -259,8 +323,7 @@ export function vistaCorreo(c, { aviso } = {}) {
     c.asunto ? el("h4", { class: "asunto-correo" }, c.asunto) : null,
     el("p", { class: "cabecera-correo" },
       c.de ? [el("strong", {}, c.de), " "] : null,
-      para ? el("span", { class: "tenue" }, `para ${para}`) : null,
-      c.enviado === false ? el("span", { class: "estado modo simulacion" }, "no se envió") : null),
+      para ? el("span", { class: "tenue" }, `para ${para}`) : null,),
     aviso ? el("p", { class: "aviso-correo tenue" }, aviso) : null,
     iframe);
 }
@@ -300,7 +363,7 @@ export function salidaConCorreos(texto, clase = "salida") {
     correos.append(el("details", { class: "correo-plegable" },
       el("summary", {}, el("span", { class: "tenue" }, c.enviado ? "Enviado a " : "Para "),
         c.nombre || c.para, el("span", { class: "tenue" }, ` · ${c.asunto}`)),
-      vistaCorreo({ ...c, enviado: c.enviado ? undefined : false })));
+      vistaCorreo(c)));
   }
   cerrarTexto();
   return el("div", { class: `${clase} con-correos` }, partes);
@@ -810,7 +873,7 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
           el("strong", {}, c.nombre)),
           el("span", { class: "tenue" }, [cuando(c.llegada), c.grupo, c.pregunta].filter(Boolean).join(" · ")),
           c.ya_tiene_nota ? el("span", { class: "estado fallido" }, `ya tiene nota ${c.ya_tiene_nota}`) : null),
-        el("div", { class: "contenido respuesta" }, c.respuesta))),
+        el("div", { class: "contenido respuesta" }, respuestaLegible(c.respuesta)))),
       el("div", { class: "acciones" }, boton));
   }).catch(() => noPude("no hubo conexión o el archivo vino dañado"));
   return nodo;

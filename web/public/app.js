@@ -6,7 +6,7 @@
 // La excepción es la franja de la semana en curso, que es solo contar filas de
 // la última semana enviada y no existe en Streamlit (ver semanaActual()).
 
-import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo, vistaCorreo } from "./comun.js";
+import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo, evaluacionDeTexto, respuestaLegible, vistaCorreo } from "./comun.js";
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
 import { leerSemana } from "./preguntas.js";
 import { seccionSabana } from "./sabana.js";
@@ -136,8 +136,8 @@ const fechaHora = (d) => d.toLocaleString("es-CL", { day: "2-digit", month: "2-d
 /**
  * La corrección como le llegó al alumno: dentro de correo_correccion.md si el
  * semestre lo tiene, con el asunto del hilo. El cuerpo enviado no se guarda,
- * así que se rearma con la plantilla de hoy; las reconstruidas desde el buzón
- * son texto plano y se muestran así.
+ * así que se rearma con la plantilla de hoy. Las recuperadas del buzón son
+ * texto, y se les rearma el formato del correo.
  */
 function correoEvaluacion(c) {
   // Lo mismo que _normalizar_html_gpt y _construir_cuerpo_correccion (evaluar.py).
@@ -150,12 +150,13 @@ function correoEvaluacion(c) {
   const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
   return vistaCorreo({
     asunto: semana ? `Re: Evaluación de Progreso Individual Módulo ${c.Item}: ${semana.tema}` : "",
-    para: c.Correo, nombre: c.Nombre, html,
+    para: c.Correo, nombre: c.Nombre, html: true,
     // Con función: como texto de reemplazo, un "$&" o "$'" de la evaluación se interpretaría.
-    cuerpo: plantilla ? plantilla.replaceAll("{NOMBRE}", () => nombre).replaceAll("{EVALUACION}", () => evaluacion) : evaluacion,
+    cuerpo: plantilla ? plantilla.replaceAll("{NOMBRE}", () => nombre).replaceAll("{EVALUACION}", () => evaluacion)
+      : html ? evaluacion : evaluacionDeTexto(evaluacion),
   }, {
     aviso: plantilla ? "Rearmado con la plantilla actual del correo: el saludo o el pie pueden diferir de lo enviado."
-      : html ? null : "Texto recuperado del buzón: se ve sin el formato original.",
+      : html ? null : "Guardado como texto (recuperado del buzón): el formato se rearmó para leerlo.",
   });
 }
 
@@ -430,7 +431,7 @@ function tarjetaCasilla(c) {
       el("span", { class: "meta" }, `semana ${c.Item} · ${c.Grupo || "sin grupo"}`)),
     el("div", { class: "contenido" },
       c.Respuesta
-        ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, c.Respuesta)]
+        ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, respuestaLegible(c.Respuesta))]
         : el("p", { class: "tenue" }, c.Respondio ? "No hay texto de respuesta guardado." : "No respondió esta semana."),
       c.EvaluacionIA
         ? el("div", { class: "evaluacion" }, el("p", {}, el("strong", {}, "El correo que recibió")),
@@ -1015,7 +1016,7 @@ function fichaAlumno(correo) {
           el("ol", { class: "enunciados" }, enunciados.map((x) => el("li", {}, x)))]
         : null,
       c.Respuesta
-        ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, c.Respuesta)]
+        ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, respuestaLegible(c.Respuesta))]
         : el("p", { class: "tenue" }, "No hay texto de respuesta guardado."),
       c.EvaluacionIA
         ? [el("p", {}, el("strong", {}, "El correo que recibió")), correoEvaluacion({ ...c, Nombre: f.Nombre, Correo: f.Correo })]

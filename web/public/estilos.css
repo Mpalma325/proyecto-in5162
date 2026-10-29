@@ -74,7 +74,7 @@ tr:last-child td { border-bottom: 0; }
 details { border: 1px solid var(--linea); border-radius: 8px; background: var(--caja); margin: 8px 0; }
 summary { cursor: pointer; padding: 8px 12px; font-size: 14px; }
 details > .contenido { padding: 4px 14px 12px; }
-.respuesta { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.respuesta { white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
 
 button.descarga, a.descarga, label.descarga {
   display: inline-block; text-decoration: none;

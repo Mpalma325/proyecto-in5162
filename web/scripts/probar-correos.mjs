@@ -52,4 +52,20 @@ check("un cuerpo se muestra tal cual se envió, con vallas ``` incluidas", de(va
 check("el correo no puede pedir nada afuera (imágenes ni CSS remotos)",
   de(vallas, "iframe")[0].attrs.srcdoc.includes("default-src 'none'"));
 
+// Texto recuperado del buzón: cortes cada ~75 caracteres y etiquetas solas en su línea.
+const { desenvolver, evaluacionDeTexto, respuestaLegible } = await import(new URL("../public/comun.js", import.meta.url));
+const cortado = "Al usar mayores niveles de agregación se puede perder detalle necesario\npara decidir en el corto plazo.\n\n1. Primer punto\n2. Segundo";
+check("une las líneas que cortó el correo", desenvolver(cortado).startsWith("Al usar mayores niveles de agregación se puede perder detalle necesario para decidir"));
+check("respeta los párrafos y las listas", desenvolver(cortado).includes(".\n\n1. Primer punto\n2. Segundo"));
+check("une una línea larga seguida de unas palabras en minúscula",
+  desenvolver("mientras que la tasa media de la población que se observó en el periodo completo es solo 8\neventos por unidad.") ===
+  "mientras que la tasa media de la población que se observó en el periodo completo es solo 8 eventos por unidad.");
+check("no une una frase que terminó", desenvolver("Esto termina acá con un punto final bien puesto y de largo normal.\notra cosa").includes("\notra cosa"));
+const ev = evaluacionDeTexto("EVALUACIÓN SEGÚN PAUTA\nA.\nRESPUESTA:\nDice <algo> & más.\nEVALUACIÓN:\n2 / 3 puntos\nNOTA FINAL:\n6,5");
+check("las etiquetas van en negrita con su valor al lado", ev.includes("<b>RESPUESTA:</b> Dice &lt;algo&gt; &amp; más.")
+  && ev.includes("<b>EVALUACIÓN:</b> 2 / 3 puntos") && ev.includes("<b>NOTA FINAL:</b> 6,5"));
+check("el título y el apartado conservan su formato", ev.includes("<strong>EVALUACIÓN SEGÚN PAUTA</strong>") && ev.includes("<u>A.</u>"));
+check("se quita el 'El vie, … escribió:' del final de una respuesta",
+  respuestaLegible("Mi respuesta.\n\nEl vie, 21 ago 2026 a la(s) 12:01 p.m., <curso@ejemplo.cl> escribió:") === "Mi respuesta.");
+
 process.exit(fallas ? 1 : 0);
