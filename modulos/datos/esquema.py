@@ -50,6 +50,7 @@ COLUMNAS_LOG = [
     "RespondeA",      # id del mensaje al que este contesta; encadena la conversación
     "Ronda",          # 0 el ciclo normal, 1..N cada vuelta de tutoría
     "Modelo",         # qué modelo lo produjo
+    "Prompt",         # con qué versión del prompt: archivo@huella (modulos/ia/versiones.py)
     "TokensEntrada",  # lo que costó la llamada, para poder medirlo después
     "TokensSalida",
     "Nota", "Originalidad",

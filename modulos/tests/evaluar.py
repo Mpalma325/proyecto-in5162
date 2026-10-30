@@ -285,6 +285,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
                                  Ronda=0,
                                  MessageId=id_feedback or "",
                                  Modelo=meta.get("modelo") or config.MODELO,
+                                 Prompt=meta.get("prompt") or "",
                                  TokensEntrada=meta.get("prompt_tokens") or "",
                                  TokensSalida=meta.get("completion_tokens") or "",
                                  Nota=nota, Originalidad=originalidad,

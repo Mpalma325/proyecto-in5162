@@ -74,6 +74,7 @@ def ciclo_completo():
 
         titulo("4b. con correo_correccion.md, la corrección va dentro de la plantilla")
         from modulos.tests import config as config_tests
+        from modulos.ia import Texto
         (config_tests.PROMPTS / "correo_correccion.md").write_text(
             "<div>{EVALUACION}<hr><p>Cierre fijo para {NOMBRE}.</p></div>", encoding="utf-8")
         tercero = datos.alumnos.correos(sid)[2]
@@ -81,7 +82,9 @@ def ciclo_completo():
         # La IA a veces envuelve el HTML en ```html: no tiene que llegar así al alumno.
         with patch("modulos.tests.evaluar.buscar_respuestas_semana",
                    return_value=respuestas_falsas([tercero], 5, cantidad=1)), \
-             patch("modulos.tests.evaluar.evaluar_respuesta", return_value="```html\n" + nota_ia("6,0") + "\n```"), \
+             patch("modulos.tests.evaluar.evaluar_respuesta",
+                   return_value=Texto("```html\n" + nota_ia("6,0") + "\n```",
+                                      {"prompt": "evaluar_respuesta.md@1a2b3c4d"})), \
              patch("modulos.tests.evaluar.enviar_correo",
                    side_effect=lambda *a, **k: (cuerpos.append(a[2]), "<id-4b@x>")[1]):
             evaluar.main(5, dry_run=False)
@@ -92,6 +95,8 @@ def ciclo_completo():
                     if e["Correo"].lower() == tercero.lower()]
         check("el log guarda solo la corrección, sin el cierre",
               len(guardada) == 1 and "Cierre fijo" not in guardada[0]["EvaluacionIA"], guardada)
+        check("el log anota con qué versión del prompt se corrigió",
+              len(guardada) == 1 and guardada[0].get("Prompt") == "evaluar_respuesta.md@1a2b3c4d", guardada)
         check("la nota sale igual de la corrección", datos.notas.estado(tercero, datos.TESTS, "5", sid)["Nota"] == "6,0")
 
 

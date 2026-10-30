@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from modulos import ia  # noqa: E402
+from modulos.ia import versiones  # noqa: E402
 
 from . import config  # noqa: E402
 
@@ -31,7 +32,11 @@ def evaluar_respuesta(preguntas: list[str], pautas: list[str],
     viejas con un prompt candidato; el flujo del curso nunca la pasa.
     """
     if plantilla is None:
-        plantilla = (config.PROMPTS / "evaluar_respuesta.md").read_text(encoding="utf-8")
+        ruta = config.PROMPTS / "evaluar_respuesta.md"
+        plantilla = ruta.read_text(encoding="utf-8")
+        version = versiones.anotar(ruta, plantilla)
+    else:
+        version = f"candidato@{versiones.huella(plantilla)}"
     system_prompt = (
         plantilla
         .replace("{{PREGUNTAS}}", _bloque(preguntas))
@@ -45,7 +50,9 @@ def evaluar_respuesta(preguntas: list[str], pautas: list[str],
         "<<<FIN_RESPUESTA>>>"
     )
 
-    return ia.completar(system_prompt, user_msg).con_meta()
+    resp = ia.completar(system_prompt, user_msg)
+    resp.meta["prompt"] = version
+    return resp.con_meta()
 
 
 def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: str,
@@ -57,7 +64,9 @@ def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: st
     le corrigió— porque sin eso el modelo no puede explicar por qué le faltó
     puntaje. El `historial` son las vueltas anteriores, si las hubo.
     """
-    plantilla = (config.PROMPTS / "tutoria.md").read_text(encoding="utf-8")
+    ruta = config.PROMPTS / "tutoria.md"
+    plantilla = ruta.read_text(encoding="utf-8")
+    version = versiones.anotar(ruta, plantilla)
     system_prompt = plantilla.replace("{NOMBRE}", (nombre or "").split()[0] if nombre else "")
 
     partes = [
@@ -78,7 +87,9 @@ def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: st
         f"{consulta}\n"
         "<<<FIN_MENSAJE>>>"
     )
-    return ia.completar(system_prompt, "\n\n".join(partes)).con_meta()
+    resp = ia.completar(system_prompt, "\n\n".join(partes))
+    resp.meta["prompt"] = version
+    return resp.con_meta()
 
 
 def generar_resumen(preguntas: list[str], pautas: list[str],
