@@ -31,7 +31,7 @@ COLUMNAS = [
     "Enviado", "FechaEnvio", "MessageIdEnvio",
     "Respondio", "FechaRespuesta", "Respuesta", "LargoRespuesta",
     "FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad",
-    "Modelo", "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML",
+    "Modelo", "Versiones", "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML",
     "AjusteManual", "MotivoAjuste", "Repreguntas", "Tutorias",
 ]
 
@@ -130,6 +130,7 @@ def construir(semestre_id: str | None = None) -> list[dict]:
                 "Nota": "" if p["Nota"] is None else p["Nota"], "NotaTexto": p["NotaTexto"],
                 "NotaDelModelo": evaluacion.get("Nota", ""), "Originalidad": p["Originalidad"],
                 "Modelo": p["Modelo"] or evaluacion.get("Modelo", ""),
+                "Versiones": evaluacion.get("Versiones", ""),
                 "TokensEntrada": evaluacion.get("TokensEntrada", ""), "TokensSalida": evaluacion.get("TokensSalida", ""),
                 "EvaluacionTexto": _texto_plano(p["EvaluacionIA"]), "EvaluacionHTML": p["EvaluacionIA"],
                 "AjusteManual": "sí" if ajuste else "no", "MotivoAjuste": ajuste.get("Detalle", ""),

@@ -1,10 +1,10 @@
 """
-Cada corrección anota con qué versión del prompt se hizo.
+Cada corrección anota con qué prompt, pauta y parámetros se hizo.
 
 En 2026-2 el criterio de originalidad cambió entre las semanas 6 y 7 y no quedó
 registrado: solo se notaba en las notas. Acá se prueba que la huella es estable
 (no cambia por los fines de línea), que una versión nueva se guarda una sola
-vez y que la huella llega a la metadata de la llamada.
+vez y que las huellas llegan a la metadata de la llamada.
 """
 
 import sys
@@ -34,18 +34,32 @@ with tempfile.TemporaryDirectory() as tmp:
     check("los fines de línea de Windows no cambian la huella",
           versiones.anotar(ruta, "Criterio A\r\npuntaje 0 a 3\r\n") == v1)
     check("la misma versión no se guarda dos veces", len(list(usados.iterdir())) == 1)
+    v_crlf = versiones.guardar(prompts.parent, "otro.md", "Uno\r\nDos\r\n")
+    guardado = (usados / f"otro@{v_crlf.split('@')[1]}.md").read_bytes().decode("utf-8")
+    check("un texto con \\r\\n se guarda tal cual y conserva la huella de su nombre",
+          guardado == "Uno\r\nDos\r\n" and versiones.huella(guardado) == v_crlf.split("@")[1], repr(guardado))
+    (usados / f"otro@{v_crlf.split('@')[1]}.md").unlink()
     v2 = versiones.anotar(ruta, "Criterio B (originalidad nueva)\npuntaje 0 a 3\n")
     check("un cambio en el prompt da otra huella y otro archivo", v2 != v1 and len(list(usados.iterdir())) == 2)
 
-    titulo("2. la llamada de corrección lleva la versión en su metadata")
+    titulo("2. la corrección anota prompt, pauta y parámetros")
     ruta.write_text("Evalúa {{PREGUNTAS}} con {{PAUTAS}}", encoding="utf-8")
-    falsa = lambda *a, **k: ia.Respuesta("<p>NOTA FINAL: 6,0</p>", {"modelo": "m"})  # noqa: E731
+    falsa = lambda *a, **k: ia.Respuesta("<p>NOTA FINAL: 6,0</p>",  # noqa: E731
+                                         {"modelo": "m", "temperatura": 0.2, "max_tokens": 3000, "razonamiento": None})
     with patch.object(ia_prompts.config, "PROMPTS", prompts), patch.object(ia_prompts.ia, "completar", side_effect=falsa):
         texto = ia_prompts.evaluar_respuesta(["¿P?"], ["pauta"], "respuesta inventada")
+        otra_pauta = ia_prompts.evaluar_respuesta(["¿P?"], ["pauta corregida"], "respuesta inventada")
         candidato = ia_prompts.evaluar_respuesta(["¿P?"], ["pauta"], "respuesta inventada", plantilla="otro {{PREGUNTAS}}")
-    check("evaluación con el prompt del semestre", texto.meta.get("prompt") ==
-          versiones.anotar(ruta, "Evalúa {{PREGUNTAS}} con {{PAUTAS}}"), texto.meta)
+    partes = texto.meta.get("versiones", "").split("; ")
+    check("prompt del semestre, pauta y parámetros, en ese orden",
+          len(partes) == 4 and partes[0] == versiones.anotar(ruta, "Evalúa {{PREGUNTAS}} con {{PAUTAS}}")
+          and partes[1].startswith("pauta.md@") and partes[2:] == ["temperatura=0.2", "max_tokens=3000"], partes)
+    guardada = usados / f"pauta@{partes[1].split('@')[1]}.md"
+    check("la pauta con que se corrigió queda guardada para leerla después",
+          guardada.exists() and "P1. pauta" in guardada.read_text(encoding="utf-8"))
+    check("si la pauta cambia, cambia su huella",
+          otra_pauta.meta["versiones"].split("; ")[1] != partes[1], otra_pauta.meta)
     check("un prompt candidato (Probar criterio) se marca como candidato",
-          candidato.meta.get("prompt", "").startswith("candidato@"), candidato.meta)
+          candidato.meta.get("versiones", "").startswith("candidato@"), candidato.meta)
 
 sys.exit(resultado())

@@ -84,7 +84,7 @@ def ciclo_completo():
                    return_value=respuestas_falsas([tercero], 5, cantidad=1)), \
              patch("modulos.tests.evaluar.evaluar_respuesta",
                    return_value=Texto("```html\n" + nota_ia("6,0") + "\n```",
-                                      {"prompt": "evaluar_respuesta.md@1a2b3c4d"})), \
+                                      {"versiones": "evaluar_respuesta.md@1a2b3c4d; pauta.md@5e6f7a8b"})), \
              patch("modulos.tests.evaluar.enviar_correo",
                    side_effect=lambda *a, **k: (cuerpos.append(a[2]), "<id-4b@x>")[1]):
             evaluar.main(5, dry_run=False)
@@ -95,8 +95,12 @@ def ciclo_completo():
                     if e["Correo"].lower() == tercero.lower()]
         check("el log guarda solo la corrección, sin el cierre",
               len(guardada) == 1 and "Cierre fijo" not in guardada[0]["EvaluacionIA"], guardada)
-        check("el log anota con qué versión del prompt se corrigió",
-              len(guardada) == 1 and guardada[0].get("Prompt") == "evaluar_respuesta.md@1a2b3c4d", guardada)
+        from modulos.ia import versiones
+        plantilla = versiones.anotar(config_tests.PROMPTS / "correo_correccion.md",
+                                     "<div>{EVALUACION}<hr><p>Cierre fijo para {NOMBRE}.</p></div>")
+        check("el log anota con qué prompt, pauta y plantilla del correo se corrigió",
+              len(guardada) == 1 and guardada[0].get("Versiones")
+              == f"evaluar_respuesta.md@1a2b3c4d; pauta.md@5e6f7a8b; {plantilla}", guardada)
         check("la nota sale igual de la corrección", datos.notas.estado(tercero, datos.TESTS, "5", sid)["Nota"] == "6,0")
 
 

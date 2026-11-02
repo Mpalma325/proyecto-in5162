@@ -11,6 +11,7 @@ from . import config
 from modulos.mail import enviar_correo, buscar_respuestas_semana, marcar_leido
 from modulos.mail.vista import mostrar_correo
 from modulos.datos import candidatos as _candidatos
+from modulos.ia import versiones
 from .ia_prompts import evaluar_respuesta
 from .preguntas import cargar_semana, SemanaInfo
 from modulos.progreso import avanzar
@@ -157,6 +158,14 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
     template_correccion = _cargar_template_correccion()
     if template_correccion is None:
         print("Sin correo_correccion.md: el correo lleva solo la corrección de la IA.")
+    # La plantilla también es parte de lo que recibe el alumno: va al log junto
+    # al prompt y la pauta. Una simulación no guarda versiones.
+    if dry_run:
+        version_correo = ""
+    elif template_correccion is None:
+        version_correo = "sin correo_correccion.md"
+    else:
+        version_correo = versiones.anotar(config.PROMPTS / "correo_correccion.md", template_correccion)
     asunto_respuesta = _construir_asunto_respuesta(info)
 
     procesados = []
@@ -285,7 +294,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
                                  Ronda=0,
                                  MessageId=id_feedback or "",
                                  Modelo=meta.get("modelo") or config.MODELO,
-                                 Prompt=meta.get("prompt") or "",
+                                 Versiones=versiones.juntar(meta.get("versiones"), version_correo),
                                  TokensEntrada=meta.get("prompt_tokens") or "",
                                  TokensSalida=meta.get("completion_tokens") or "",
                                  Nota=nota, Originalidad=originalidad,

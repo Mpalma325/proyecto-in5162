@@ -147,7 +147,7 @@ def main(semana: int | None = None, dry_run: bool = False) -> None:
                              Ronda=ronda, RespondeA=corr.get("message_id", ""),
                              MessageId=id_respuesta or "",
                              Modelo=meta.get("modelo") or config.MODELO,
-                             Prompt=meta.get("prompt") or "",
+                             Versiones=meta.get("versiones") or "",
                              TokensEntrada=meta.get("prompt_tokens") or "",
                              TokensSalida=meta.get("completion_tokens") or "",
                              EvaluacionIA=html)

@@ -22,6 +22,11 @@ def _bloque(items: list[str]) -> str:
     return "\n".join(f"P{i+1}. {p}" for i, p in enumerate(items))
 
 
+def _versiones(prompt: str, preguntas: list[str], pautas: list[str], meta: dict) -> str:
+    pauta = versiones.pauta(config.PROMPTS.parent, preguntas, pautas)
+    return versiones.juntar(prompt, pauta, versiones.parametros(meta))
+
+
 def evaluar_respuesta(preguntas: list[str], pautas: list[str],
                       respuesta_alumno: str,
                       plantilla: str | None = None) -> ia.Texto:
@@ -51,7 +56,7 @@ def evaluar_respuesta(preguntas: list[str], pautas: list[str],
     )
 
     resp = ia.completar(system_prompt, user_msg)
-    resp.meta["prompt"] = version
+    resp.meta["versiones"] = _versiones(version, preguntas, pautas, resp.meta)
     return resp.con_meta()
 
 
@@ -88,7 +93,7 @@ def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: st
         "<<<FIN_MENSAJE>>>"
     )
     resp = ia.completar(system_prompt, "\n\n".join(partes))
-    resp.meta["prompt"] = version
+    resp.meta["versiones"] = _versiones(version, preguntas, pautas, resp.meta)
     return resp.con_meta()
 
 

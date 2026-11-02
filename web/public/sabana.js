@@ -15,7 +15,7 @@ const GRUPOS = [
   ["Pregunta", ["Tema", "FechaEntrega", "NumPreguntas", "Pregunta", "Pauta", "SegundaOportunidad"]],
   ["Envío y respuesta", ["Estado", "Enviado", "FechaEnvio", "MessageIdEnvio", "Respondio", "FechaRespuesta",
     "Respuesta", "LargoRespuesta"]],
-  ["Evaluación", ["FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad", "Modelo",
+  ["Evaluación", ["FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad", "Modelo", "Versiones",
     "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML", "AjusteManual", "MotivoAjuste"]],
   ["Tutoría", ["Repreguntas", "Tutorias"]],
 ];

@@ -23,11 +23,14 @@ from openai import OpenAI
 from modulos import datos as _datos
 from modulos import ia as _ia
 from modulos.datos import candidatos as _candidatos
+from modulos.ia import versiones
 
 from . import config, storage
 from .escala import validar_nota
 from modulos.mail import enviar_correo
 from modulos.progreso import avanzar
+
+MAX_TOKENS = 1500
 
 
 def _cargar_prompt_correccion() -> str:
@@ -39,6 +42,19 @@ def _cargar_prompt_correccion() -> str:
         .replace("{NOTA_MAX}", str(config.NOTA_MAX))
         .replace("{NOTA_INT_ALTA}", str(round(config.NOTA_MIN + (config.NOTA_MAX - config.NOTA_MIN) * 0.7, 1)))
         .replace("{NOTA_INT_MEDIA}", str(round(config.NOTA_MIN + (config.NOTA_MAX - config.NOTA_MIN) * 0.5, 1)))
+    )
+
+
+def _versiones(fila: dict, template_feedback: str | None) -> str:
+    """Con qué se corrigió esta respuesta, para el log: el prompt, la pregunta y
+    la pauta del alumno, la escala, los parámetros y el correo, si se envía."""
+    ruta = config.PROMPTS / "corregir_respuesta.md"
+    return versiones.juntar(
+        versiones.anotar(ruta, ruta.read_text(encoding="utf-8")),
+        versiones.pauta(config.PROMPTS.parent, [fila["pregunta"]], [fila["pauta"]]),
+        f"escala={config.NOTA_MIN}-{config.NOTA_MAX}",
+        f"temperatura={config.TEMPERATURA}", f"max_tokens={MAX_TOKENS}",
+        versiones.anotar(config.PROMPTS / "correo_feedback.md", template_feedback) if template_feedback else "",
     )
 
 
@@ -59,7 +75,7 @@ def _corregir_una(client: OpenAI, system_prompt: str, fila: dict) -> dict:
             {"role": "user", "content": user_msg},
         ],
         temperature=config.TEMPERATURA,
-        max_completion_tokens=1500,
+        max_completion_tokens=MAX_TOKENS,
         response_format={"type": "json_object"},
     )
     # Esta llamada no pasa por ia.completar(): su consumo se suma a mano para
@@ -153,6 +169,7 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
                                         fila["tarea"], str(nota))
             _datos.log.registrar("evaluacion", _datos.TAREAS, fila["tarea"],
                                  fila["alumno_correo"], Modelo=config.MODELO,
+                                 Versiones=_versiones(fila, template_feedback if enviar else None),
                                  Nota=str(nota), EvaluacionIA=comentario)
         except Exception as _e:  # noqa: BLE001
             print(f"     ⚠ no pude registrar en el esquema nuevo: {_e}")

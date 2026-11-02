@@ -62,6 +62,13 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
     check("notas.csv con nota",
           sum(1 for f in datos.notas.leer(sid, datos.TAREAS, "T1") if f["Nota"]) == 2)
     check("log: 2 evaluaciones", len(datos.log.leer(sid, evento="evaluacion")) == 2)
+    anotadas = {e.get("Versiones", "") for e in datos.log.leer(sid, evento="evaluacion")}
+    check("log: cada evaluación anota con qué prompt, pauta, escala y correo se hizo",
+          len(anotadas) >= 1 and all(p in a for a in anotadas
+                                     for p in ("corregir_respuesta.md@", "pauta.md@", "escala=", "correo_feedback.md@")),
+          anotadas)
+    check("con --no-enviar no se anota un correo que no salió",
+          "correo_feedback" not in corregir._versiones({"pregunta": "¿P?", "pauta": "pauta"}, None))
 
     titulo("4. tests y tareas conviven en las mismas tablas")
     datos.notas.marcar_enviado("ana@x.cl", datos.TESTS, "1", semestre_id=sid)
