@@ -288,6 +288,23 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-criterio.mjs corre", False, r.stderr[-300:])
 
+titulo("7d3. versiones anteriores de un prompt: cuáles hay, dónde se usó cada una y qué cambia")
+# La huella la calcula el Python de verdad: si cambia cómo se normaliza el
+# texto, la página dejaría de reconocer cuál es la versión vigente.
+if shutil.which("node"):
+    from modulos.ia import versiones as _versiones
+    texto_prueba = "  Criterio de la semana\r\nNOTA FINAL: 1 a 7, ñandú\r\n\r\n"
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-historial.mjs"),
+                        texto_prueba, _versiones.huella(texto_prueba)],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        if nombre:
+            check(nombre, estado == "OK", linea)
+    # Si el script se cae a mitad de camino ya imprimió algunos OK: sin "todo OK" al final, falla.
+    if r.returncode or "todo OK" not in r.stdout:
+        check("probar-historial.mjs termina sin errores", False, r.stderr[-300:] or r.stdout[-300:])
+
 titulo("7e. editar un prompt avisa antes de guardar algo que haría fallar un envío")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-prompts.mjs")],

@@ -663,3 +663,40 @@ details.fila-comparacion > summary .cambio { font-variant-numeric: tabular-nums;
 .tabla-originalidad th, .tabla-originalidad td { padding: 4px 12px; border-bottom: 1px solid var(--linea); text-align: right; }
 .tabla-originalidad th:first-child { text-align: left; }
 .tabla-originalidad tr:last-child > * { border-bottom: 0; }
+
+/* ---------------------------------------------------------- versiones anteriores de un prompt */
+details.versiones-prompt { margin-top: 16px; }
+details.versiones-prompt > summary { font-weight: 600; }
+.lista-versiones { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+details.version-prompt { margin: 0; background: var(--fondo); }
+details.version-prompt > summary { font-size: 14px; overflow-wrap: anywhere; }
+details.version-prompt .huella { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.marca-vigente { color: var(--ok); font-weight: 600; }
+/* Solo lectura: un bloque con scroll propio, no un cuadro editable. Las líneas
+   largas se parten para que en celular la página no se deslice de lado. */
+pre.texto-version {
+  margin: 6px 0; padding: 10px 12px; max-height: 50vh; overflow: auto;
+  background: var(--caja); border: 1px solid var(--linea); border-radius: 8px;
+  font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+pre.texto-version:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.diff { margin: 4px 0 8px; }
+.leyenda-diff { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 4px 0 8px; font-size: 13px; }
+.leyenda-diff .linea-diff { border-radius: 6px; padding: 1px 8px; }
+.lineas-diff {
+  border: 1px solid var(--linea); border-radius: 8px; overflow: auto; max-height: 60vh; background: var(--caja);
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+}
+.lineas-diff .linea-diff { display: flex; gap: 8px; padding: 0 10px 0 0; }
+/* El signo va en su propia columna, separada: así un "- " del prompt (una viñeta) no se confunde con una línea quitada. */
+.linea-diff .signo {
+  flex: none; width: 2.5ch; text-align: center; font-weight: 700; user-select: none;
+  border-right: 1px solid var(--linea);
+}
+.linea-diff .texto-linea { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.5em; }
+/* El signo (+ o −) dice el tipo; el color y el borde lo refuerzan. */
+.linea-diff.agrega { background: var(--ok-fondo); color: var(--ok); box-shadow: inset 3px 0 0 var(--ok); }
+.linea-diff.quita { background: var(--aviso-fondo); color: var(--aviso); box-shadow: inset 3px 0 0 var(--aviso); }
+.linea-diff.quita .texto-linea { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+.linea-diff.igual { color: var(--tenue); }
+.linea-diff.omitidas { padding: 2px 10px 2px 22px; border-block: 1px dashed var(--linea); font-family: inherit; }

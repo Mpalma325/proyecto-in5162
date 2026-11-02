@@ -6,8 +6,11 @@
 // escriben los trabajos, y el Worker rechaza cualquier otra ruta.
 
 import {
-  api, barraPestanas, caja, conDetalle, el, navegacion, resumenCsv, tareasConocidas, textoEdicion,
+  api, barraPestanas, caja, conDetalle, el, fechaCorta, navegacion, resumenCsv, tareasConocidas, textoEdicion,
 } from "./comun.js";
+import {
+  contarCambios, diffLineas, filasDelLog, huella, ordenarVersiones, textoUsos, usosPorHuella, versionesDe,
+} from "./historial-prompts.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 import { editorPreguntas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
@@ -444,6 +447,143 @@ function vistaFeedback() {
   ];
 }
 
+// ---------------------------------------------------------------- versiones anteriores de un prompt
+
+// En el diff, de un tramo largo de líneas iguales se ven solo las que rodean
+// cada cambio; el resto se abre con un botón.
+const CONTEXTO_DIFF = 3;
+const lineasTexto = (n) => `${n} ${n === 1 ? "línea" : "líneas"}`;
+
+/** Lo que cambia en `version` respecto de `vigente`, con + y − además del color. */
+function vistaDiff(vigente, version) {
+  const { bloques, aviso } = diffLineas(vigente, version);
+  const { agregadas, quitadas } = contarCambios(bloques);
+  if (!agregadas && !quitadas) {
+    return caja("info", "Tiene el mismo texto que la vigente, salvo espacios o saltos al principio o al final.");
+  }
+  const linea = (tipo, texto) => el("div", { class: `linea-diff ${tipo}` },
+    el("span", { class: "signo" }, tipo === "agrega" ? "+" : tipo === "quita" ? "−" : " "),
+    el("span", { class: "texto-linea" }, texto));
+  const iguales = (lineas, i) => {
+    const antes = i === 0 ? 0 : CONTEXTO_DIFF; // al principio del texto no hace falta contexto previo
+    const despues = i === bloques.length - 1 ? 0 : CONTEXTO_DIFF;
+    if (lineas.length <= antes + despues + 1) return lineas.map((l) => linea("igual", l));
+    const ocultas = lineas.slice(antes, lineas.length - despues);
+    const abrir = el("button", { class: "enlace", type: "button" }, `Mostrar ${lineasTexto(ocultas.length)} sin cambios`);
+    const hueco = el("div", { class: "linea-diff omitidas" }, abrir);
+    abrir.addEventListener("click", () => {
+      // Un fragmento y no replaceWith(...lista): con muchas líneas el spread revienta la pila.
+      const frag = document.createDocumentFragment();
+      for (const l of ocultas) frag.append(linea("igual", l));
+      hueco.replaceWith(frag);
+    });
+    return [...lineas.slice(0, antes).map((l) => linea("igual", l)), hueco,
+      ...lineas.slice(lineas.length - despues).map((l) => linea("igual", l))];
+  };
+  return el("div", { class: "diff" },
+    el("p", { class: "leyenda-diff" },
+      agregadas ? el("span", { class: "linea-diff agrega" }, `+ ${lineasTexto(agregadas)} solo en esta versión`) : null,
+      quitadas ? el("span", { class: "linea-diff quita" }, `− ${lineasTexto(quitadas)} solo en la vigente`) : null),
+    aviso ? caja("aviso", aviso) : null,
+    el("div", { class: "lineas-diff" }, bloques.map((b, i) => (b.tipo === "igual" ? iguales(b.lineas, i)
+      : b.lineas.map((l) => linea(b.tipo, l))))));
+}
+
+/**
+ * Una versión guardada: plegada, su huella y dónde se usó; abierta, el texto
+ * de solo lectura, el diff con la vigente, copiarla y cargarla en el editor.
+ */
+function filaVersion(v, { uso, conUsos, esVigente, guardado, cargar }) {
+  const cuerpo = el("div", { class: "contenido" });
+  const d = el("details", { class: "version-prompt" },
+    el("summary", {}, el("span", { class: "huella" }, `Versión ${v.huella}`), conUsos ? ` · ${textoUsos(uso)}` : "",
+      esVigente ? el("strong", { class: "marca-vigente" }, " (la vigente)") : null),
+    cuerpo);
+  let cargada = null;
+  d.addEventListener("toggle", () => {
+    if (!d.open || cargada) return;
+    cuerpo.replaceChildren(el("p", { class: "cargando" }, "Cargando…"));
+    cargada = leerTexto(v.ruta).then((texto) => {
+      const mensaje = el("div");
+      const diff = el("div");
+      const verDiff = el("button", { class: "secundario", type: "button", "aria-expanded": "false" },
+        "Qué cambia respecto de la vigente");
+      verDiff.addEventListener("click", () => {
+        const abrir = !diff.childElementCount;
+        // Contra lo guardado ahora: si se guardó otra cosa desde que se abrió, cuenta esa.
+        diff.replaceChildren(...(abrir ? [vistaDiff(guardado(), texto)] : []));
+        verDiff.textContent = abrir ? "Ocultar los cambios" : "Qué cambia respecto de la vigente";
+        verDiff.setAttribute("aria-expanded", String(abrir));
+      });
+      const copiar = el("button", { class: "secundario", type: "button" }, "Copiar");
+      copiar.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(texto);
+          mensaje.replaceChildren(caja("exito", "Copiado."));
+        } catch {
+          // Sin permiso para el portapapeles (o una página sin https).
+          mensaje.replaceChildren(caja("aviso", "El navegador no dejó copiar. Selecciona el texto del cuadro y cópialo a mano."));
+        }
+      });
+      const usar = el("button", { class: "secundario", type: "button" }, "Cargar en el editor");
+      usar.addEventListener("click", () => { if (descartarCambios()) cargar(texto, v.huella); });
+      const fecha = (t) => fechaCorta(new Date(t));
+      const cuando = !uso?.primero ? "" : uso.primero === uso.ultimo ? `, el ${fecha(uso.primero)}`
+        : `, del ${fecha(uso.primero)} al ${fecha(uso.ultimo)}`;
+      cuerpo.replaceChildren(...[
+        uso?.eventos ? el("p", { class: "nota-pie" }, `Aparece en ${uso.eventos} ${uso.eventos === 1 ? "registro" : "registros"} `
+          + `del log${cuando}.`) : null,
+        el("pre", { class: "texto-version", tabindex: "0", "aria-label": `Texto de la versión ${v.huella}` }, texto),
+        el("div", { class: "acciones" }, esVigente ? null : verDiff, copiar, esVigente ? null : usar),
+        mensaje,
+        diff].filter(Boolean));
+    }).catch((e) => {
+      cargada = null; // al volver a abrirla se intenta de nuevo
+      cuerpo.replaceChildren(caja("aviso", `No pude leer esta versión: ${e.message}`));
+    });
+  });
+  return d;
+}
+
+/**
+ * "Versiones anteriores (N)" debajo del editor: el archivo de las versiones
+ * de este prompt que corrigieron de verdad. El log y los textos se leen recién
+ * al abrirla. `guardado()` es el texto guardado ahora (la vigente) y
+ * `cargar(texto, huella)` lo pone en el editor como cambio sin guardar.
+ */
+function versionesAnteriores(ruta, versiones, { guardado, cargar }) {
+  const lista = el("div", { class: "lista-versiones" }, el("p", { class: "cargando" }, "Cargando…"));
+  const nodo = el("details", { class: "versiones-prompt" },
+    el("summary", {}, `Versiones anteriores (${versiones.length})`),
+    el("div", { class: "contenido" },
+      el("p", { class: "nota-pie" }, "Cada versión se guarda la primera vez que se corrige con ella, y no se puede editar. "
+        + "Para volver a una, cárgala en el editor y guarda."),
+      lista));
+  let usos = null; // { huella: uso }, o null si el log no se pudo leer
+  let leido = null;
+
+  async function dibujar() {
+    let vigente = null;
+    try { vigente = await huella(guardado()); } catch { /* sin crypto.subtle: ninguna se marca */ }
+    const orden = ordenarVersiones(versiones, usos || {});
+    lista.replaceChildren(...[
+      usos ? null : caja("aviso", "No pude leer el registro de envíos: las versiones aparecen sin las semanas en que se usaron."),
+      vigente && !versiones.some((v) => v.huella === vigente) ? el("p", { class: "nota-pie" },
+        "El texto guardado ahora todavía no se usó para corregir: aparece aquí la primera vez que se use.") : null,
+      ...orden.map((v) => filaVersion(v, { uso: usos?.[v.huella], conUsos: Boolean(usos), esVigente: v.huella === vigente,
+        guardado, cargar }))].filter(Boolean));
+  }
+
+  nodo.addEventListener("toggle", () => {
+    if (!nodo.open || leido) return;
+    // Sin log todavía no hubo envíos: ninguna tiene usos, pero no es un error.
+    const log = existe("log_envios.csv") ? leerTexto("log_envios.csv").then(filasDelLog) : Promise.resolve([]);
+    leido = log.then((filas) => { usos = usosPorHuella(ruta, filas); }, () => { usos = null; }).then(dibujar);
+  });
+  // Al guardar cambia cuál es la vigente.
+  return { nodo, alGuardar: () => { if (leido) leido = leido.then(dibujar); } };
+}
+
 function editorPrompt(ruta) {
   const info = PROMPTS[ruta];
   const contenedor = el("div", {}, el("p", { class: "cargando" }, "Cargando…"));
@@ -472,6 +612,7 @@ function editorPrompt(ruta) {
         estadoTexto.textContent = "Sin cambios";
         estadoTexto.classList.remove("pendiente");
         mensaje.replaceChildren(caja("exito", "Guardado. Vale desde el próximo envío o corrección."));
+        historial?.alGuardar();
       } catch (e) {
         guardar.disabled = false;
         mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
@@ -484,6 +625,21 @@ function editorPrompt(ruta) {
       area.focus();
       area.dispatchEvent(new Event("input"));
     };
+    // Las versiones que ya corrigieron, si hay alguna. Cargar una deja su texto
+    // como cambio sin guardar: se guarda con el mismo botón de siempre.
+    const versiones = versionesDe(ruta, archivos);
+    const historial = versiones.length ? versionesAnteriores(ruta, versiones, {
+      guardado: () => texto,
+      cargar: (otro, h) => {
+        area.value = otro;
+        area.dispatchEvent(new Event("input"));
+        // Puede coincidir con lo guardado si solo difiere en espacios al principio o al final (la huella los ignora).
+        mensaje.replaceChildren(area.value !== texto
+          ? caja("info", `Cargaste la versión ${h}. Todavía no está guardada: revísala y guarda para usarla.`)
+          : caja("info", "Es el mismo texto que está guardado ahora."));
+        area.scrollIntoView({ behavior: "smooth", block: "center" });
+      },
+    }) : null;
     // replaceChildren, a diferencia de el(), escribe "null" si recibe null: se filtran.
     contenedor.replaceChildren(...[
       info?.uso ? el("p", {}, info.uso) : null,
@@ -495,7 +651,8 @@ function editorPrompt(ruta) {
       info?.formato ? el("p", { class: "nota-pie" }, "Una llave literal se escribe doble: {{ o }}.") : null,
       area,
       el("div", { class: "barra-guardar" }, estadoTexto, el("span", { class: "espacio" }), guardar),
-      mensaje].filter(Boolean));
+      mensaje,
+      historial?.nodo].filter(Boolean));
   }).catch((e) => contenedor.replaceChildren(caja("aviso", `No pude leer ${nombre(ruta)}: ${e.message}`)));
   return contenedor;
 }
