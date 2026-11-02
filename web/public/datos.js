@@ -15,6 +15,9 @@ import { escribirCsv, leerCsv } from "./csv.js";
 import { editorPreguntas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import { leerPrecios } from "./consumo.js";
+import {
+  comoCelda, decidirFila, enlaceSeguro, fechaConsulta, NOMBRE_MODELO, resumenDecisiones, textoOrigen, textoPrecio,
+} from "./precios.js";
 import { vistaProbarCriterio } from "./probar.js";
 
 document.getElementById("nav").replaceWith(navegacion());
@@ -884,14 +887,15 @@ function numero(atributos) {
 
 /**
  * Los precios de la API por modelo, para mostrar cuánto cuesta cada trabajo.
- * Una fila por modelo conocido; las vacías no se guardan. Devuelve [tabla, leer].
+ * Una fila por modelo conocido, más las que se agreguen; las vacías no se guardan. Devuelve [tabla, leer].
  */
 function camposPrecios() {
   const actuales = leerPrecios(valor("PRECIOS_API"));
   const modelos = [...new Set([valor("MODELO"), ...Object.keys(actuales), ...MODELOS_CONOCIDOS])];
-  const filas = modelos.map((m) => {
+  const nuevaFila = (m) => {
+    // step "any": hay precios de cuatro decimales (0.0375) y con step 0.001 el navegador no deja guardarlos.
     const [entrada, salida] = (actuales[m] || ["", ""]).map((x) => el("input", {
-      type: "number", min: "0", step: "0.001", value: x === "" ? "" : String(x), "aria-label": m }));
+      type: "number", min: "0", step: "any", value: x === "" ? "" : String(x), "aria-label": m }));
     // Una fila a medias no se guarda: se avisa en vez de descartarla callada.
     const revisarFila = () => {
       const medias = (entrada.value === "") !== (salida.value === "");
@@ -901,16 +905,136 @@ function camposPrecios() {
     };
     entrada.addEventListener("input", revisarFila);
     salida.addEventListener("input", revisarFila);
-    return { m, entrada, salida };
-  });
+    // Debajo de la fila, lo que sugiere «Traer precios». Oculta hasta entonces.
+    const nota = el("td", { colspan: "3" });
+    const filaNota = el("tr", { class: "nota-precio", hidden: true }, nota);
+    return { m, entrada, salida, nota, filaNota };
+  };
+  const filas = modelos.map(nuevaFila);
+  const enTabla = (f) => [el("tr", {}, el("td", {}, el("code", {}, f.m)), el("td", {}, f.entrada),
+    el("td", {}, f.salida)), f.filaNota];
+  const cuerpo = el("tbody", {}, filas.map(enTabla));
   const tabla = el("div", { class: "tabla-envoltura precios" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["Modelo", "Entrada", "Salida"].map((c) => el("th", {}, c)))),
-    el("tbody", {}, filas.map((f) => el("tr", {}, el("td", {}, el("code", {}, f.m)), el("td", {}, f.entrada),
-      el("td", {}, f.salida))))));
+    el("thead", {}, el("tr", {}, ["Modelo", "Entrada", "Salida"].map((c) => el("th", {}, c)))), cuerpo));
   const leer = () => ({ PRECIOS_API: JSON.stringify(Object.fromEntries(filas
     .filter((f) => f.entrada.value !== "" && f.salida.value !== "")
     .map((f) => [f.m, [Number(f.entrada.value), Number(f.salida.value)]]))) });
-  return [tabla, leer];
+  const agregar = (m) => {
+    const f = nuevaFila(m);
+    filas.push(f);
+    cuerpo.append(...enTabla(f));
+    return f;
+  };
+  return [el("div", { class: "campos-precios" }, botonTraerPrecios(filas), tabla, agregarModelo(filas, agregar)), leer];
+}
+
+/**
+ * Una fila para un modelo que no está en la tabla (al cambiar de proveedor, o
+ * uno que Inicio dice que falta). Vacía no se guarda, como las demás.
+ */
+function agregarModelo(filas, agregar) {
+  const nombre = el("input", { type: "text", list: "modelos", size: 22, "aria-label": "Modelo para agregar",
+    placeholder: "otro modelo" });
+  const boton = el("button", { class: "secundario", type: "button" }, "Agregar fila");
+  const mensaje = el("span", { class: "nota-pie" });
+  const sumar = () => {
+    const m = nombre.value.trim();
+    if (!NOMBRE_MODELO.test(m)) {
+      mensaje.textContent = "Ese nombre no sirve: de 2 a 60 letras, números, punto, guion, dos puntos o barra.";
+      nombre.focus();
+      return;
+    }
+    mensaje.textContent = "";
+    nombre.value = "";
+    (filas.find((f) => f.m === m) || agregar(m)).entrada.focus();
+  };
+  boton.addEventListener("click", sumar);
+  nombre.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sumar(); } });
+  return el("div", { class: "acciones" }, nombre, boton, mensaje);
+}
+
+/** Escribe en una celda como si lo hubiera tecleado: así el formulario ve el cambio. */
+function escribir(input, texto) {
+  input.value = texto;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/**
+ * «Traer precios»: pide al sitio los de cada modelo de la tabla y llena solo
+ * las celdas vacías (public/precios.js decide fila por fila). No guarda nada.
+ */
+function botonTraerPrecios(filas) {
+  const boton = el("button", { class: "secundario", type: "button" }, "Traer precios");
+  const mensaje = el("div");
+  boton.addEventListener("click", async () => {
+    boton.disabled = true;
+    boton.textContent = "Buscando…";
+    // Lo de una consulta anterior se borra: si esta falla, no queda a la vista como si fuera nuevo.
+    for (const f of filas) f.filaNota.hidden = true;
+    mensaje.replaceChildren();
+    try {
+      const r = await api(`/api/precios-sugeridos?modelos=${encodeURIComponent(filas.map((f) => f.m).join(","))}`);
+      // Lo guardado se lee ahora: después de un Guardar la vista no se rearma.
+      const guardados = leerPrecios(valor("PRECIOS_API"));
+      const decisiones = filas.map((f) => mostrarSugerencia(f, guardados[f.m], r.modelos?.[f.m] ?? null,
+        r.dudas?.[f.m] ?? null));
+      mensaje.replaceChildren(el("div", { class: "info" }, origenDeLosPrecios(r), " ", resumenDecisiones(decisiones)),
+        ...(r.avisos || []).map((a) => caja("aviso", a)));
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude traer los precios: ${e.message} La tabla quedó como estaba.`));
+    } finally {
+      boton.disabled = false;
+      boton.textContent = "Traer precios";
+      // Al deshabilitarlo el foco se fue al body: vuelve para quien usa el teclado.
+      boton.focus();
+    }
+  });
+  return el("div", {}, el("div", { class: "acciones" }, boton,
+    el("span", { class: "nota-pie" }, "Los busca en listas públicas; revísalos antes de guardar.")), mensaje);
+}
+
+/** "Según genai-prices, consultado el 02-11-2026." con el enlace a cada fuente. */
+function origenDeLosPrecios(r) {
+  const fuentes = r.fuentes || [];
+  if (!fuentes.length) return "Ninguna fuente respondió.";
+  const enlaces = fuentes.map((f) => {
+    const href = enlaceSeguro(f.enlace);
+    return href ? el("a", { href, target: "_blank", rel: "noopener" }, f.nombre) : f.nombre;
+  });
+  const unidos = enlaces.flatMap((x, i) => (i === 0 ? [x] : [i === enlaces.length - 1 ? " y " : ", ", x]));
+  return el("span", {}, "Según ", unidos, `, consultado el ${fechaConsulta(fuentes[0].consultado)}.`);
+}
+
+/** La sugerencia de una fila, debajo de ella. Devuelve lo que se decidió. */
+function mostrarSugerencia(f, guardado, sugerido, duda) {
+  const d = decidirFila({ entrada: f.entrada.value, salida: f.salida.value }, guardado, sugerido, duda);
+  f.filaNota.hidden = false;
+  if (d.accion === "sin-dato" || d.accion === "ambiguo") {
+    f.nota.replaceChildren(d.accion === "ambiguo" ? "La fuente lo trae a varios precios (mira el aviso de arriba): queda como está."
+      : "La fuente no trae este modelo: queda como está.");
+    return d;
+  }
+  if (d.accion === "llenar") {
+    if (f.entrada.value === "") escribir(f.entrada, d.entrada);
+    if (f.salida.value === "") escribir(f.salida, d.salida);
+  }
+  const href = enlaceSeguro(sugerido.enlace);
+  const origen = href ? el("a", { href, target: "_blank", rel: "noopener" }, textoOrigen(sugerido)) : textoOrigen(sugerido);
+  const usar = el("button", { class: "enlace", type: "button" }, "Usar");
+  usar.addEventListener("click", () => {
+    escribir(f.entrada, comoCelda(sugerido.entrada));
+    escribir(f.salida, comoCelda(sugerido.salida));
+    // El botón desaparece: el foco pasa a la fila en vez de caer al body.
+    f.entrada.focus();
+    usar.replaceWith(el("span", {}, "usado"));
+  });
+  const que = { llenar: "Sugerido", igual: "Coincide con", distinta: "Sugerido" }[d.accion];
+  // Por el(): replaceChildren escribiría "null" y las listas como texto.
+  f.nota.replaceChildren(el("span", {},
+    d.accion === "igual" ? `${que} ` : `${que}: ${textoPrecio(sugerido)} · `, origen,
+    d.accion === "distinta" ? [" · ", usar] : null,
+    d.revisar ? el("span", { class: "revisar" }, ` ⚠ ${d.revisar}`) : null));
+  return d;
 }
 
 function vistaParametros() {
@@ -961,8 +1085,9 @@ function vistaParametros() {
         GRUPO_CONTROL_TRATAMIENTO: grupos.checked ? "true" : "false",
         GRUPO_SEED: String(Math.round(entre(semilla, 0, 99999))),
       }), "Guardado."),
-    formulario("Precios de la API", "US$ por millón de tokens, de la página de precios de OpenAI. Sirven para "
-      + "mostrar cuánto costó cada trabajo; sin precio se muestran los tokens.", [precios], leerPrecios_, "Guardado."),
+    formulario("Precios de la API", "US$ por millón de tokens, los de la página de precios de tu proveedor. "
+      + "Sirven para mostrar cuánto costó cada trabajo; sin precio se muestran los tokens.", [precios], leerPrecios_,
+      "Guardado."),
     el("details", { class: "para-admin" },
       el("summary", {}, "Credenciales"),
       el("div", { class: "contenido" },

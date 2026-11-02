@@ -12,6 +12,7 @@
  *   GET  /api/historial/:semestre       quién cambió qué archivo y cuándo (?ruta=)
  *   GET  /api/version/:id               la versión que había antes de esa edición
  *   GET|PUT /api/parametros             modelo, temperatura, escala de notas, grupos
+ *   GET  /api/precios-sugeridos         precios de la API según fuentes públicas (?modelos=a,b); no los guarda
  *   POST /api/trabajos                  pedir un trabajo: evaluar, enviar, tutoría...
  *   GET  /api/trabajos?semestre=X       los últimos trabajos de un semestre
  *   GET  /api/consumo/:semestre         lo que gastó en la API cada trabajo
@@ -37,6 +38,7 @@
  */
 
 import { correoVerificado } from "./acceso";
+import { NOMBRE_MODELO, precioValido, sugerirPrecios, traerFuente } from "./precios";
 
 export interface Env {
   DB: D1Database;
@@ -81,15 +83,14 @@ function preciosValidos(v: string): boolean {
   try {
     const o = JSON.parse(v);
     return Boolean(o) && typeof o === "object" && !Array.isArray(o) && Object.entries(o).every(([m, p]) =>
-      /^[A-Za-z0-9._:-]{2,60}$/.test(m) && Array.isArray(p) && p.length === 2
-      && p.every((x) => typeof x === "number" && x >= 0 && x < 10000));
+      NOMBRE_MODELO.test(m) && Array.isArray(p) && p.length === 2 && p.every(precioValido));
   } catch {
     return false;
   }
 }
 
 const PARAMETROS: Record<string, (v: string) => boolean> = {
-  MODELO: (v) => /^[A-Za-z0-9._:-]{2,60}$/.test(v),
+  MODELO: (v) => NOMBRE_MODELO.test(v),
   TEMPERATURA: (v) => /^\d+(\.\d+)?$/.test(v) && Number(v) >= 0 && Number(v) <= 2,
   MAX_TOKENS: (v) => /^\d+$/.test(v) && Number(v) >= 200 && Number(v) <= 32000,
   // Los mismos rangos que tenía el formulario de Streamlit.
@@ -583,6 +584,22 @@ async function guardarParametros(req: Request, env: Env, quien: string): Promise
   return json({ guardados: Object.keys(datos) });
 }
 
+// Cuántos modelos se buscan de una vez: la tabla de Parámetros tiene una decena.
+const MAX_MODELOS = 40;
+
+/** Precios sugeridos para los modelos de la tabla (src/precios.ts). Solo lee: nunca escribe PRECIOS_API. */
+async function preciosSugeridos(url: URL): Promise<Response> {
+  const modelos = [...new Set((url.searchParams.get("modelos") || "").split(",").map((m) => m.trim()).filter(Boolean))];
+  if (!modelos.length) return error(400, "Falta la lista de modelos (?modelos=a,b).");
+  if (modelos.length > MAX_MODELOS) return error(400, `Pide como máximo ${MAX_MODELOS} modelos a la vez.`);
+  const malos = modelos.filter((m) => !NOMBRE_MODELO.test(m));
+  if (malos.length) return error(400, `Nombres de modelo inválidos: ${malos.slice(0, 3).map((m) => m.slice(0, 60)).join(", ")}`);
+  const r = await sugerirPrecios(modelos, traerFuente);
+  // Sin ninguna fuente no hay nada que decir de cada fila: es un error, no una lista de "sin dato".
+  if (!r.fuentes.length) return error(502, `Ninguna fuente de precios respondió. ${r.avisos.join(" ")}`);
+  return json(r);
+}
+
 // ---------------------------------------------------------------- semestres
 
 /** Crea un semestre copiando la plantilla, o cambia cuál es el activo. */
@@ -690,6 +707,7 @@ export default {
         if (req.method === "GET") return await leerParametros(env);
         if (req.method === "PUT") return await guardarParametros(req, env, quien);
       }
+      if (partes[1] === "precios-sugeridos" && !partes[2] && req.method === "GET") return await preciosSugeridos(url);
       // Listar archivos de una carpeta del semestre (prompts, entregas, feedback).
       if (partes[1] === "archivos" && partes[2] && req.method === "GET") {
         if (!ID_VALIDO.test(partes[2])) return error(400, "Semestre inválido.");

@@ -572,6 +572,14 @@ details.correo-plegable > .correo-gmail { margin: 0; border: 0; border-top: 1px 
 .historial .col-costo { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--tenue); }
 .precios { max-width: 520px; }
 .precios input { width: 110px; }
+.campos-precios { flex: 1 1 100%; min-width: 0; max-width: 640px; }
+.campos-precios .acciones { margin-top: 0; }
+/* La sugerencia de «Traer precios» va en una línea bajo su fila, no en otra columna: cabe en un celular. */
+.precios tr:has(+ .nota-precio:not([hidden])) td { border-bottom: 0; padding-bottom: 2px; }
+.precios .nota-precio td { padding-top: 0; font-size: 13px; color: var(--tenue); white-space: normal; }
+.precios .nota-precio .revisar { color: var(--aviso); font-weight: 600; }
+/* En un celular la tabla entera cabe a lo ancho, y la sugerencia se parte en líneas en vez de quedar cortada. */
+@media (max-width: 480px) { .precios input { width: 72px; } .precios th, .precios td { padding-left: 6px; padding-right: 6px; } }
 @media (max-width: 600px) { .historial .col-costo { display: none; } }
 
 /* ---------------------------------------------------------- el ciclo en flechas (Inicio) */

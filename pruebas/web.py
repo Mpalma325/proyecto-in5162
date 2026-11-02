@@ -305,6 +305,18 @@ if shutil.which("node"):
     if r.returncode or "todo OK" not in r.stdout:
         check("probar-historial.mjs termina sin errores", False, r.stderr[-300:] or r.stdout[-300:])
 
+titulo("7d4. traer precios: fuentes, búsqueda por nombre y filas que no se pisan")
+# Sin red: las fuentes son copias recortadas dentro del script.
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-precios.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        if nombre:
+            check(nombre, estado == "OK", linea)
+    if r.returncode or "todo OK" not in r.stdout:
+        check("probar-precios.mjs termina sin errores", False, r.stderr[-300:] or r.stdout[-300:])
+
 titulo("7e. editar un prompt avisa antes de guardar algo que haría fallar un envío")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-prompts.mjs")],
