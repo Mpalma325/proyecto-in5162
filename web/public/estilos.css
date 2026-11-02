@@ -570,7 +570,7 @@ details.correo-plegable > .correo-gmail { margin: 0; border: 0; border-top: 1px 
 .avance-fila .barra-progreso { width: 56px; flex: none; height: 6px; }
 .texto-progreso { font-size: 13px; color: var(--tenue); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .historial .col-costo { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--tenue); }
-.precios { max-width: 520px; }
+.precios { max-width: 640px; }
 .precios input { width: 110px; }
 .campos-precios { flex: 1 1 100%; min-width: 0; max-width: 640px; }
 .campos-precios .acciones { margin-top: 0; }
@@ -579,7 +579,8 @@ details.correo-plegable > .correo-gmail { margin: 0; border: 0; border-top: 1px 
 .precios .nota-precio td { padding-top: 0; font-size: 13px; color: var(--tenue); white-space: normal; }
 .precios .nota-precio .revisar { color: var(--aviso); font-weight: 600; }
 /* En un celular la tabla entera cabe a lo ancho, y la sugerencia se parte en líneas en vez de quedar cortada. */
-@media (max-width: 480px) { .precios input { width: 72px; } .precios th, .precios td { padding-left: 6px; padding-right: 6px; } }
+/* Con la columna «En caché» son tres precios por fila: 62px y 4px de margen es lo que cabe en 375px. */
+@media (max-width: 480px) { .precios input { width: 62px; padding-left: 5px; padding-right: 5px; } .precios th, .precios td { padding-left: 4px; padding-right: 4px; } }
 @media (max-width: 600px) { .historial .col-costo { display: none; } }
 
 /* ---------------------------------------------------------- el ciclo en flechas (Inicio) */

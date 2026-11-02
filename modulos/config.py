@@ -45,8 +45,9 @@ SEMESTRE = _semestre.activo_o_error()
 MODELO = _env.get("MODELO", "gpt-5.4-mini")
 TEMPERATURA = float(_env.get("TEMPERATURA", "0.2"))
 MAX_TOKENS = int(_env.get("MAX_TOKENS", "3000"))
-# US$ por millón de tokens, por modelo: {"modelo": [entrada, salida]}. Solo
-# sirve para que la línea "Consumo de API" de cada trabajo diga cuánto costó.
+# US$ por millón de tokens, por modelo: {"modelo": [entrada, salida]} o
+# [entrada, salida, caché]. Solo sirve para que la línea "Consumo de API" de
+# cada trabajo diga cuánto costó; la lee ia.leer_precios desde el entorno.
 PRECIOS_API = _env.get("PRECIOS_API", "{}")
 
 # --- correo ---

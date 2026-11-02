@@ -127,25 +127,55 @@ foreach ($t in $tokens.Keys) {
     }
 }
 
-# La identidad del servicio necesita leer los secretos y crear tareas en la cola.
-# En los proyectos nuevos, además, es la que construye el contenedor, y parte sin
-# permisos para eso: de ahí cloudbuild.builds.builder.
+# En los proyectos nuevos, la cuenta por defecto es la que construye el
+# contenedor, y parte sin permisos para eso: de ahí cloudbuild.builds.builder.
+# Ya no corre el motor: no necesita los secretos ni la cola.
 $numero = (G projects describe $Proyecto --format "value(projectNumber)") -join ""
-$cuenta = "$numero-compute@developer.gserviceaccount.com"
-foreach ($rol in "roles/secretmanager.secretAccessor", "roles/cloudtasks.enqueuer", "roles/cloudbuild.builds.builder") {
-    G projects add-iam-policy-binding $Proyecto --member "serviceAccount:$cuenta" --role $rol --condition None | Out-Null
+$cuentaDefecto = "$numero-compute@developer.gserviceaccount.com"
+G projects add-iam-policy-binding $Proyecto --member "serviceAccount:$cuentaDefecto" `
+    --role roles/cloudbuild.builds.builder --condition None | Out-Null
+
+Paso "Cuenta de servicio del motor"
+# El motor corre con una cuenta propia que solo lee sus 5 secretos y crea
+# tareas en sus 2 colas. Con la cuenta por defecto, que tenía los roles a nivel
+# de proyecto, una falla en el motor alcanzaba los secretos de otro curso en el
+# mismo proyecto. No necesita run.invoker ni firmar tokens: las tareas llaman a
+# /ejecutar con X-In5162-Token, sin OIDC.
+$cuenta = "$c-motor@$Proyecto.iam.gserviceaccount.com"
+if (-not (Existe iam service-accounts describe $cuenta --project $Proyecto)) {
+    G iam service-accounts create "$c-motor" --project $Proyecto --display-name "Motor de $($Curso.ToUpper())" | Out-Null
+    # Una cuenta recién creada tarda unos segundos en verse desde IAM.
+    Start-Sleep -Seconds 15
+}
+foreach ($s in "$c-openai", "$c-correo-remitente", "$c-correo-clave", "$c-token-motor", "$c-token-web") {
+    G secrets add-iam-policy-binding $s --project $Proyecto --member "serviceAccount:$cuenta" `
+        --role roles/secretmanager.secretAccessor | Out-Null
+}
+foreach ($q in $Cola, $ColaSimulaciones) {
+    G tasks queues add-iam-policy-binding $q --location $Region --project $Proyecto `
+        --member "serviceAccount:$cuenta" --role roles/cloudtasks.enqueuer | Out-Null
 }
 
 Paso "Construyendo y desplegando el motor (tarda unos minutos la primera vez)"
+# El motor necesita saber su propia dirección para que la cola lo llame. Si el
+# servicio ya existe, va en el mismo deploy: --set-env-vars borra las demás
+# variables, y la revisión nueva quedaba sin ella hasta el update de más abajo
+# (todo trabajo pedido en esos segundos fallaba).
+$urlPrevia = ""
+if (Existe run services describe $Servicio --region $Region --project $Proyecto) {
+    $urlPrevia = (G run services describe $Servicio --region $Region --project $Proyecto --format "value(status.url)") -join ""
+}
+$variables = "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,GCP_COLA_SIMULACIONES=$ColaSimulaciones,WEB_URL=$WebUrl,CURSO=$($Curso.ToUpper())"
+if ($urlPrevia) { $variables += ",MOTOR_URL_PUBLICA=$urlPrevia" }
 # 1 GB: la carpeta de trabajo vive en memoria, y un trabajo de tareas baja
 # todas las entregas del semestre (más de 100 MB en un semestre completo).
 Push-Location $raiz
 try {
     G run deploy $Servicio --source . --region $Region `
-        --allow-unauthenticated `
+        --allow-unauthenticated --service-account $cuenta `
         --memory 1Gi --cpu 1 --timeout 1800 --concurrency 8 --max-instances 1 `
         --set-secrets "OPENAI_API_KEY=$c-openai:latest,CORREO_REMITENTE=$c-correo-remitente:latest,CORREO_APP_PASSWORD=$c-correo-clave:latest,TOKEN_MOTOR=$c-token-motor:latest,TOKEN_WEB=$c-token-web:latest" `
-        --set-env-vars "COLA=cloudtasks,GCP_PROYECTO=$Proyecto,GCP_REGION=$Region,GCP_COLA=$Cola,GCP_COLA_SIMULACIONES=$ColaSimulaciones,WEB_URL=$WebUrl,CURSO=$($Curso.ToUpper())" | Out-Host
+        --set-env-vars $variables | Out-Host
 } finally {
     Pop-Location
 }
@@ -164,8 +194,10 @@ try {
 }
 
 $url = (G run services describe $Servicio --region $Region --format "value(status.url)") -join ""
-# El motor necesita saber su propia dirección para que la cola lo llame.
-G run services update $Servicio --region $Region --update-env-vars "MOTOR_URL_PUBLICA=$url" | Out-Null
+# Primer despliegue: la dirección recién se conoce ahora.
+if ($url -ne $urlPrevia) {
+    G run services update $Servicio --region $Region --update-env-vars "MOTOR_URL_PUBLICA=$url" | Out-Null
+}
 
 Paso "Listo"
 Write-Host "Motor:        $url"
@@ -179,3 +211,14 @@ Write-Host ""
 Write-Host "Los valores están en Secret Manager:"
 Write-Host "  gcloud secrets versions access latest --secret $c-token-motor"
 Write-Host "  gcloud secrets versions access latest --secret $c-token-web"
+Write-Host ""
+# No se quitan solos: otro servicio del proyecto podría depender de ellos.
+Write-Host "El motor ya corre con $cuenta. Si nada más en el proyecto usa la cuenta"
+Write-Host "por defecto para leer secretos o crear tareas, quítale esos roles a mano:"
+foreach ($rol in "roles/secretmanager.secretAccessor", "roles/cloudtasks.enqueuer") {
+    Write-Host "  gcloud projects remove-iam-policy-binding $Proyecto --member serviceAccount:$cuentaDefecto --role $rol --condition None"
+}
+Write-Host "(cloudbuild.builds.builder se queda: con ella se construye el contenedor)."
+Write-Host "Mientras la cuenta por defecto tenga roles/editor, quitarle cloudtasks.enqueuer"
+Write-Host "no cambia nada (editor incluye cloudtasks.tasks.create); el efecto real está en"
+Write-Host "quitar secretAccessor y, más adelante, editor."

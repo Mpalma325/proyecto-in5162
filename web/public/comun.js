@@ -1,7 +1,7 @@
 // Lo que comparten todas las páginas del sitio: armar elementos, hablar con la
 // API, la barra de navegación y cómo se muestra la salida de un trabajo.
 
-import { formatoUsd, leerConsumo, leerPrecios, sumarConsumo, textoConsumo } from "./consumo.js";
+import { formatoUsd, leerConsumo, leerPrecios, notaMezcla, sumarConsumo, textoConsumo } from "./consumo.js";
 
 export function el(tag, attrs = {}, ...hijos) {
   const n = document.createElement(tag);
@@ -761,7 +761,9 @@ function avanceEnFila(t) {
 function costoCorto(total) {
   if (!total || !total.llamadas) return "";
   if (total.sinPrecio.length && !total.usd) return `${(total.entrada + total.salida).toLocaleString("es-CL")} tokens`;
-  return formatoUsd(total.usd);
+  // Un modelo con su US$ del momento y otro calculado hoy: se marca, y la leyenda va bajo la tabla.
+  const nota = notaMezcla(total);
+  return nota ? el("span", { title: nota }, `${formatoUsd(total.usd)}*`) : formatoUsd(total.usd);
 }
 
 export function historialTrabajos({ incluye, columna, alElegir }) {
@@ -808,7 +810,10 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
       el("div", { class: "tabla-envoltura" }, el("table", { class: "historial" },
         el("thead", {}, el("tr", {}, ["Cuándo", "Qué", titulo, "Modo", "Estado"].map((c) => el("th", {}, c)),
           el("th", { class: "col-costo" }, "API"), el("th", { class: "col-quien" }, "Quién"))),
-        el("tbody", {}, lista.map(fila)))));
+        el("tbody", {}, lista.map(fila)))),
+      // replaceChildren (a diferencia de el()) escribe un null como el texto "null".
+      ...(lista.some((t) => notaMezcla(costos.get(t.id) || {})) ? [el("p", { class: "nota-pie" },
+        "* Parte del costo se calculó con los precios de hoy.")] : []));
   }
   return { nodo, dibujar };
 }

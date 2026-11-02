@@ -269,7 +269,11 @@ function tablaCsv(ruta) {
 let jszip = null;
 function cargarJsZip() {
   jszip ??= new Promise((ok, mal) => {
-    const s = el("script", { src: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" });
+    // Con integrity, como los de resultados.html: si el archivo del CDN cambiara, no se ejecuta.
+    const s = el("script", {
+      src: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+      integrity: "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG", crossorigin: "anonymous",
+    });
     s.onload = () => ok(window.JSZip);
     s.onerror = () => { jszip = null; mal(new Error("no pude cargar el lector de .zip")); };
     document.head.append(s);
@@ -894,31 +898,33 @@ function camposPrecios() {
   const modelos = [...new Set([valor("MODELO"), ...Object.keys(actuales), ...MODELOS_CONOCIDOS])];
   const nuevaFila = (m) => {
     // step "any": hay precios de cuatro decimales (0.0375) y con step 0.001 el navegador no deja guardarlos.
-    const [entrada, salida] = (actuales[m] || ["", ""]).map((x) => el("input", {
+    // La caché es opcional: vacía, se cobra como entrada.
+    const [entrada, salida, cache] = [0, 1, 2].map((i) => actuales[m]?.[i] ?? "").map((x) => el("input", {
       type: "number", min: "0", step: "any", value: x === "" ? "" : String(x), "aria-label": m }));
     // Una fila a medias no se guarda: se avisa en vez de descartarla callada.
     const revisarFila = () => {
-      const medias = (entrada.value === "") !== (salida.value === "");
+      const medias = (entrada.value === "") !== (salida.value === "")
+        || (cache.value !== "" && (entrada.value === "" || salida.value === ""));
       for (const x of [entrada, salida]) {
-        x.setCustomValidity(medias && x.value === "" ? `Completa Entrada y Salida de ${m}, o deja las dos vacías.` : "");
+        x.setCustomValidity(medias && x.value === "" ? `Completa Entrada y Salida de ${m}, o deja la fila vacía.` : "");
       }
     };
-    entrada.addEventListener("input", revisarFila);
-    salida.addEventListener("input", revisarFila);
+    for (const x of [entrada, salida, cache]) x.addEventListener("input", revisarFila);
     // Debajo de la fila, lo que sugiere «Traer precios». Oculta hasta entonces.
-    const nota = el("td", { colspan: "3" });
+    const nota = el("td", { colspan: "4" });
     const filaNota = el("tr", { class: "nota-precio", hidden: true }, nota);
-    return { m, entrada, salida, nota, filaNota };
+    return { m, entrada, salida, cache, nota, filaNota };
   };
   const filas = modelos.map(nuevaFila);
   const enTabla = (f) => [el("tr", {}, el("td", {}, el("code", {}, f.m)), el("td", {}, f.entrada),
-    el("td", {}, f.salida)), f.filaNota];
+    el("td", {}, f.salida), el("td", {}, f.cache)), f.filaNota];
   const cuerpo = el("tbody", {}, filas.map(enTabla));
   const tabla = el("div", { class: "tabla-envoltura precios" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["Modelo", "Entrada", "Salida"].map((c) => el("th", {}, c)))), cuerpo));
+    el("thead", {}, el("tr", {}, ["Modelo", "Entrada", "Salida", "En caché"].map((c) => el("th", {}, c)))), cuerpo));
+  // Sin caché se guardan dos valores, como antes; con ella, tres.
   const leer = () => ({ PRECIOS_API: JSON.stringify(Object.fromEntries(filas
     .filter((f) => f.entrada.value !== "" && f.salida.value !== "")
-    .map((f) => [f.m, [Number(f.entrada.value), Number(f.salida.value)]]))) });
+    .map((f) => [f.m, [f.entrada.value, f.salida.value, ...(f.cache.value !== "" ? [f.cache.value] : [])].map(Number)]))) });
   const agregar = (m) => {
     const f = nuevaFila(m);
     filas.push(f);
@@ -1007,7 +1013,8 @@ function origenDeLosPrecios(r) {
 
 /** La sugerencia de una fila, debajo de ella. Devuelve lo que se decidió. */
 function mostrarSugerencia(f, guardado, sugerido, duda) {
-  const d = decidirFila({ entrada: f.entrada.value, salida: f.salida.value }, guardado, sugerido, duda);
+  const d = decidirFila({ entrada: f.entrada.value, salida: f.salida.value, cache: f.cache.value }, guardado, sugerido,
+    duda);
   f.filaNota.hidden = false;
   if (d.accion === "sin-dato" || d.accion === "ambiguo") {
     f.nota.replaceChildren(d.accion === "ambiguo" ? "La fuente lo trae a varios precios (mira el aviso de arriba): queda como está."
@@ -1017,6 +1024,7 @@ function mostrarSugerencia(f, guardado, sugerido, duda) {
   if (d.accion === "llenar") {
     if (f.entrada.value === "") escribir(f.entrada, d.entrada);
     if (f.salida.value === "") escribir(f.salida, d.salida);
+    if (f.cache.value === "" && d.cache) escribir(f.cache, d.cache);
   }
   const href = enlaceSeguro(sugerido.enlace);
   const origen = href ? el("a", { href, target: "_blank", rel: "noopener" }, textoOrigen(sugerido)) : textoOrigen(sugerido);
@@ -1024,6 +1032,10 @@ function mostrarSugerencia(f, guardado, sugerido, duda) {
   usar.addEventListener("click", () => {
     escribir(f.entrada, comoCelda(sugerido.entrada));
     escribir(f.salida, comoCelda(sugerido.salida));
+    // Sin caché en la fuente, la celda se vacía (se cobra como entrada, como
+    // dice elegir()): la de la tarifa anterior no corresponde a la nueva.
+    if (typeof sugerido.cache === "number" && Number.isFinite(sugerido.cache)) escribir(f.cache, comoCelda(sugerido.cache));
+    else if (f.cache.value !== "") escribir(f.cache, "");
     // El botón desaparece: el foco pasa a la fila en vez de caer al body.
     f.entrada.focus();
     usar.replaceWith(el("span", {}, "usado"));
@@ -1086,7 +1098,9 @@ function vistaParametros() {
         GRUPO_SEED: String(Math.round(entre(semilla, 0, 99999))),
       }), "Guardado."),
     formulario("Precios de la API", "US$ por millón de tokens, los de la página de precios de tu proveedor. "
-      + "Sirven para mostrar cuánto costó cada trabajo; sin precio se muestran los tokens.", [precios], leerPrecios_,
+      + "Sirven para mostrar cuánto costó cada trabajo; sin precio se muestran los tokens. "
+      + "«En caché» es el precio de la entrada que el proveedor reutiliza (cached input); si la dejas vacía, se cobra como entrada.",
+      [precios], leerPrecios_,
       "Guardado."),
     el("details", { class: "para-admin" },
       el("summary", {}, "Credenciales"),

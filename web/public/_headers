@@ -1,0 +1,17 @@
+# Cabeceras de las páginas (Cloudflare las aplica a lo que sirve de public/;
+# las rutas /api/* las responde el Worker). pruebas/web.py revisa la CSP.
+#
+# script-src: solo el sitio y las carpetas exactas de Vega, Pyodide (jsdelivr)
+# y JSZip (cdnjs), sin 'unsafe-inline' ni 'unsafe-eval'. Con el host entero,
+# cualquier paquete de esos CDN (AngularJS, un repo de GitHub) correría aquí.
+# Las rutas que terminan en / se comparan como prefijo: al cambiar de versión,
+# hay que cambiarlas también acá. Pyodide necesita 'wasm-unsafe-eval' para
+# compilar su WebAssembly, y Vega dibuja con vega-interpreter.js para no
+# necesitar eval.
+# style-src 'unsafe-inline': el() pone atributos style (la barra de avance) y
+# los correos se muestran con sus estilos en un iframe srcdoc, que hereda esta
+# política.
+# connect-src: Pyodide baja sus paquetes de su misma carpeta en jsdelivr.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/vega@6.4.0/ https://cdn.jsdelivr.net/npm/vega-lite@6.4.3/ https://cdn.jsdelivr.net/npm/vega-embed@7.2.0/ https://cdn.jsdelivr.net/pyodide/v314.0.7/full/ https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/ 'wasm-unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net/pyodide/v314.0.7/full/; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff

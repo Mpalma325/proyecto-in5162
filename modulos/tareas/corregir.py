@@ -81,7 +81,7 @@ def _corregir_una(client: OpenAI, system_prompt: str, fila: dict) -> dict:
     # Esta llamada no pasa por ia.completar(): su consumo se suma a mano para
     # que quede en la línea "Consumo de API" del trabajo.
     _ia.registrar_uso(config.MODELO, getattr(resp.usage, "prompt_tokens", 0),
-                      getattr(resp.usage, "completion_tokens", 0))
+                      getattr(resp.usage, "completion_tokens", 0), _ia.en_cache(resp.usage))
 
     return json.loads(resp.choices[0].message.content)
 

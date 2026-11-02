@@ -337,17 +337,95 @@ if shutil.which("node"):
     from modulos import ia as _ia
     from modulos.progreso import avanzar
     linea = _ia.linea_consumo("gpt-prueba", 2, 4900, 1250)
+    # La de hoy: con caché y con el US$ del momento.
+    # (1368 x 0,75 + 6144 x 0,075 + 1830 x 4,5) / 1e6 = 0,0097218
+    linea_cache = _ia.linea_consumo("gpt-prueba", 3, 7512, 1830, {"gpt-prueba": [0.75, 4.5, 0.075]}, 6144)
+    check("la línea con caché dice cuántos tokens salieron de ella y el US$ del momento",
+          "(6144 en caché)" in linea_cache and linea_cache.endswith(", US$ 0,009722."), linea_cache)
     avance = io.StringIO()
     with contextlib.redirect_stdout(avance):
         for _ in avanzar(["a", "b", "c"], "respuestas"):
             print("✓ una respuesta")
-    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-consumo.mjs"), linea, avance.getvalue()],
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-consumo.mjs"), linea, avance.getvalue(),
+                        linea_cache],
                        capture_output=True, text=True, encoding="utf-8")
     for linea_salida in (r.stdout or "").splitlines():
         estado, _, nombre = linea_salida.partition("\t")
         check(nombre, estado == "OK", linea_salida)
     if r.returncode and not r.stdout:
         check("probar-consumo.mjs corre", False, r.stderr[-300:])
+
+titulo("7g. el costo en el Python: precios, caché y la línea de consumo")
+# El motor escribe el US$ de cada trabajo con estos precios; un precio malo no
+# puede romper el trabajo, y sin precio la línea no inventa un costo.
+from types import SimpleNamespace
+
+from modulos import ia as _ia
+
+check("leer_precios con [entrada, salida]: la caché se cobra como entrada",
+      _ia.leer_precios('{"m": [1, 2]}') == {"m": (1.0, 2.0, 1.0)}, _ia.leer_precios('{"m": [1, 2]}'))
+check("leer_precios con [entrada, salida, caché]",
+      _ia.leer_precios('{"m": [1, 2, 0.1]}') == {"m": (1.0, 2.0, 0.1)}, _ia.leer_precios('{"m": [1, 2, 0.1]}'))
+check("leer_precios descarta lo que no entiende y deja lo demás",
+      _ia.leer_precios('{"ok": [1, 2], "neg": [1, -2], "uno": [1], "texto": ["1", 2], "bool": [true, 2], '
+                       '"cuatro": [1, 2, 3, 4]}') == {"ok": (1.0, 2.0, 1.0)})
+check("leer_precios con JSON inválido, vacío o que no es objeto: sin precios",
+      _ia.leer_precios("{malo") == {} and _ia.leer_precios(None) == {} and _ia.leer_precios("[1, 2]") == {})
+check("costo cobra la caché a su precio y el resto de la entrada al suyo",
+      abs(_ia.costo(1_000_000, 1_000_000, 400_000, (1.0, 2.0, 0.1)) - (0.6 + 0.04 + 2.0)) < 1e-12)
+check("costo: la caché nunca pasa de la entrada",
+      abs(_ia.costo(100, 0, 500, (1.0, 2.0, 0.1)) - 100 * 0.1 / 1e6) < 1e-15)
+check("en_cache: sin prompt_tokens_details (Ollama) es 0", _ia.en_cache(SimpleNamespace(prompt_tokens=10)) == 0)
+check("en_cache: con un dict", _ia.en_cache(SimpleNamespace(prompt_tokens_details={"cached_tokens": 64})) == 64)
+check("en_cache: con un objeto que trae cached_tokens",
+      _ia.en_cache(SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=128))) == 128)
+check("en_cache: None o un valor raro es 0",
+      _ia.en_cache(SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=None))) == 0
+      and _ia.en_cache(SimpleNamespace(prompt_tokens_details={"cached_tokens": True})) == 0)
+sin_precio = _ia.linea_consumo("m", 1, 10, 5, {"otro": [1, 2]}, 4)
+check("sin precio para el modelo, la línea no trae US$", "US$" not in sin_precio and "(4 en caché)" in sin_precio,
+      sin_precio)
+sin_cache = _ia.linea_consumo("m", 1, 10, 5, {"m": [1, 2]})
+check("sin caché, la línea no la menciona", "caché" not in sin_cache and sin_cache.endswith(", US$ 0,000020."),
+      sin_cache)
+
+titulo("7h. las páginas traen una Content-Security-Policy")
+# Sin ella, un texto que se cuele en la página (un correo, una respuesta de un
+# alumno) podría correr como script. Cloudflare la aplica desde public/_headers.
+_cabeceras = RAIZ / "web" / "public" / "_headers"
+_csp = ""
+if _cabeceras.exists():
+    _lineas = _cabeceras.read_text(encoding="utf-8").splitlines()
+    _todas = _lineas.index("/*") if "/*" in _lineas else len(_lineas)
+    _csp = next((x.split(":", 1)[1].strip() for x in _lineas[_todas + 1:]
+                 if x.strip().lower().startswith("content-security-policy:")), "")
+check("public/_headers pone la CSP en todas las páginas (/*)", bool(_csp), _cabeceras)
+_directivas = {d.split()[0]: d.split()[1:] for d in _csp.split(";") if d.strip()}
+check("object-src 'none'", _directivas.get("object-src") == ["'none'"], _directivas.get("object-src"))
+check("frame-ancestors 'none': ninguna otra página la puede enmarcar",
+      _directivas.get("frame-ancestors") == ["'none'"], _directivas.get("frame-ancestors"))
+check("base-uri 'self'", _directivas.get("base-uri") == ["'self'"], _directivas.get("base-uri"))
+_scripts = _directivas.get("script-src", ["(falta)"])
+check("script-src sin 'unsafe-inline' ni 'unsafe-eval' ni comodines",
+      bool(_directivas.get("script-src")) and not {"'unsafe-inline'", "'unsafe-eval'", "*", "https:", "data:"} & set(_scripts),
+      _scripts)
+# Con un host entero (https://cdn.jsdelivr.net), cualquier paquete de ese CDN
+# podría correr en el sitio: cada CDN va con la carpeta de la versión usada.
+_externos = [s for d in ("script-src", "connect-src") for s in _directivas.get(d, []) if s.startswith("https://")]
+check("script-src y connect-src: cada CDN con su carpeta, no el host entero",
+      all(re.fullmatch(r"https://[^/]+/.+/", s) for s in _externos), _externos)
+# Y cada script de un CDN que cargan las páginas cabe en esa lista (al subir de
+# versión, hay que cambiar también _headers).
+_permitidos = [s for s in _scripts if s.startswith("https://")]
+for _fuente in sorted((RAIZ / "web" / "public").glob("*.html")) + [RAIZ / "web" / "public" / "datos.js"]:
+    for _url in re.findall(r"""src[=:]\s*["'](https://[^"']+)""", _fuente.read_text(encoding="utf-8")):
+        check(f"{_fuente.name}: la CSP permite {_url.split('/')[-1]}",
+              any(_url.startswith(p) for p in _permitidos), _url)
+# Un <script> en línea o un onclick= en el HTML dejaría de correr con esta CSP.
+for _html in sorted((RAIZ / "web" / "public").glob("*.html")):
+    _texto = _html.read_text(encoding="utf-8")
+    check(f"{_html.name}: sin scripts en línea ni atributos on…=",
+          not re.search(r"<script(?![^>]*\bsrc=)[^>]*>|\son[a-z]+\s*=", _texto, re.IGNORECASE), _html.name)
 
 titulo("8. solo entra quien trae un token de Access firmado")
 # El Worker no confía en el encabezado de correo: verifica la firma del token.

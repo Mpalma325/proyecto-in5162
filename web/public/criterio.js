@@ -12,9 +12,9 @@ const CARACTERES_POR_TOKEN = 4;
 /**
  * Lo que costó en promedio corregir una respuesta, a partir de los trabajos
  * reales de evaluación y de prueba de criterio que ya corrieron:
- * { entrada, salida, modelo, llamadas } por llamada, o null si no hay datos.
+ * { entrada, salida, cache, modelo, llamadas } por llamada, o null si no hay datos.
  * `consumos` es lo de /api/consumo (del más nuevo al más viejo), con las
- * líneas ya leídas: [{ flujo, prueba, usos: [{ modelo, llamadas, entrada, salida }] }].
+ * líneas ya leídas: [{ flujo, prueba, usos: [{ modelo, llamadas, entrada, cache, salida }] }].
  */
 export function consumoPorRespuesta(consumos) {
   const usos = consumos.filter((c) => !c.prueba && (c.flujo === "tests.evaluar" || c.flujo === "tests.experimento"))
@@ -24,6 +24,8 @@ export function consumoPorRespuesta(consumos) {
   return {
     entrada: usos.reduce((a, u) => a + u.entrada, 0) / llamadas,
     salida: usos.reduce((a, u) => a + u.salida, 0) / llamadas,
+    // La parte de la entrada que el proveedor sacó de su caché, que cobra más barato.
+    cache: usos.reduce((a, u) => a + (u.cache || 0), 0) / llamadas,
     // El modelo de la corrida más reciente: es el que se va a usar.
     modelo: usos[0].modelo,
     llamadas,
@@ -39,7 +41,9 @@ export function estimarCosto({ n, porRespuesta, largoCandidato, largoVigente, pr
   if (!porRespuesta || !(n > 0)) return null;
   const extra = (largoCandidato - largoVigente) / CARACTERES_POR_TOKEN;
   const entrada = Math.max(0, Math.round(n * (porRespuesta.entrada + extra)));
+  // Se supone la misma caché por respuesta que en las correcciones reales, nunca más que la entrada.
   return sumarConsumo([{ modelo: porRespuesta.modelo, llamadas: n, entrada,
+    cache: Math.min(entrada, Math.round(n * (porRespuesta.cache || 0))),
     salida: Math.round(n * porRespuesta.salida) }], precios);
 }
 

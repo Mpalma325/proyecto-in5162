@@ -46,13 +46,22 @@ Cada llamada suma sus tokens al consumo del proceso, por modelo. Al terminar,
 el proceso imprime una línea por modelo:
 
 ```
-Consumo de API (gpt-5.4-mini): 3 llamadas, 7512 tokens de entrada, 1830 de salida.
+Consumo de API (gpt-5.4-mini): 3 llamadas, 7512 tokens de entrada (6144 en caché), 1830 de salida, US$ 0,009722.
 ```
 
+"(N en caché)" son los tokens de entrada que el proveedor sacó de su caché
+(en OpenAI, `usage.prompt_tokens_details.cached_tokens`); va solo si hubo. El
+US$ es el costo con los precios de ese momento (`PRECIOS_API`, que el motor
+pasa como variable de entorno): `[entrada, salida]` o `[entrada, salida,
+caché]` por millón de tokens. Sin el tercero, la caché se cobra como entrada.
+Sin precio para el modelo, la línea no trae US$.
+
 El sitio la lee de la salida de cada trabajo para mostrar cuánto costó
-(`web/public/consumo.js`), con los precios que se cargan en Configuración ›
-Parámetros. Si cambia la forma de la línea, cambia ese lector; la prueba
-`pruebas/web.py` (7f) lo comprueba con la línea que escribe este módulo.
+(`web/public/consumo.js`). Usa el US$ de la línea cuando está, así que cambiar
+un precio no cambia lo que costó un trabajo viejo; las líneas sin US$ las
+calcula con los precios de hoy. Si cambia la forma de la línea, cambia ese
+lector; la prueba `pruebas/web.py` (7f) lo comprueba con la línea que escribe
+este módulo.
 
 Una llamada que no pase por `completar()` (como la corrección de tareas, que
 usa el cliente de OpenAI directo) tiene que sumarse con `ia.registrar_uso()`,

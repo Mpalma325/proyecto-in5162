@@ -250,6 +250,31 @@ check("el resumen cuenta cada caso", P.resumenDecisiones([{ accion: "llenar" }, 
   P.resumenDecisiones([{ accion: "llenar" }, { accion: "llenar", revisar: "x" }, { accion: "distinta" }, { accion: "sin-dato" }]));
 check("el resumen en singular", P.resumenDecisiones([{ accion: "llenar" }, { accion: "ambiguo" }])
   === "Se llenó 1 modelo; 1 con varios precios en la fuente.", P.resumenDecisiones([{ accion: "llenar" }, { accion: "ambiguo" }]));
+// La caché: la fuente la trae para casi todo modelo de OpenAI y Anthropic.
+const conCache = { ...sug, cache: 0.075 };
+d = P.decidirFila({ entrada: "0.75", salida: "4.5" }, [0.75, 4.5], conCache);
+check("fila igual y fuente con caché, sin celda de caché: igual (no un falso «llenar»)", d.accion === "igual", ver(d));
+check("y el resumen no dice que se llenó", P.resumenDecisiones([d]) === "1 ya tenía ese precio.", P.resumenDecisiones([d]));
+d = P.decidirFila({ entrada: "0.75", salida: "4.5", cache: "" }, [0.75, 4.5], conCache);
+check("fila igual con la caché vacía: se llena solo la caché", d.accion === "llenar" && d.cache === "0.075"
+  && d.entrada === "0.75" && d.salida === "4.5", ver(d));
+d = P.decidirFila({ entrada: "0.75", salida: "4.5", cache: "0.075" }, [0.75, 4.5, 0.075], conCache);
+check("fila igual con la misma caché: igual", d.accion === "igual", ver(d));
+d = P.decidirFila({ entrada: "0.75", salida: "4.5", cache: "0.1" }, [0.75, 4.5, 0.1], conCache);
+check("otra caché escrita no se pisa: se ofrece «Usar»", d.accion === "distinta", ver(d));
+d = P.decidirFila({ entrada: "", salida: "", cache: "0.1" }, undefined, sug);
+check("sin caché en la fuente, la celda escrita no cuenta", d.accion === "llenar" && !("cache" in d), ver(d));
+check("caché más cara que la entrada: para revisar",
+  P.decidirFila({ entrada: "", salida: "", cache: "" }, undefined, { ...sug, cache: 1 }).revisar?.includes("caché"));
+check("el texto de la sugerencia trae la caché", P.textoPrecio(conCache) === "0.75 / 4.5 / caché 0.075", P.textoPrecio(conCache));
+check("PRECIOS_API acepta [entrada, salida] y [entrada, salida, caché]",
+  W.preciosValidos('{"a-1": [0.75, 4.5]}') && W.preciosValidos('{"a-1": [0.75, 4.5, 0.075]}'));
+check("y rechaza cuatro valores, uno solo o una caché negativa", !W.preciosValidos('{"a-1": [1, 2, 3, 4]}')
+  && !W.preciosValidos('{"a-1": [1]}') && !W.preciosValidos('{"a-1": [1, 2, -0.1]}'));
+r = await W.sugerirPrecios(["gpt-5.4-mini", "gpt-oss-120b"], traerCon({ "genai-prices": GENAI }), fuentes, HOY);
+check("sugerirPrecios trae la caché cuando la fuente la tiene, y null si no", r.modelos["gpt-5.4-mini"]?.cache === 0.075
+  && (r.modelos["gpt-oss-120b"] ?? { cache: null }).cache === null, ver(r.modelos));
+
 check("de dónde salió, con el nombre con que se encontró", P.textoOrigen({ ...sug, como: "gpt-5.4-mini" }) === "OpenAI, como gpt-5.4-mini"
   && P.textoOrigen(sug) === "OpenAI" && P.textoPrecio(sug) === "0.75 / 4.5");
 check("solo enlaces https", P.enlaceSeguro("javascript:alert(1)") === null && P.enlaceSeguro(sug.enlace) === sug.enlace

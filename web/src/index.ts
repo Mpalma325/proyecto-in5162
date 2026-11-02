@@ -38,7 +38,7 @@
  */
 
 import { correoVerificado } from "./acceso";
-import { NOMBRE_MODELO, precioValido, sugerirPrecios, traerFuente } from "./precios";
+import { NOMBRE_MODELO, preciosValidos, sugerirPrecios, traerFuente } from "./precios";
 
 export interface Env {
   DB: D1Database;
@@ -76,19 +76,6 @@ const FLUJOS = new Set([
 
 // Los parámetros que se pueden cambiar desde la página, con su validación.
 // Las credenciales no están: viven solo en el motor, nunca pasan por el sitio.
-// Precios de la API por modelo, en US$ por millón de tokens: {"modelo": [entrada, salida]}.
-// Los escribe quien administra el curso; el sitio solo multiplica.
-function preciosValidos(v: string): boolean {
-  if (v.length > 4000) return false;
-  try {
-    const o = JSON.parse(v);
-    return Boolean(o) && typeof o === "object" && !Array.isArray(o) && Object.entries(o).every(([m, p]) =>
-      NOMBRE_MODELO.test(m) && Array.isArray(p) && p.length === 2 && p.every(precioValido));
-  } catch {
-    return false;
-  }
-}
-
 const PARAMETROS: Record<string, (v: string) => boolean> = {
   MODELO: (v) => NOMBRE_MODELO.test(v),
   TEMPERATURA: (v) => /^\d+(\.\d+)?$/.test(v) && Number(v) >= 0 && Number(v) <= 2,

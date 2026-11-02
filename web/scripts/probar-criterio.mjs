@@ -25,6 +25,17 @@ const largo = c.estimarCosto({ n: 10, porRespuesta: por, largoCandidato: 5000, l
 check("un prompt más largo cuesta más entrada", largo.entrada === 31000 + 10 * 1000);
 check("sin precio para el modelo se avisa", c.estimarCosto({ n: 1, porRespuesta: por, largoCandidato: 0,
   largoVigente: 0, precios: {} }).sinPrecio[0] === "gpt-5.4-mini");
+// Con caché: 2000 de los 3100 tokens de entrada por respuesta salen de la caché del proveedor.
+const conCache = c.consumoPorRespuesta([{ flujo: "tests.evaluar", prueba: 0,
+  usos: [{ modelo: "gpt-5.4-mini", llamadas: 10, entrada: 31000, cache: 20000, salida: 8000 }] }]);
+check("el promedio trae la caché por respuesta", conCache.cache === 2000);
+const barato = c.estimarCosto({ n: 10, porRespuesta: conCache, largoCandidato: 1000, largoVigente: 1000,
+  precios: { "gpt-5.4-mini": [1, 4, 0.1] } });
+check("la estimación cobra la caché a su precio", barato.cache === 20000
+  && Math.abs(barato.usd - (11000 * 1 + 20000 * 0.1 + 8000 * 4) / 1e6) < 1e-12);
+const corto = c.estimarCosto({ n: 10, porRespuesta: conCache, largoCandidato: 0, largoVigente: 12000,
+  precios: { "gpt-5.4-mini": [1, 4, 0.1] } });
+check("la caché nunca pasa de la entrada", corto.cache === corto.entrada);
 
 // --- versiones
 check("la huella del prompt sale de la columna Versiones",

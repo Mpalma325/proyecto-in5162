@@ -15,10 +15,11 @@ export function muyDistinto(a, b) {
   return menor <= 0 || mayor / menor > 10;
 }
 
-/** Por qué conviene mirar una sugerencia antes de usarla, o null. `guardado` es [entrada, salida] de PRECIOS_API. */
+/** Por qué conviene mirar una sugerencia antes de usarla, o null. `guardado` es [entrada, salida(, caché)] de PRECIOS_API. */
 export function motivoRevisar(sugerido, guardado) {
   if (sugerido.entrada > sugerido.salida) return "La entrada sale más cara que la salida: revísalo.";
-  if (Array.isArray(guardado) && guardado.length === 2
+  if (valido(sugerido.cache) && sugerido.cache > sugerido.entrada) return "La caché sale más cara que la entrada: revísalo.";
+  if (Array.isArray(guardado) && guardado.length >= 2
     && (muyDistinto(Number(guardado[0]), sugerido.entrada) || muyDistinto(Number(guardado[1]), sugerido.salida))) {
     return "Es más de 10 veces distinto de lo guardado: revísalo.";
   }
@@ -27,29 +28,33 @@ export function motivoRevisar(sugerido, guardado) {
 
 /**
  * Qué hacer con una fila. `escrito` es lo que tienen sus celdas ({ entrada,
- * salida }, "" si vacía), `guardado` lo de PRECIOS_API y `sugerido` lo que
- * trajo el sitio (o null). Devuelve { accion, entrada, salida, revisar }:
- *   "llenar"     se escriben las celdas vacías (entrada y salida, como texto)
+ * salida, cache }, "" si vacía), `guardado` lo de PRECIOS_API y `sugerido` lo
+ * que trajo el sitio (o null). Devuelve { accion, entrada, salida, cache, revisar }:
+ *   "llenar"     se escriben las celdas vacías (como texto; cache solo si la fuente la trae)
  *   "igual"      ya tiene ese precio
  *   "distinta"   tiene otro: se muestra la sugerencia con «Usar»
  *   "ambiguo"    la fuente lo trae a varios precios (`duda` es su aviso): queda como está
  *   "sin-dato"   la fuente no trae el modelo: la fila queda como está
+ * La caché es opcional: si la fuente no la trae (o `escrito` no tiene la clave), su celda no cuenta ni se toca.
  */
 export function decidirFila(escrito, guardado, sugerido, duda = null) {
   if (!sugerido || !valido(sugerido.entrada) || !valido(sugerido.salida)) return { accion: duda ? "ambiguo" : "sin-dato" };
   const revisar = motivoRevisar(sugerido, guardado);
-  const celdas = [[escrito.entrada, sugerido.entrada], [escrito.salida, sugerido.salida]];
+  // Sin celda de caché en `escrito` no se cuenta: si no, una fila igual saldría como «llenar».
+  const conCache = valido(sugerido.cache) && "cache" in escrito;
+  const celdas = [[escrito.entrada, sugerido.entrada], [escrito.salida, sugerido.salida],
+    ...(conCache ? [[escrito.cache, sugerido.cache]] : [])];
   if (celdas.some(([v, s]) => v !== "" && Number(v) !== s)) return { accion: "distinta", revisar };
   if (celdas.every(([v]) => v !== "")) return { accion: "igual", revisar };
-  const [entrada, salida] = celdas.map(([v, s]) => (v === "" ? comoCelda(s) : v));
-  return { accion: "llenar", entrada, salida, revisar };
+  const [entrada, salida, cache] = celdas.map(([v, s]) => (v === "" ? comoCelda(s) : v));
+  return { accion: "llenar", entrada, salida, ...(conCache ? { cache } : {}), revisar };
 }
 
 /** Un precio como se escribe en la celda, sin el ruido de coma flotante (0.18000000000000002 -> "0.18"). */
 export const comoCelda = (x) => String(Number(x.toPrecision(12)));
 
-/** "0.75 / 4.5": los dos precios, como se escriben en las celdas. */
-export const textoPrecio = (s) => `${s.entrada} / ${s.salida}`;
+/** "0.75 / 4.5", y "0.75 / 4.5 / caché 0.075" si la fuente la trae: como se escriben en las celdas. */
+export const textoPrecio = (s) => `${s.entrada} / ${s.salida}${valido(s.cache) ? ` / caché ${s.cache}` : ""}`;
 
 /** De dónde salió un precio: "OpenAI", y el nombre con que se encontró si no era el pedido. */
 export function textoOrigen(s) {

@@ -23,10 +23,28 @@ export const NOMBRE_MODELO = /^(?=.{2,60}$)(?!.*\.\.)[A-Za-z0-9._:-]+(?:\/[A-Za-
 export const precioValido = (x: unknown): x is number =>
   typeof x === "number" && Number.isFinite(x) && x >= 0 && x < 10000;
 
+/**
+ * PRECIOS_API: {"modelo": [entrada, salida]}, o [entrada, salida, caché] si el
+ * proveedor cobra aparte la entrada en caché. Los escribe quien administra el
+ * curso; el sitio solo multiplica. Una tabla guardada con dos valores sigue valiendo.
+ */
+export function preciosValidos(v: string): boolean {
+  if (v.length > 4000) return false;
+  try {
+    const o = JSON.parse(v);
+    return esObjeto(o) && Object.entries(o).every(([m, p]) =>
+      NOMBRE_MODELO.test(m) && Array.isArray(p) && (p.length === 2 || p.length === 3) && p.every(precioValido));
+  } catch {
+    return false;
+  }
+}
+
 /** Lo que cobra un proveedor por un modelo, en US$ por millón de tokens. */
 export interface Oferta {
   entrada: number;
   salida: number;
+  /** La entrada en caché, si la fuente la trae. */
+  cache: number | null;
   /** Como lo nombra la fuente ("openai", "azure"): con esto se compara un prefijo. */
   proveedor: string;
   /** Para mostrar ("OpenAI"). */
@@ -53,7 +71,10 @@ export interface Fuente {
 const limpio = (x: unknown): unknown => (typeof x === "number" ? Number(x.toPrecision(12)) : x);
 
 function agregar(tabla: Tabla, nombre: string, oferta: Oferta): void {
-  oferta = { ...oferta, entrada: limpio(oferta.entrada) as number, salida: limpio(oferta.salida) as number };
+  // La caché es opcional: si la fuente no la trae o la trae rara, queda sin ella y el resto vale igual.
+  const cache = limpio(oferta.cache);
+  oferta = { ...oferta, entrada: limpio(oferta.entrada) as number, salida: limpio(oferta.salida) as number,
+    cache: precioValido(cache) ? cache : null };
   const lista = tabla.get(nombre);
   if (lista) lista.push(oferta); else tabla.set(nombre, [oferta]);
 }
@@ -142,7 +163,7 @@ export function leerGenaiPrices(datos: unknown, hoy: string): Tabla {
       for (const n of nombres) {
         agregar(tabla, n, {
           entrada: base(precios.input_mtok) as number, salida: base(precios.output_mtok) as number,
-          proveedor: p.id, nombreProveedor, fabricante: coincide(p.model_match, n), enlace,
+          cache: base(precios.cache_read_mtok) as number | null, proveedor: p.id, nombreProveedor, fabricante: coincide(p.model_match, n), enlace,
         });
       }
     }
@@ -163,7 +184,7 @@ export function leerLlmPrices(datos: unknown): Tabla {
   for (const x of lista) {
     if (!esObjeto(x) || typeof x.id !== "string" || typeof x.vendor !== "string") continue;
     agregar(tabla, x.id, {
-      entrada: x.input as number, salida: x.output as number,
+      entrada: x.input as number, salida: x.output as number, cache: x.input_cached as number | null,
       proveedor: x.vendor, nombreProveedor: x.vendor, fabricante: true, enlace: null,
     });
   }
@@ -194,6 +215,8 @@ export const sinFecha = (nombre: string): string => nombre.replace(/-(?:\d{4}-\d
 export interface Precio {
   entrada: number;
   salida: number;
+  /** La entrada en caché; null si la fuente no la trae (o la trae distinta según el proveedor). */
+  cache: number | null;
   /** De quién es el precio ("OpenAI"; si cobran lo mismo, varios separados por coma). */
   proveedor: string;
   enlace: string | null;
@@ -215,8 +238,11 @@ function elegir(ofertas: Oferta[], nombre: string, pedido: string): Busqueda {
       + "Cárgalo a mano con el de quien te cobra." };
   }
   const o = ofertas[0];
+  // La caché no decide la ambigüedad: si no coincide entre ellos, se sugiere sin caché y se cobra como entrada.
+  const caches = new Set(ofertas.map((x) => x.cache));
   return { precio: {
-    entrada: o.entrada, salida: o.salida, enlace: o.enlace, como: nombre === pedido ? null : nombre,
+    entrada: o.entrada, salida: o.salida, cache: caches.size === 1 ? o.cache : null,
+    enlace: o.enlace, como: nombre === pedido ? null : nombre,
     proveedor: [...new Set(ofertas.map((x) => x.nombreProveedor))].join(", "),
   } };
 }

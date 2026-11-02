@@ -10,6 +10,7 @@ import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo, evalu
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
 import { leerSemana } from "./preguntas.js";
 import { seccionSabana } from "./sabana.js";
+import { expressionInterpreter } from "./vega-interpreter.js";
 
 document.getElementById("nav")?.replaceWith(navegacion());
 
@@ -222,7 +223,9 @@ function grafico(spec, alClic = null) {
   };
   // Se dibuja cuando el nodo ya está en la página, para que tome su ancho.
   requestAnimationFrame(async () => {
-    const { view } = await vegaEmbed(nodo, completo, { actions: false, renderer: "svg", formatLocale: FORMATO_CL });
+    // ast + expr: las expresiones de Vega se interpretan en vez de compilarse con eval, que la CSP no deja.
+    const { view } = await vegaEmbed(nodo, completo, { actions: false, renderer: "svg", formatLocale: FORMATO_CL,
+      ast: true, expr: expressionInterpreter });
     if (alClic) {
       view.addEventListener("click", (_evento, item) => {
         if (item && item.datum && !Array.isArray(item.datum)) alClic(item.datum);

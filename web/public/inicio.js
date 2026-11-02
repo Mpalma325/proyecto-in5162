@@ -7,7 +7,7 @@ import {
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
 import { leerCsv } from "./csv.js";
-import { formatoUsd, leerConsumo, sumarConsumo } from "./consumo.js";
+import { formatoUsd, leerConsumo, notaMezcla, sumarConsumo } from "./consumo.js";
 
 document.getElementById("nav").replaceWith(navegacion());
 const app = document.getElementById("app");
@@ -83,7 +83,7 @@ function gasto(consumo, precios) {
   const monto = (t) => (t.llamadas ? (t.sinPrecio.length && !t.usd
     ? `${(t.entrada + t.salida).toLocaleString("es-CL")} tokens` : formatoUsd(t.usd)) : "—");
   const tarjeta = (etiqueta, t) => el("div", { class: "kpi" }, el("div", { class: "etiqueta" }, etiqueta),
-    el("div", { class: "valor" }, monto(t)),
+    el("div", { class: "valor", title: notaMezcla(t) || null }, monto(t)),
     el("div", { class: "sub" }, t.llamadas ? `${t.llamadas.toLocaleString("es-CL")} llamadas` : "sin llamadas"));
   if (!consumo.length) {
     return el("section", {}, el("h2", {}, "Gasto en la API"),
@@ -96,10 +96,13 @@ function gasto(consumo, precios) {
   return el("section", {}, el("h2", {}, "Gasto en la API"),
     el("div", { class: "kpis k3" }, tarjeta("Últimos 7 días", total(desde(7))), tarjeta("Últimos 30 días", total(desde(30))),
       tarjeta("Semestre", semestre)),
-    el("p", { class: "nota-pie" }, [
+    el("p", { class: "nota-pie" }, `${[
       porGrupo.map(([nombre, t]) => `${nombre}: ${monto(t)}`).join(" · "),
-      `Registrado desde el ${fechaCorta(primero)}.`,
-    ].filter(Boolean).join(". ")));
+      `Registrado desde el ${fechaCorta(primero)}`,
+      // Los trabajos de antes, o los de un modelo que no tenía precio cuando
+      // corrieron, no traen su US$: se calculan con los precios de hoy.
+      notaMezcla(semestre) ? "Los trabajos que no registraron su costo se calcularon con los precios de hoy" : "",
+    ].filter(Boolean).join(". ")}.`));
 }
 
 // ---------------------------------------------------------------- pantalla

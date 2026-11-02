@@ -26,6 +26,34 @@ const total = C.sumarConsumo([{ modelo: "a", llamadas: 1, entrada: 1e6, salida: 
 check("suma los dólares de los modelos con precio", Math.abs(total.usd - 3) < 1e-9, String(total.usd));
 check("y dice cuáles no tienen precio", JSON.stringify(total.sinPrecio) === '["b"]', JSON.stringify(total.sinPrecio));
 check("precios ilegibles no rompen la página", JSON.stringify(C.leerPrecios("{malo")) === "{}");
+
+// La línea de hoy, también del Python: con caché y con el US$ de ese momento.
+const conCache = C.leerConsumo(process.argv[4] || "")[0];
+check("lee la caché y el US$ de la línea del Python", conCache?.cache === 6144 && conCache.entrada === 7512
+  && conCache.salida === 1830 && Math.abs(conCache.usd - 0.009722) < 1e-9, JSON.stringify(conCache));
+const viejo = C.leerConsumo("Consumo de API (gpt-prueba): 2 llamadas, 4900 tokens de entrada, 1250 de salida.")[0];
+check("una línea vieja no trae caché ni US$", viejo.cache === 0 && viejo.usd === null, JSON.stringify(viejo));
+const cuatro = C.leerConsumo("Consumo de API (m): 1 llamada, 10 tokens de entrada, 5 de salida, US$ 0,0042.")[0];
+check("una línea con US$ de cuatro decimales también se lee", cuatro?.usd === 0.0042, JSON.stringify(cuatro));
+// Otro precio hoy: el trabajo con US$ queda igual, el viejo se calcula con el de hoy.
+const hoy = { "gpt-prueba": [10, 20, 1] };
+const mezcla = C.sumarConsumo([conCache, viejo], hoy);
+check("cambiar un precio no cambia lo que costó un trabajo con US$",
+  Math.abs(C.sumarConsumo([conCache], hoy).usd - 0.009722) < 1e-9);
+check("la línea sin US$ se calcula con los precios de hoy",
+  Math.abs(mezcla.usd - (0.009722 + (4900 * 10 + 1250 * 20) / 1e6)) < 1e-9 && mezcla.delMomento === 1 && mezcla.deHoy === 1,
+  JSON.stringify(mezcla));
+check("y la suma avisa que mezcla los dos", C.notaMezcla(mezcla) !== "" && C.notaMezcla(C.sumarConsumo([conCache], hoy)) === ""
+  && C.textoConsumo(mezcla).includes(C.notaMezcla(mezcla)), C.textoConsumo(mezcla));
+check("la caché y el aviso van en un solo paréntesis",
+  C.textoConsumo(mezcla).endsWith(`tokens (6.144 en caché; ${C.notaMezcla(mezcla)})`), C.textoConsumo(mezcla));
+check("tarifa con [entrada, salida]: la caché se cobra como entrada",
+  JSON.stringify(C.tarifa([1, 2])) === '{"entrada":1,"salida":2,"cache":1}');
+check("tarifa con [entrada, salida, caché]", JSON.stringify(C.tarifa([1, 2, 0.1])) === '{"entrada":1,"salida":2,"cache":0.1}');
+check("tarifa rechaza otras formas", [[1], [1, 2, 3, 4], [1, -2], ["1", 2], null].every((p) => C.tarifa(p) === null));
+check("costo cobra la caché a su precio, nunca más que la entrada",
+  Math.abs(C.costo({ entrada: 1e6, cache: 4e5, salida: 0 }, C.tarifa([1, 2, 0.1])) - 0.64) < 1e-12
+  && Math.abs(C.costo({ entrada: 100, cache: 500, salida: 0 }, C.tarifa([1, 2, 0.1])) - 1e-5) < 1e-15);
 check("los centavos de un trabajo no se pierden", C.formatoUsd(0.0042) === "US$ 0,0042", C.formatoUsd(0.0042));
 check("montos grandes con dos decimales", C.formatoUsd(12.5) === "US$ 12,50", C.formatoUsd(12.5));
 
