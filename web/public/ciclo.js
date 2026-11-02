@@ -122,10 +122,16 @@ export function flechasCiclo(c, enlace) {
       flecha("pendiente", "Evaluar", "Después de la entrega"));
   }
   const cerro = entrega.fecha ? entrega.fecha <= new Date() : false;
-  return el("div", { class: "flechas-estado" },
-    flecha("hecha", "Enviada", `${s.enviados} alumnos`, s.primerEnvio ? `el ${diaMes(s.primerEnvio)}` : null),
+  const enviada = flecha("hecha", "Enviada", `${s.enviados} alumnos`, s.primerEnvio ? `el ${diaMes(s.primerEnvio)}` : null);
+  // Sin fecha de entrega no hay cierre que esperar: lo que toca es evaluar cuando corresponda.
+  if (!entrega.fecha) {
+    return el("div", { class: "flechas-estado" }, enviada,
+      flecha("pendiente", "Entrega", textoEntrega, "sin fecha en preguntas.csv"),
+      flecha("actual", "Ahora toca", enlace("Evaluar las respuestas", "evaluar", n), "cuando corresponda"));
+  }
+  return el("div", { class: "flechas-estado" }, enviada,
     flecha(cerro ? "hecha" : "actual", cerro ? "La entrega cerró" : "La entrega cierra", textoEntrega,
-      entrega.fecha ? enCuanto(entrega.fecha) : "sin fecha en preguntas.csv"),
-    flecha(cerro || !entrega.fecha ? "actual" : "pendiente", cerro ? "Ahora toca" : "Después",
+      enCuanto(entrega.fecha)),
+    flecha(cerro ? "actual" : "pendiente", cerro ? "Ahora toca" : "Después",
       enlace("Evaluar las respuestas", "evaluar", n), cerro ? "esperan en el buzón del curso" : "cuando cierre la entrega"));
 }

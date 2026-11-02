@@ -20,7 +20,6 @@ const app = document.getElementById("app");
 const RUTAS = {
   alumnos: "alumnos.csv",
   preguntas: "tests_semanales/data/preguntas.csv",
-  alumnosTareas: "tareas/data/alumnos.csv",
   entregas: "tareas/data/entregas/",
   salidas: "tareas/data/salidas/",
 };
@@ -43,7 +42,9 @@ let sinGuardar = false; // hay un editor con cambios que no se guardaron
 // La dirección es #datos/<pestaña>[/<semana>]. "#parametros" era la de
 // Parámetros cuando estaba aparte; sigue funcionando.
 const [pestanaInicial, subInicial, semanaInicial] = location.hash.slice(1).split("/");
-let sub = pestanaInicial === "parametros" ? "parametros" : subInicial || "alumnos";
+// Tareas › Alumnos ya no existe: Tareas usa la misma lista que los tests (alumnos.csv).
+const pestanaDeHash = (p, s) => (p === "parametros" ? "parametros" : s === "alumnos-tareas" ? "alumnos" : s || "alumnos");
+let sub = pestanaDeHash(pestanaInicial, subInicial);
 // En Preguntas: qué semana se está viendo (#datos/preguntas/10) y si se edita
 // por semana o el archivo entero como tabla.
 let semanaPreguntas = Number(semanaInicial) || null;
@@ -285,7 +286,7 @@ async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
   const multiple = htmls.length > 1;
 
   for (const m of htmls) {
-    if (!miembroValido(m)) { lote.omitidos.push(m); continue; }
+    if (!miembroValido(m)) { lote.omitidos.push(`${m} (ruta inválida dentro del zip)`); continue; }
     // Un solo HTML en el zip de un grupo: toma el nombre del zip (Grupo1.zip -> Grupo1.html).
     const destino = prefijo && !multiple ? `${prefijo}.html` : prefijo ? `${prefijo}__${nombre(m)}` : nombre(m);
     lote.archivos.push([destino, await zip.file(m).async("uint8array")]);
@@ -296,13 +297,13 @@ async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
   }
   for (const m of rars) lote.omitidos.push(`${m} ${NO_RAR}`);
   for (const m of zips) {
-    if (!miembroValido(m)) { lote.omitidos.push(m); continue; }
+    if (!miembroValido(m)) { lote.omitidos.push(`${m} (ruta inválida dentro del zip)`); continue; }
     const anidado = sinExtension(m).replaceAll("/", "_");
     try {
       const interior = await JSZip.loadAsync(await zip.file(m).async("uint8array"));
       await extraerZip(interior, lote, prefijo ? `${prefijo}__${anidado}` : anidado, profundidad + 1);
     } catch {
-      lote.omitidos.push(m);
+      lote.omitidos.push(`${m} (no se pudo abrir el zip)`);
     }
   }
   for (const m of nombres) {
@@ -331,7 +332,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
         const JSZip = await cargarJsZip();
         await extraerZip(await JSZip.loadAsync(await f.arrayBuffer()), lote);
       } catch (e) {
-        lote.omitidos.push(`${f.name}${e.message.includes("lector") ? ` (${e.message})` : ""}`);
+        lote.omitidos.push(`${f.name} (${e.message.includes("lector") ? e.message : "no se pudo abrir el zip"})`);
       }
     } else if (n.endsWith(".rar")) lote.omitidos.push(`${f.name} ${NO_RAR}`);
   }
@@ -341,7 +342,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
   for (const [i, [n, datos]] of lote.archivos.entries()) {
     const seguro = nombreSeguro(n);
     destino.replaceChildren(caja("info", `Subiendo ${i + 1} de ${lote.archivos.length}: ${seguro}`));
-    if (existe(carpeta + seguro) || agregados.includes(seguro)) { lote.omitidos.push(seguro); continue; }
+    if (existe(carpeta + seguro) || agregados.includes(seguro)) { lote.omitidos.push(`${seguro} (ya existía)`); continue; }
     try {
       await api(urlArchivo(carpeta + seguro), {
         method: "PUT", body: datos,
@@ -350,8 +351,8 @@ async function procesarEntregas(tarea, ficheros, destino) {
           ...conDetalle(`Subió la entrega ${seguro} de ${tarea}`) },
       });
       agregados.push(seguro);
-    } catch {
-      lote.omitidos.push(seguro);
+    } catch (e) {
+      lote.omitidos.push(`${seguro} (no se pudo subir: ${e.message})`);
     }
   }
   archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
@@ -359,8 +360,8 @@ async function procesarEntregas(tarea, ficheros, destino) {
   const partes = [];
   if (agregados.length) partes.push(caja("exito", `${agregados.length} HTML(s) agregados a entregas/${tarea}/.`));
   if (lote.omitidos.length) {
-    partes.push(caja("aviso", `${lote.omitidos.length} archivo(s) omitidos (ya existían o tenían una ruta `
-      + `inválida dentro del zip): ${lote.omitidos.slice(0, 10).join(", ")}`));
+    const mas = lote.omitidos.length > 10 ? ` y ${lote.omitidos.length - 10} más` : "";
+    partes.push(caja("aviso", `${lote.omitidos.length} archivo(s) omitidos: ${lote.omitidos.slice(0, 10).join(", ")}${mas}.`));
   }
   if (!partes.length) partes.push(caja("info", "No se encontraron archivos .html para procesar."));
   destino.replaceChildren(...partes);
@@ -372,7 +373,7 @@ function vistaEntregas() {
   if (!conocidas.includes(porDefecto)) conocidas.push(porDefecto);
   const tarea = el("input", { type: "text", list: "tareas-conocidas", value: porDefecto, size: 6,
     pattern: "T\\d{1,2}" });
-  const ficheros = el("input", { type: "file", multiple: true, accept: ".zip,.rar,.html" });
+  const ficheros = el("input", { type: "file", multiple: true, accept: ".zip,.html" });
   const resultado = el("div");
   const listado = el("div");
   const boton = el("button", { class: "primario", type: "button" }, "Procesar entregas");
@@ -416,7 +417,7 @@ function vistaEntregas() {
     el("datalist", { id: "tareas-conocidas" }, conocidas.map((t) => el("option", { value: t }))),
     el("div", { class: "fila-campos" },
       el("label", { class: "campo" }, "Tarea", tarea),
-      el("label", { class: "campo" }, "Entregas (.zip, .rar o .html)", ficheros),
+      el("label", { class: "campo" }, "Entregas (.zip o .html; los .rar hay que descomprimirlos antes)", ficheros),
       boton),
     el("p", { class: "nota-pie" }, "Una entrega que ya está no se reemplaza."),
     resultado,
@@ -502,7 +503,7 @@ function editorPrompt(ruta) {
 // ---------------------------------------------------------------- contexto del curso
 
 const CARPETA_CONTEXTO = "tareas/data/clases/";
-const EXT_CONTEXTO = /\.(html|md|txt|R|r|py)$/;
+const EXT_CONTEXTO = /\.(html|md|txt|r|py)$/i;
 
 /**
  * El material del curso que el modelo recibe como contexto al generar las
@@ -678,11 +679,16 @@ function formulario(titulo, texto, campos, leer, exito) {
     const hay = JSON.stringify(leer()) !== guardado;
     if (hay) parametrosSinGuardar.add(titulo); else parametrosSinGuardar.delete(titulo);
     sinGuardar = parametrosSinGuardar.size > 0;
-    estado.textContent = hay ? "Cambios sin guardar" : "Sin cambios";
-    estado.classList.toggle("pendiente", hay);
-    boton.disabled = !hay;
+    // Con un campo inválido, Guardar sigue activo: al pulsarlo dice qué corregir.
+    const invalido = [...seccion.querySelectorAll("input")].some((i) => !i.checkValidity());
+    estado.textContent = invalido ? "Hay un valor fuera de rango" : hay ? "Cambios sin guardar" : "Sin cambios";
+    estado.classList.toggle("pendiente", hay || invalido);
+    boton.disabled = !hay && !invalido;
   };
   boton.addEventListener("click", async () => {
+    // Un valor fuera de rango se dice junto al campo, en vez de guardarse ajustado en silencio.
+    const malo = [...seccion.querySelectorAll("input")].find((i) => !i.checkValidity());
+    if (malo) { malo.reportValidity(); return; }
     const datos = leer();
     boton.disabled = true;
     try {
@@ -729,6 +735,15 @@ function camposPrecios() {
   const filas = modelos.map((m) => {
     const [entrada, salida] = (actuales[m] || ["", ""]).map((x) => el("input", {
       type: "number", min: "0", step: "0.001", value: x === "" ? "" : String(x), "aria-label": m }));
+    // Una fila a medias no se guarda: se avisa en vez de descartarla callada.
+    const revisarFila = () => {
+      const medias = (entrada.value === "") !== (salida.value === "");
+      for (const x of [entrada, salida]) {
+        x.setCustomValidity(medias && x.value === "" ? `Completa Entrada y Salida de ${m}, o deja las dos vacías.` : "");
+      }
+    };
+    entrada.addEventListener("input", revisarFila);
+    salida.addEventListener("input", revisarFila);
     return { m, entrada, salida };
   });
   const tabla = el("div", { class: "tabla-envoltura precios" }, el("table", {},
@@ -821,12 +836,31 @@ function irA(id) {
   dibujar();
 }
 
+// Cambiar solo el # (un marcador, la barra de direcciones) también cambia de
+// pestaña. Si se queda donde estaba por cambios sin guardar, el # vuelve.
+addEventListener("hashchange", () => {
+  const [p, s, sem] = location.hash.slice(1).split("/");
+  const id = pestanaDeHash(p, s);
+  const semana = id === "preguntas" && Number(sem) ? Number(sem) : semanaPreguntas;
+  if (id === sub && semana === semanaPreguntas) return;
+  if (!PESTANAS.some(([x]) => x === id) || !descartarCambios()) {
+    history.replaceState(null, "", `#datos/${sub}`);
+    return;
+  }
+  sub = id;
+  semanaPreguntas = semana;
+  dibujar();
+});
+
 /** Arriba de todo, en una línea: el semestre activo, si le falta algo, y crear otro. */
 function cabecera() {
   const mensaje = el("div");
   const sel = el("select", {}, semestres.map((s) => el("option", { value: s.id, selected: s.id === semestre }, s.id)));
   sel.addEventListener("change", () => {
     if (!descartarCambios()) { sel.value = semestre; return; }
+    // El semestre activo es uno para todos, también para las tareas programadas.
+    if (!confirm(`Desde ahora el sitio y las tareas programadas (como las respuestas a dudas) usan ${sel.value} `
+      + "para todos los docentes. ¿Activarlo?")) { sel.value = semestre; return; }
     cambiarSemestre({ id: sel.value, activo: true }, mensaje);
   });
   const nuevo = el("input", { type: "text", placeholder: "2027-1", size: 12 });
@@ -838,6 +872,8 @@ function cabecera() {
       return;
     }
     if (!descartarCambios()) return;
+    if (semestre && !confirm(`Se crea ${id} desde la plantilla y queda activo para todos, en lugar de ${semestre}, `
+      + "también para las tareas programadas. ¿Crear y activar?")) return;
     // Mientras copia la plantilla, el botón no se puede volver a apretar.
     crear.disabled = true;
     crear.textContent = "Creando…";
@@ -913,14 +949,13 @@ const SECCIONES = [
     ["preguntas", "Preguntas", vistaPreguntas],
   ]],
   ["Tareas", [
-    ["alumnos-tareas", "Alumnos", () => [editorCsv(RUTAS.alumnosTareas)]],
     ["entregas", "Entregas", vistaEntregas],
     ["feedback", "Feedback", vistaFeedback],
     ["contexto", "Contexto", vistaContexto],
   ]],
   ["La IA", [
     ["prompts", "Prompts", vistaPrompts],
-    ["probar", "Probar criterio", () => vistaProbarCriterio({ semestre, archivos })],
+    ["probar", "Probar criterio", () => vistaProbarCriterio({ semestre, archivos, alCambiar: (hay) => { sinGuardar = hay; } })],
     ["parametros", "Parámetros", vistaParametros],
   ]],
   ["Registro", [

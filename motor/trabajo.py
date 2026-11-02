@@ -156,7 +156,8 @@ def _experimento(a: dict) -> list[str]:
     if not (1 <= n <= 300 and 0 <= semilla <= 99999):
         raise ValueError("Cantidad o semilla fuera de rango.")
     cmd = ["-c", _EXPERIMENTO, prompt, "-n", str(n), "--semilla", str(semilla)]
-    if a.get("semana"):
+    # Sin semana son todas; una semana 0 o vacía es un error, no "todas".
+    if a.get("semana") is not None:
         cmd += ["--semana", _semana(a)]
     # Aquí "prueba" es "solo mostrar la muestra": no llama al modelo.
     return cmd + _prueba(a)

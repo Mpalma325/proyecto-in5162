@@ -103,14 +103,15 @@ const PARAMETROS: Record<string, (v: string) => boolean> = {
 
 // Material del curso que el modelo usa como contexto (modulos/tareas/contexto.py).
 // Es lo único que se puede borrar desde la página.
-const CONTEXTO = /^tareas\/data\/clases\/[^/]{1,200}\.(html|md|txt|R|r|py)$/;
+// La extensión da igual en mayúsculas (Clase1.HTML), como en el lector de Python;
+// la carpeta no.
+const CONTEXTO = /^tareas\/data\/clases\/[^/]{1,200}\.(?:[hH][tT][mM][lL]|[mM][dD]|[tT][xX][tT]|[rR]|[pP][yY])$/;
 
 // Qué archivos del semestre puede escribir una persona desde la página: lo
 // mismo que se edita hoy en Streamlit. El resto solo lo escriben los trabajos.
 const EDITABLES = [
   /^alumnos\.csv$/,
   /^tests_semanales\/data\/preguntas\.csv$/,
-  /^tareas\/data\/alumnos\.csv$/,
   /^(tests_semanales|tareas)\/prompts\/[A-Za-z0-9_\-]+\.md$/,
   // Las entregas: el HTML de cada grupo y, si venía, el .Rmd con el mismo nombre.
   // Y la asignación de preguntas elegida a mano en el chequeo de Tareas.

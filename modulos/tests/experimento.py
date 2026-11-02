@@ -394,8 +394,9 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
                   f"{f['NotaTexto'] or '?'}, originalidad {f['Originalidad'] or '?'}")
         print(f"\nNo se llamó al modelo, así que no hay nada que comparar. "
               f"Serían {len(pendientes)} llamadas.")
-        print("Para probarlo de verdad, apaga «Solo mostrar la muestra» en la "
-              "app, o quita --dry-run en la terminal.")
+        print("Para probarlo de verdad, pulsa «Probar el criterio» en la web "
+              "(o apaga «Solo mostrar la muestra» en la app de escritorio), o quita "
+              "--dry-run en la terminal.")
         return []
 
     semanas: dict[int, object] = {}

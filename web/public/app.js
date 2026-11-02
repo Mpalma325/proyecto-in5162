@@ -35,6 +35,7 @@ const app = document.getElementById("app");
 const estado = {
   semestres: [], semestre: null, activo: null,
   items: [], grupos: [], selItems: new Set(), selGrupos: new Set(),
+  semanasAbiertas: new Map(), // correo -> semanas abiertas en su ficha
   pestana: "Alumnos", alumno: null,
   // preguntas.csv del semestre, para mostrar en la ficha lo que se le preguntó a cada uno.
   preguntas: null,
@@ -94,12 +95,20 @@ function tarjeta(titulo, nodo, { pista = null, pie = null } = {}) {
 }
 
 
+// Cómo se llaman en pantalla las columnas de las tablas que vienen de agregaciones.py.
+const TITULOS = {
+  Item: "Semana", Casillas: "Casillas", Enviados: "Enviados", EnviosSinRegistro: "Envíos sin registro",
+  Respondieron: "Respondieron", SinResponder: "Sin responder", Evaluados: "Evaluados",
+  PendientesEvaluar: "Pendientes de evaluar", TasaRespuesta: "% de respuesta", NotaMedia: "Nota media",
+  NotaMin: "Nota mín.", NotaMax: "Nota máx.", Porcentaje: "%", Nivel: "Nivel",
+};
+
 function tabla(filas, columnas = null) {
   if (!filas.length) return el("p", { class: "tenue" }, "Sin filas.");
   const cols = columnas || Object.keys(filas[0]);
   return el("div", { class: "tabla-envoltura" },
     el("table", {},
-      el("thead", {}, el("tr", {}, cols.map((c) => el("th", {}, c)))),
+      el("thead", {}, el("tr", {}, cols.map((c) => el("th", {}, TITULOS[c] || c)))),
       el("tbody", {}, filas.map((f) =>
         el("tr", {}, cols.map((c) => el("td", {}, formatear(f[c]))))))));
 }
@@ -108,6 +117,8 @@ function formatear(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "boolean") return v ? "sí" : "no";
   if (Array.isArray(v)) return v.join(", ");
+  // Con coma y a lo más dos decimales, como el resto de la página.
+  if (typeof v === "number") return v.toLocaleString("es-CL", { maximumFractionDigits: 2 });
   return v;
 }
 
@@ -195,6 +206,9 @@ function temaVega() {
  * Dibuja un gráfico. Si recibe `alClic`, cada barra o punto es clickeable y
  * llama a esa función con los datos de lo que se tocó.
  */
+// Números de los ejes como en el resto de la página: 4,5 y 1.200.
+const FORMATO_CL = { decimal: ",", thousands: ".", grouping: [3], currency: ["$", ""] };
+
 function grafico(spec, alClic = null) {
   const nodo = el("div", { class: "grafico" });
   const config = temaVega();
@@ -208,7 +222,7 @@ function grafico(spec, alClic = null) {
   };
   // Se dibuja cuando el nodo ya está en la página, para que tome su ancho.
   requestAnimationFrame(async () => {
-    const { view } = await vegaEmbed(nodo, completo, { actions: false, renderer: "svg" });
+    const { view } = await vegaEmbed(nodo, completo, { actions: false, renderer: "svg", formatLocale: FORMATO_CL });
     if (alClic) {
       view.addEventListener("click", (_evento, item) => {
         if (item && item.datum && !Array.isArray(item.datum)) alClic(item.datum);
@@ -219,6 +233,8 @@ function grafico(spec, alClic = null) {
 }
 
 const campo = (field, type, extra = {}) => ({ field, type, ...extra });
+// Un eje que cuenta cosas: sin fracciones (0,2 evaluaciones no existe).
+const EJE_CONTEO = { tickMinStep: 1, format: "d" };
 const tooltips = (campos) => campos.map((c) => ({ field: c }));
 
 /** Eje de notas ajustado a los datos con medio punto de margen, dentro de 1 a 7. */
@@ -545,7 +561,7 @@ function seccionCurso() {
     height: ALTO, data: { values: dist }, mark: "bar",
     encoding: {
       x: campo("Etiqueta", "ordinal", { title: "Nota", sort: dist.map((d) => d.Etiqueta) }),
-      y: campo("Alumnos", "quantitative", { title: "Evaluaciones" }),
+      y: campo("Alumnos", "quantitative", { title: "Evaluaciones", axis: EJE_CONTEO }),
       tooltip: [{ field: "Etiqueta", title: "Nota" }, { field: "Alumnos", title: "Evaluaciones" }],
     },
   }, (d) => abrirDetalle(`Nota ${d.Etiqueta}`, { tramo: d.Tramo, estado: "evaluada" }))
@@ -556,7 +572,7 @@ function seccionCurso() {
     height: ALTO, data: { values: orig }, mark: "bar",
     encoding: {
       x: campo("Originalidad", "ordinal", { title: "", sort: orig.map((d) => d.Originalidad) }),
-      y: campo("Evaluaciones", "quantitative"),
+      y: campo("Evaluaciones", "quantitative", { axis: EJE_CONTEO }),
       color: campo("Originalidad", "nominal", { scale: escalaOriginalidad(orig).escala, legend: null }),
       tooltip: tooltips(["Originalidad", "Evaluaciones"]),
     },
@@ -666,7 +682,9 @@ function seccionGrupos() {
   const distintos = new Set(pg.map((f) => f.Grupo));
   if (!pg.length || distintos.size < 2) {
     return [
-      caja("info", "Este semestre no tiene dos grupos."),
+      caja("info", estado.grupos.length >= 2
+        ? "Los filtros dejan un solo grupo: marca los dos en Grupos para compararlos."
+        : "Este semestre no tiene dos grupos."),
       pg.length ? tabla(pg) : null,
     ];
   }
@@ -765,7 +783,7 @@ function seccionCorrelaciones() {
   // El par elegido, si sigue existiendo en este corte; si no, el primero de la tabla.
   let [x, y] = cfg[cfg.unidad];
   let celda = m.Celdas.find((c) => (c.X === x && c.Y === y) || (c.X === y && c.Y === x));
-  if (!celda) celda = m.Celdas[0];
+  if (!celda) celda = m.Celdas.find((c) => hay(c.R)) || m.Celdas[0];
   [x, y] = [celda.X, celda.Y];
   cfg[cfg.unidad] = [x, y];
 
@@ -819,8 +837,9 @@ function seccionCorrelaciones() {
   const gPuntos = grafico({
     height: ALTO, data: { values: puntos },
     encoding: {
-      x: campo(x, "quantitative", { title: etiqueta[x], scale: { zero: false } }),
-      y: campo(y, "quantitative", { title: etiqueta[y], scale: { zero: false } }),
+      // Sin "~": con todos los valores iguales, el eje mostraba ruido de coma flotante (99,9999…).
+      x: campo(x, "quantitative", { title: etiqueta[x], scale: { zero: false }, axis: { format: ",.4~r" } }),
+      y: campo(y, "quantitative", { title: etiqueta[y], scale: { zero: false }, axis: { format: ",.4~r" } }),
     },
     layer: [
       {
@@ -830,10 +849,11 @@ function seccionCorrelaciones() {
           tooltip: tooltips(porAlumno ? ["Nombre", "Grupo", x, y] : ["Nombre", "Item", x, y]),
         },
       },
-      {
+      // La recta solo si hay correlación: sin ella, se ajustaría sobre ruido.
+      ...(hay(celda.R) ? [{
         transform: [{ regression: y, on: x }],
         mark: { type: "line", color: c.tenue, strokeDash: [5, 4] },
-      },
+      }] : []),
     ],
   }, (d) => { if (d.Correo) irAFicha(d.Correo); });
 
@@ -890,8 +910,27 @@ function celdaAlumno(a, col) {
   return el("td", { class: clase }, texto);
 }
 
+/**
+ * Las cifras de un alumno sin la semana en curso: mientras no se evalúa, no se
+ * sabe quién respondió (las respuestas esperan en el buzón). Es la misma regla
+ * del indicador "Sin responder" de arriba, para que las cifras cuadren.
+ */
+function sinSemanaEnCurso(fila, enCursoSinResponder) {
+  if (!enCursoSinResponder) return fila;
+  const Enviados = fila.Enviados - enCursoSinResponder;
+  return { ...fila, Enviados, SinResponder: fila.SinResponder - enCursoSinResponder,
+    TasaRespuesta: Enviados ? Math.round((fila.Respondieron / Enviados) * 1000) / 10 : null };
+}
+
 function seccionAlumnos() {
-  const pa = calc("por_alumno");
+  const enCurso = itemEnCurso();
+  const porCorreo = new Map();
+  if (enCurso) {
+    for (const c of llamar("_casillas", JSON.stringify({ item: enCurso, estado: "sin_responder" }))) {
+      porCorreo.set(c.Correo, (porCorreo.get(c.Correo) || 0) + 1);
+    }
+  }
+  const pa = calc("por_alumno").map((a) => sinSemanaEnCurso(a, porCorreo.get(a.Correo)));
   if (!pa.length) return [caja("info", "Sin alumnos que mostrar con estos filtros.")];
 
   if (!estado.alumno || !pa.some((a) => a.Correo === estado.alumno)) estado.alumno = pa[0].Correo;
@@ -975,14 +1014,17 @@ function seccionAlumnos() {
 function fichaAlumno(correo) {
   const f = llamar("_ficha_todas", correo);
   if (!f || !f.Resumen) return [el("p", { class: "tenue" }, "No hay datos de este alumno.")];
-  const r = f.Resumen;
+  const enCursoAbierta = f.Casillas.some((c) => c.Item === itemEnCurso() && c.Enviado && !c.Respondio)
+    ? itemEnCurso() : null;
+  const r = sinSemanaEnCurso(f.Resumen, enCursoAbierta ? 1 : 0);
   const partes = [
     el("h3", { class: "titulo-ficha" }, `Ficha de ${f.Nombre}`),
     el("p", { class: "nota-pie" }, `${f.Correo} · grupo ${f.Grupo || "sin grupo"}`),
     el("div", { class: "kpis k3" },
       kpi({ etiqueta: "Nota media", valor: numero(r.NotaMedia, 1),
         sub: hay(r.NotaMin) ? `mín ${numero(r.NotaMin)} · máx ${numero(r.NotaMax)}` : null }),
-      kpi({ etiqueta: "Respondió", valor: `${r.Respondieron} de ${r.Enviados}`, sub: "semanas que la recibió" }),
+      kpi({ etiqueta: "Respondió", valor: `${r.Respondieron} de ${r.Enviados}`,
+        sub: enCursoAbierta ? `semanas que la recibió, sin contar la semana ${enCursoAbierta} (en curso)` : "semanas que la recibió" }),
       kpi({ etiqueta: "Con nota", valor: entero(r.Evaluados) })),
   ];
 
@@ -1008,7 +1050,18 @@ function fichaAlumno(correo) {
       : c.Item === itemEnCurso() ? "semana en curso, aún sin evaluar" : "sin responder";
     const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
     const enunciados = semana ? semana.preguntas.map((p) => p[grupo].texto).filter((x) => x.trim()) : [];
-    partes.push(el("details", { open: Boolean(elegidas && elegidas.has(c.Item)) },
+    // Las que abrió el docente siguen abiertas al redibujar (cambio de tema, girar el celular).
+    const abiertas = estado.semanasAbiertas.get(correo);
+    partes.push(el("details", {
+      open: abiertas ? abiertas.has(String(c.Item)) : Boolean(elegidas && elegidas.has(c.Item)),
+      ontoggle: (e) => {
+        const set = estado.semanasAbiertas.get(correo)
+          || new Set([...e.target.parentNode.querySelectorAll(":scope > details[open]")].map((d) => d.dataset.item));
+        if (e.target.open) set.add(String(c.Item)); else set.delete(String(c.Item));
+        estado.semanasAbiertas.set(correo, set);
+      },
+      "data-item": c.Item,
+    },
       el("summary", {}, `Semana ${c.Item} — ${est}`),
       el("div", { class: "contenido" },
       enunciados.length
@@ -1039,7 +1092,8 @@ function formularioAjuste(c) {
   const boton = el("button", { class: "descarga", type: "button" }, "Guardar ajuste");
   boton.addEventListener("click", async () => {
     const n = nota.value.trim().replace(".", ",");
-    if (!/^\d{1,2}(,\d)?$/.test(n) || Number(n.replace(",", ".")) > 7) {
+    const v = Number(n.replace(",", "."));
+    if (!/^\d{1,2}(,\d)?$/.test(n) || v < 1 || v > 7) {
       destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
       return;
     }
@@ -1132,18 +1186,18 @@ function descargarCsv() {
 // Un clic marca o desmarca; dos clics seguidos dejan solo esa. Se espera un
 // momento antes de aplicar el primero: si se redibujara al tiro, el segundo clic
 // caería en otro botón.
+// Una selección vacía no filtra (son todas): se muestra con todas marcadas, y
+// la última marcada no se puede desmarcar, para que nunca se vea vacía.
 let clicPendiente = null;
 function chips(opciones, seleccion) {
-  const todas = opciones.length && opciones.every((o) => seleccion.has(o));
-  const alternar = el("button", {
+  const marcada = (o) => !seleccion.size || seleccion.has(o);
+  const todas = opciones.every(marcada);
+  const alternar = todas ? null : el("button", {
     class: "chip alternar", type: "button",
-    onclick: () => {
-      if (todas) seleccion.clear(); else opciones.forEach((o) => seleccion.add(o));
-      dibujar();
-    },
-  }, todas ? "Ninguna" : "Todas");
+    onclick: () => { seleccion.clear(); dibujar(); },
+  }, "Todas");
   return el("div", { class: "chips" }, alternar, opciones.map((o) => el("button", {
-    class: "chip", type: "button", "aria-pressed": String(seleccion.has(o)), title: "Doble clic: solo esta",
+    class: "chip", type: "button", "aria-pressed": String(marcada(o)), title: "Doble clic: solo esta",
     onclick: () => {
       if (clicPendiente && clicPendiente.o === o && clicPendiente.seleccion === seleccion) {
         clearTimeout(clicPendiente.reloj);
@@ -1155,7 +1209,10 @@ function chips(opciones, seleccion) {
       }
       const reloj = setTimeout(() => {
         clicPendiente = null;
-        if (seleccion.has(o)) seleccion.delete(o); else seleccion.add(o);
+        if (!seleccion.size) opciones.forEach((x) => seleccion.add(x));
+        if (!seleccion.has(o)) seleccion.add(o);
+        else if (seleccion.size > 1) seleccion.delete(o);
+        if (opciones.every((x) => seleccion.has(x))) seleccion.clear();
         dibujar();
       }, 250);
       clicPendiente = { o, seleccion, reloj };
@@ -1310,6 +1367,19 @@ const redibujar = () => { if (py && estado.semestre) dibujar(); };
 MEDIA_OSCURO.addEventListener("change", redibujar);
 window.addEventListener("cambio-tema", redibujar);
 MEDIA_ANGOSTA.addEventListener("change", redibujar);
+
+// Cambiar solo el # (un marcador, el buscador de Inicio con la página abierta)
+// también cambia de pestaña o de alumno. Las pestañas usan replaceState, que
+// no dispara hashchange.
+window.addEventListener("hashchange", () => {
+  const [pedida, correo] = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (!py || !estado.semestre || !PESTANAS.some((p) => p.id === pedida)) return;
+  if (pedida === "Alumnos" && correo) { irAFicha(correo.toLowerCase()); return; }
+  if (pedida === estado.pestana) return;
+  cerrarDetalle();
+  estado.pestana = pedida;
+  dibujar();
+});
 
 async function iniciar() {
   // La pestaña va en la dirección (#Grupos), para poder mandar un enlace directo.

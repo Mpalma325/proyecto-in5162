@@ -78,6 +78,14 @@ function irA(id, semana) {
   dibujar();
 }
 
+// Cambiar solo el # (un marcador, la barra de direcciones) también cambia de
+// pestaña. irA usa replaceState, que no dispara hashchange: no hay bucle.
+window.addEventListener("hashchange", () => {
+  if (location.hash === "#experimento") { location.replace("/datos#datos/probar"); return; }
+  const id = location.hash.slice(1);
+  if (semestre && id !== pestana.id && PESTANAS.some((p) => p.id === id)) irA(id);
+});
+
 // ---------------------------------------------------------------- en qué va el curso
 // La lectura vive en ciclo.js, que la comparte con Inicio.
 
@@ -215,7 +223,8 @@ function estadoParaPestana(id, n) {
       return `La entrega de la semana ${n} cierra el ${fechaCorta(fecha)} (${enCuanto(fecha)}). Si evalúas antes, `
         + "las respuestas que lleguen después quedan para otra corrida.";
     }
-    return `La entrega de la semana ${n} ya cerró${fecha ? ` (${fechaCorta(fecha)})` : texto ? ` (${texto})` : ""}.`;
+    if (!fecha && !texto) return `La semana ${n} no tiene fecha de entrega en preguntas.csv: evalúa cuando corresponda.`;
+    return `La entrega de la semana ${n} ya cerró${fecha ? ` (${fechaCorta(fecha)})` : ` (${texto})`}.`;
   }
   if (id === "resumen") {
     return s.evaluadas ? `La semana ${n} tiene ${s.evaluadas} respuestas con nota.`

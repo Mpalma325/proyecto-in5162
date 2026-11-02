@@ -2,7 +2,7 @@
 // la API. Los gráficos y las tablas del semestre están en Resultados.
 
 import {
-  api, caja, chipSemestre, el, fallidosSinResolver, fechaCorta, historialTrabajos, navegacion, preciosApi,
+  api, caja, chipSemestre, el, fallidosSinResolver, fechaCorta, historialTrabajos, navegacion, nombreFlujo, preciosApi,
   seguirTrabajo,
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
@@ -43,7 +43,8 @@ function atencion(c, trabajos, consumo, precios) {
   }
   for (const f of fallidosSinResolver(trabajos)) {
     const sobre = f.argumentos?.semana ? ` de la semana ${f.argumentos.semana}` : f.argumentos?.tarea ? ` de ${f.argumentos.tarea}` : "";
-    items.push(el("li", {}, `Falló ${nombreTrabajo(f)}${sobre} (${fechaCorta(new Date(f.creado))}) y no se volvió a correr. `,
+    const veces = f.intentos > 1 ? `, ${f.intentos} intentos` : "";
+    items.push(el("li", {}, `Falló ${nombreTrabajo(f)}${sobre} (${fechaCorta(new Date(f.creado))}${veces}) y no se volvió a correr. `,
       el("a", { href: "#resultado", onclick: (e) => { e.preventDefault(); verTrabajo(f); } }, "Ver")));
   }
   const sinPrecio = sumarConsumo(consumo.flatMap((t) => leerConsumo(t.lineas.join("\n"))), precios).sinPrecio;
@@ -60,8 +61,10 @@ const NOMBRES = {
   "tests.tutoria": "la respuesta a dudas", "tests.experimento": "la prueba de criterio",
   "tareas.generar": "la generación de preguntas", "tareas.enviar": "el envío", "tareas.recolectar": "la recolección",
   "tareas.corregir": "la corrección", "tareas.segunda": "la segunda oportunidad", "datos.ajustar": "el ajuste de nota",
+  "datos.sabana": "el armado de la sábana", "datos.panel": "la actualización de los resultados",
+  "tareas.chequeo": "la revisión de entregas", "tests.chequeo": "el chequeo",
 };
-const nombreTrabajo = (t) => NOMBRES[t.flujo] || t.flujo;
+const nombreTrabajo = (t) => NOMBRES[t.flujo] || `«${nombreFlujo(t)}»`;
 
 // ---------------------------------------------------------------- gasto en la API
 
@@ -101,9 +104,24 @@ function gasto(consumo, precios) {
 
 // ---------------------------------------------------------------- pantalla
 
+// Lo que sigue después de un trabajo se hace en su página: desde aquí, un enlace.
+const SIGUE_EN = {
+  "tests.evaluar": ["/tests#evaluar", "Elegir cuáles evaluar en Tests › Evaluar respuestas"],
+  "tareas.corregir": ["/tareas#corregir", "Elegir cuáles corregir en Tareas › Corregir"],
+};
+function siguePaso(t) {
+  if (t.flujo === "tests.experimento" && t.estado === "terminado") {
+    return el("p", {}, el("a", { href: "/datos#datos/probar" },
+      "Ver la comparación y descargar el CSV en Configuración › La IA › Probar criterio"));
+  }
+  const sigue = SIGUE_EN[t.flujo];
+  if (!sigue || !t.prueba || t.estado !== "terminado") return null;
+  return el("p", {}, el("a", { href: sigue[0] }, sigue[1]));
+}
+
 const detalleTrabajo = el("div", { id: "resultado" });
 function verTrabajo(t) {
-  seguirTrabajo(t.id, detalleTrabajo);
+  seguirTrabajo(t.id, detalleTrabajo, { extra: siguePaso });
   detalleTrabajo.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 const historial = historialTrabajos({
@@ -130,11 +148,21 @@ function buscadorAlumno(semestre) {
       lista.replaceChildren(...alumnos.map((a) => el("option", { value: `${a.nombre} · ${a.correo}` })));
     })
     .catch(() => {});
+  // Sin tildes ni mayúsculas: "perez" encuentra a Pérez.
+  const norm = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const ir = () => {
-    const q = campo.value.trim().toLowerCase();
-    const a = alumnos.find((x) => q.endsWith(x.correo)) || alumnos.find((x) => x.nombre.toLowerCase().includes(q));
-    if (q && a) location.href = `/resultados#Alumnos/${encodeURIComponent(a.correo)}`;
+    const q = norm(campo.value.trim());
+    if (!q) return;
+    const a = alumnos.find((x) => q.endsWith(x.correo) || x.correo.includes(q))
+      || alumnos.find((x) => norm(x.nombre).includes(q));
+    if (a) {
+      location.href = `/resultados#Alumnos/${encodeURIComponent(a.correo)}`;
+      return;
+    }
+    campo.setCustomValidity("No encontré a ese alumno.");
+    campo.reportValidity();
   };
+  campo.addEventListener("input", () => campo.setCustomValidity(""));
   campo.addEventListener("change", ir);
   return el("form", { class: "buscar-alumno", role: "search", onsubmit: (e) => { e.preventDefault(); ir(); } },
     campo, lista);

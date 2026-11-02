@@ -144,19 +144,23 @@ export function barraPestanas({ grupos, actual, alElegir, etiqueta, flujo = fals
       p.numero ? el("span", { class: "num" }, p.hecho ? "✓" : String(p.numero)) : null,
       el("span", { class: "titulo-pestana" }, p.titulo),
       p.detalle ? el("span", { class: "detalle-pestana" }, p.detalle) : null))))));
-  centrarSeleccion(barra);
+  // Lo que se desliza en celular es cada fila de pasos, no la barra entera.
+  for (const fila of [barra, ...barra.querySelectorAll(".fila-pestanas")]) centrarSeleccion(fila);
   return barra;
 }
 
 const DIAS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 const dos = (n) => String(n).padStart(2, "0");
 
+/** "lun 19/10" y "10:15": las dos mitades de fechaCorta, para mostrarlas por separado. */
+export const diaCorto = (fecha) => `${DIAS[fecha.getDay()]} ${dos(fecha.getDate())}/${dos(fecha.getMonth() + 1)}`;
+export const horaCorta = (fecha) => `${fecha.getHours()}:${dos(fecha.getMinutes())}`;
+
 /** "lun 19/10, 10:15" (sin la hora si es fin del día). */
 export function fechaCorta(fecha) {
   if (!fecha) return "";
-  const dia = `${DIAS[fecha.getDay()]} ${dos(fecha.getDate())}/${dos(fecha.getMonth() + 1)}`;
   const finDelDia = fecha.getHours() === 23 && fecha.getMinutes() === 59;
-  return finDelDia ? dia : `${dia}, ${fecha.getHours()}:${dos(fecha.getMinutes())}`;
+  return finDelDia ? diaCorto(fecha) : `${diaCorto(fecha)}, ${horaCorta(fecha)}`;
 }
 
 /** "en 2 días", "en 5 h", "hace 3 días": lo que falta o lo que pasó desde `fecha`. */
@@ -325,7 +329,8 @@ export function vistaCorreo(c, { aviso } = {}) {
     c.asunto ? el("h4", { class: "asunto-correo" }, c.asunto) : null,
     el("p", { class: "cabecera-correo" },
       c.de ? [el("strong", {}, c.de), " "] : null,
-      para ? el("span", { class: "tenue" }, `para ${para}`) : null,),
+      para ? el("span", { class: "tenue" }, `para ${para}`) : null,
+),
     aviso ? el("p", { class: "aviso-correo tenue" }, aviso) : null,
     iframe);
 }
@@ -403,7 +408,7 @@ const NOMBRE_FLUJO = {
   "datos.ajustar": "Ajustar nota", "datos.sabana": "Armar la sábana", "datos.panel": "Actualizar los resultados",
 };
 
-function nombreFlujo(t) {
+export function nombreFlujo(t) {
   const nombre = NOMBRE_FLUJO[t.flujo] || sinPrefijo(t.flujo);
   const paso = t.flujo === "tareas.segunda" && t.argumentos?.paso;
   return paso ? `${nombre} (${paso})` : nombre;
@@ -462,12 +467,21 @@ const claveTrabajo = (t) => [t.flujo, t.argumentos?.semana ?? "", t.argumentos?.
 /**
  * Trabajos reales que fallaron y no se volvieron a correr bien. Una simulación
  * fallida no hizo nada, y un fallo que después se repitió con éxito ya está
- * resuelto: ninguno de los dos se marca.
+ * resuelto: ninguno de los dos se marca. Si el mismo trabajo falló varias
+ * veces, queda el intento más reciente, con `intentos` = cuántas veces falló.
  */
 export function fallidosSinResolver(trabajos) {
-  return trabajos.filter((t) => t.estado === "fallido" && !esSimulacion(t)
+  const fallidos = trabajos.filter((t) => t.estado === "fallido" && !esSimulacion(t)
     && !trabajos.some((o) => o.estado === "terminado" && !esSimulacion(o) && claveTrabajo(o) === claveTrabajo(t)
-      && new Date(o.creado) > new Date(t.creado)));
+      && new Date(o.creado) > new Date(t.creado)))
+    .sort((a, b) => new Date(b.creado) - new Date(a.creado));
+  const porClave = new Map();
+  for (const t of fallidos) {
+    const k = claveTrabajo(t);
+    if (porClave.has(k)) porClave.get(k).intentos += 1;
+    else porClave.set(k, { ...t, intentos: 1 });
+  }
+  return [...porClave.values()];
 }
 
 /** Si el trabajo, corrido de verdad, manda correos a los alumnos. */
@@ -780,8 +794,9 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
       onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); alElegir(t); } },
     },
     // Fecha y hora por separado: en el celular cada una va en su línea, sin cortarse.
-    el("td", {}, el("span", { class: "fecha" }, new Date(t.creado).toLocaleDateString("es-CL", { dateStyle: "short" })),
-      " ", el("span", { class: "hora" }, new Date(t.creado).toLocaleTimeString("es-CL", { timeStyle: "short" }))),
+    // Mismo formato que el resto del sitio (fechaCorta): "dom 01/11" y "22:37".
+    el("td", {}, el("span", { class: "fecha" }, diaCorto(new Date(t.creado))),
+      " ", el("span", { class: "hora" }, horaCorta(new Date(t.creado)))),
     el("td", {}, nombreFlujo(t)),
     el("td", {}, valor(t.argumentos)),
     el("td", {}, insigniaModo(t)),
@@ -855,13 +870,20 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
     };
     casillas.forEach((x) => x.addEventListener("change", actualizar));
     const todas = (v) => { casillas.forEach((x) => { x.checked = v; }); actualizar(); };
-    boton.addEventListener("click", () => {
+    const aviso = el("div");
+    boton.addEventListener("click", async () => {
       const elegidos = casillas.filter((x) => x.checked).map((x) => x.value);
       const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
       if (!confirm(`Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\n`
         + "Las demás quedan como están. ¿Confirmas?")) return;
       boton.disabled = true;
-      alProcesar(elegidos);
+      aviso.replaceChildren();
+      try {
+        await alProcesar(elegidos);
+      } catch (e) {
+        aviso.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
+        boton.disabled = false;
+      }
     });
     actualizar();
     nodo.replaceChildren(
@@ -876,7 +898,7 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
           el("span", { class: "tenue" }, [cuando(c.llegada), c.grupo, c.pregunta].filter(Boolean).join(" · ")),
           c.ya_tiene_nota ? el("span", { class: "estado fallido" }, `ya tiene nota ${c.ya_tiene_nota}`) : null),
         el("div", { class: "contenido respuesta" }, respuestaLegible(c.respuesta)))),
-      el("div", { class: "acciones" }, boton));
+      el("div", { class: "acciones" }, boton), aviso);
   }).catch(() => noPude("no hubo conexión o el archivo vino dañado"));
   return nodo;
 }

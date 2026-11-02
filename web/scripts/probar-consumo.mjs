@@ -74,6 +74,13 @@ check("un fallo real que después se repitió bien ya no se marca", !ids.include
 check("una simulación fallida no se marca (no hizo nada)", !ids.includes("c"), JSON.stringify(ids));
 check("un envío real fallido sigue marcado si solo se simuló después", ids.includes("d"), JSON.stringify(ids));
 check("un resumen fallido se marca (escribe aunque no mande correos)", ids.includes("f"), JSON.stringify(ids));
+const repetidos = fallidosSinResolver([
+  { id: "s1", flujo: "datos.sabana", argumentos: {}, estado: "fallido", prueba: 0, creado: "2026-11-01T10:00:00Z" },
+  { id: "s2", flujo: "datos.sabana", argumentos: {}, estado: "fallido", prueba: 0, creado: "2026-11-01T10:05:00Z" },
+  { id: "s3", flujo: "datos.sabana", argumentos: {}, estado: "fallido", prueba: 0, creado: "2026-11-01T10:02:00Z" },
+]);
+check("varios fallos del mismo trabajo son una línea, con el intento más nuevo",
+  repetidos.length === 1 && repetidos[0].id === "s2" && repetidos[0].intentos === 3, JSON.stringify(repetidos));
 
 // ---------------------------------------------------------------- la barra de avance
 // Lo que imprime modulos/progreso.py al recorrer tres respuestas.

@@ -54,8 +54,9 @@ select {
 hr { border: 0; border-top: 1px solid var(--linea); margin: 20px 0; }
 
 
-.grilla2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 820px) { .grilla2 { grid-template-columns: 1fr; } }
+.grilla2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+/* minmax(0, …): una tabla ancha se desliza dentro de su envoltura en vez de ensanchar la página. */
+@media (max-width: 820px) { .grilla2 { grid-template-columns: minmax(0, 1fr); } }
 .grafico { min-height: 40px; width: 100%; }
 
 .aviso, .info, .exito {
@@ -222,7 +223,8 @@ table.editor button.quitar {
 table.editor button.quitar:hover { color: var(--aviso); }
 .editor-envoltura { max-height: 70vh; overflow: auto; }
 .editor-envoltura thead th { position: sticky; top: 0; background: var(--caja); z-index: 1; }
-fieldset.seccion { border: 1px solid var(--linea); border-radius: 12px; padding: 12px 16px 16px; margin: 0 0 16px; }
+/* min-width: 0 quita el min-content que el navegador le da al fieldset: así la tabla de precios se desliza adentro. */
+fieldset.seccion { border: 1px solid var(--linea); border-radius: 12px; padding: 12px 16px 16px; margin: 0 0 16px; min-width: 0; }
 fieldset.seccion legend { font-weight: 600; padding: 0 6px; }
 .fila-campos { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
 .guardado-por { font-size: 12px; color: var(--tenue); }
@@ -519,6 +521,10 @@ details.correo-plegable > .correo-gmail { margin: 0; border: 0; border-top: 1px 
 .pestanas.flujo { border-bottom: 0; margin: 14px 0 18px; gap: 6px 26px; }
 .flujo .fila-pestanas { gap: 6px; }
 .flujo .fila-pestanas.flechas { gap: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+/* En celular la barra no cabe: una barra de desplazamiento fina avisa que sigue. */
+@media (max-width: 720px) {
+  .flujo .fila-pestanas.flechas { scrollbar-width: thin; padding-bottom: 4px; }
+}
 .flujo .pestana {
   border: 1px solid var(--linea); border-radius: 8px; margin: 0; padding: 8px 14px; min-height: 52px;
 }

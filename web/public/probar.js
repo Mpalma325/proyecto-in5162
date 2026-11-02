@@ -7,10 +7,11 @@
 // semestre: lo único que gasta es API, y antes de correr dice cuánto.
 
 import {
-  api, caja, el, evaluacionDeTexto, historialTrabajos, pedirTrabajo, preciosApi, respuestaLegible, seguirTrabajo,
-  vistaCorreo,
+  api, caja, el, evaluacionDeTexto, fechaCorta, historialTrabajos, pedirTrabajo, preciosApi, respuestaLegible,
+  seguirTrabajo, vistaCorreo,
 } from "./comun.js";
 import { leerConsumo, textoConsumo } from "./consumo.js";
+import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import {
   NIVELES, consumoPorRespuesta, estimarCosto, huella, ordenarPorCambio, rangos, resumirComparacion,
   semanasPorVersion, textoNota,
@@ -90,12 +91,14 @@ function resumen(filas) {
   const r = resumirComparacion(filas);
   const kpi = (etiqueta, valor, pie) => el("div", { class: "kpi" },
     el("div", { class: "etiqueta" }, etiqueta), el("div", { class: "valor" }, valor), pie ? el("div", { class: "tenue" }, pie) : null);
-  const media = (x) => (x === null ? "—" : x.toLocaleString("es-CL", { maximumFractionDigits: 2 }));
+  const media = (x) => (x === null ? "—" : x.toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const conAmbas = r.total - r.sinFormato;
   const niveles = NIVELES.filter((n) => r.antes[n] || r.despues[n]);
   return [
     el("div", { class: "kpis k4" },
       kpi("Respuestas", String(r.total), r.sinFormato ? `${r.sinFormato} sin nota legible` : "todas con nota legible"),
-      kpi("Nota media", `${media(r.mediaAntes)} → ${media(r.mediaDespues)}`, "antes → con el candidato"),
+      kpi("Nota media", `${media(r.mediaAntes)} → ${media(r.mediaDespues)}`,
+        r.sinFormato ? `antes → con el candidato, sobre las ${conAmbas} con nota en ambas` : "antes → con el candidato"),
       kpi("Notas", `${r.notas.suben} ↑  ${r.notas.bajan} ↓`, `${r.notas.iguales} iguales`),
       kpi("Originalidad", `${r.originalidad.suben} ↑  ${r.originalidad.bajan} ↓`, `${r.originalidad.iguales} iguales`)),
     niveles.length ? el("div", { class: "tabla-envoltura" }, el("table", { class: "tabla-originalidad" },
@@ -103,6 +106,8 @@ function resumen(filas) {
       el("tbody", {},
         el("tr", {}, el("th", {}, "Antes"), niveles.map((n) => el("td", {}, String(r.antes[n])))),
         el("tr", {}, el("th", {}, "Con el candidato"), niveles.map((n) => el("td", {}, String(r.despues[n]))))))) : null,
+    niveles.length && r.sinFormato ? el("p", { class: "tenue" }, `"Con el candidato" no cuenta ${r.sinFormato === 1
+      ? "la respuesta" : `las ${r.sinFormato} respuestas`} sin nota legible.`) : null,
   ];
 }
 
@@ -124,7 +129,11 @@ function comparacion(semestre, ruta) {
 
 // ---------------------------------------------------------------- la vista
 
-export function vistaProbarCriterio({ semestre, archivos }) {
+/**
+ * `alCambiar(hay)` avisa a la página si el prompt candidato tiene cambios que
+ * se perderían al salir (como los demás editores de Configuración).
+ */
+export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }) {
   const resultado = el("div", { id: "resultado-criterio" });
   const area = el("textarea", { class: "prompt", spellcheck: "false", disabled: true }, "Cargando el prompt vigente…");
   const origen = el("select", {}, el("option", { value: VIGENTE }, "El prompt vigente del semestre"));
@@ -142,7 +151,15 @@ export function vistaProbarCriterio({ semestre, archivos }) {
   let porRespuesta = null;
   let precios = {};
 
-  const cargar = (texto) => { area.value = texto; area.disabled = false; editado = false; actualizar(); };
+  // Si ya se cambió de pestaña, el aviso de la página es de otro editor: no se toca.
+  const marcar = (hay) => { editado = hay; if (area.isConnected) alCambiar(hay); };
+  const cargar = (texto, { propio = false } = {}) => {
+    area.value = texto; area.disabled = false; marcar(propio); actualizar();
+  };
+  // "Usar el prompt de esta prueba" deja el selector en una opción propia: el
+  // texto ya no es ninguna de las versiones de la lista.
+  const deUnaPrueba = el("option", { value: "", hidden: true }, "El prompt de una prueba anterior");
+  origen.append(deUnaPrueba);
 
   // Desde qué versión partir: la vigente o cualquiera de las que corrigieron
   // de verdad (prompts_usados/), con las semanas en que se usó cada una.
@@ -175,27 +192,50 @@ export function vistaProbarCriterio({ semestre, archivos }) {
       resultado.replaceChildren(caja("aviso", `No pude leer esa versión (${e.message}).`));
     }
   });
-  area.addEventListener("input", () => { editado = true; actualizar(); });
+  area.addEventListener("input", () => { marcar(true); actualizar(); });
+
+  // Lo que el motor rechazaría, o lo que haría salir todas las respuestas sin
+  // nota: se dice antes de pedir el trabajo. Las etiquetas que faltan solo
+  // frenan la prueba real (la muestra no llama al modelo).
+  function errores() {
+    const cuantas = Number(n.value);
+    const s = Number(semana.value);
+    const x = Number(semilla.value);
+    return [
+      !(Number.isInteger(cuantas) && cuantas >= 1 && cuantas <= MAXIMO) ? `Elige entre 1 y ${MAXIMO} respuestas, sin decimales.` : null,
+      !todas.checked && !(Number.isInteger(s) && s >= 1 && s <= 52) ? "Elige una semana entre 1 y 52." : null,
+      semilla.value === "" || !(Number.isInteger(x) && x >= 0 && x <= 99999) ? "La semilla va de 0 a 99999, sin decimales." : null,
+      area.value.length > 30000 ? "El prompt pasa de 30.000 caracteres." : null,
+    ].filter(Boolean);
+  }
+  const faltanEtiquetas = () => (area.disabled || !area.value.trim() ? [] : problemasDePrompt(PROMPTS[VIGENTE], area.value));
 
   function actualizar() {
     semana.disabled = todas.checked;
     campoSemana.hidden = todas.checked;
     const cuantas = Number(n.value);
-    const total = estimarCosto({ n: cuantas, porRespuesta, largoCandidato: area.value.length,
+    const malos = errores();
+    const faltan = faltanEtiquetas();
+    botonMuestra.disabled = malos.length > 0;
+    botonProbar.disabled = malos.length > 0 || faltan.length > 0;
+    const total = malos.length ? null : estimarCosto({ n: cuantas, porRespuesta, largoCandidato: area.value.length,
       largoVigente: vigente.length, precios });
-    if (!(cuantas >= 1 && cuantas <= MAXIMO)) {
-      costo.replaceChildren(caja("aviso", `Entre 1 y ${MAXIMO} respuestas.`));
+    if (malos.length || faltan.length) {
+      costo.replaceChildren(caja("aviso", [...malos, ...faltan,
+        ...(faltan.length && !malos.length ? ["Así, todas las respuestas saldrían sin nota: corrígelo antes de probar."] : [])]
+        .join(" ")));
     } else if (!total) {
       costo.replaceChildren(el("span", { class: "tenue" },
         `Hasta ${cuantas} llamadas a la API. No hay correcciones anteriores con qué estimar el costo.`));
     } else {
       costo.replaceChildren(el("strong", {}, `Costo estimado: ≈ ${textoConsumo(total)}`), " ",
-        el("span", { class: "tenue" }, `(hasta ${cuantas} respuestas, con lo que costó en promedio cada una de las `
-          + `últimas ${porRespuesta.llamadas.toLocaleString("es-CL")} correcciones con ${porRespuesta.modelo})`));
+        el("span", { class: "tenue" }, `(hasta ${cuantas} ${cuantas === 1 ? "respuesta" : "respuestas"}, con lo que `
+          + `costó en promedio cada una de ${porRespuesta.llamadas.toLocaleString("es-CL")} correcciones registradas, `
+          + `con ${porRespuesta.modelo})`));
     }
-    botonProbar.textContent = `Probar el criterio con ${cuantas || "?"} respuestas`;
+    botonProbar.textContent = `Probar el criterio con ${malos.length ? "?" : cuantas} ${cuantas === 1 ? "respuesta" : "respuestas"}`;
   }
-  for (const x of [todas, n]) x.addEventListener("input", actualizar);
+  for (const x of [todas, n, semana, semilla]) x.addEventListener("input", actualizar);
 
   const seguir = (id) => seguirTrabajo(id, resultado, { extra: despues, alTerminar: () => historial.dibujar(semestre) });
 
@@ -205,7 +245,11 @@ export function vistaProbarCriterio({ semestre, archivos }) {
     const usar = typeof t.argumentos?.prompt === "string" ? el("button", { class: "secundario", type: "button",
       onclick: () => {
         if (editado && !confirm("Vas a reemplazar el prompt que estás editando. ¿Seguir?")) return;
-        cargar(t.argumentos.prompt);
+        cargar(t.argumentos.prompt, { propio: true });
+        deUnaPrueba.textContent = `El prompt de la prueba del ${fechaCorta(new Date(t.creado))}`;
+        deUnaPrueba.hidden = false;
+        origen.value = "";
+        elegidaAntes = "";
         area.scrollIntoView({ behavior: "smooth", block: "center" });
       } }, "Usar el prompt de esta prueba") : null;
     const ruta = t.estado === "terminado" && !t.prueba
@@ -217,7 +261,8 @@ export function vistaProbarCriterio({ semestre, archivos }) {
     const argumentos = { prompt: area.value, n: Number(n.value), semilla: Number(semilla.value), prueba };
     if (!todas.checked) argumentos.semana = Number(semana.value);
     if (!argumentos.prompt.trim()) { resultado.replaceChildren(caja("aviso", "El prompt está vacío.")); return; }
-    if (!(argumentos.n >= 1 && argumentos.n <= MAXIMO)) return;
+    const malos = [...errores(), ...(prueba ? [] : faltanEtiquetas())];
+    if (malos.length) { resultado.replaceChildren(caja("aviso", malos.join(" "))); return; }
     if (!prueba) {
       const total = estimarCosto({ n: argumentos.n, porRespuesta, largoCandidato: area.value.length,
         largoVigente: vigente.length, precios });
@@ -248,7 +293,8 @@ export function vistaProbarCriterio({ semestre, archivos }) {
   // Lo que se carga aparte: el prompt vigente, el costo de antes y en qué
   // semanas se usó cada versión. Si algo falla, la vista sirve igual.
   leerTexto(semestre, VIGENTE).then(async (t) => {
-    vigente = t;
+    // Sin \r: así se mide igual que el texto del cuadro, que no los tiene.
+    vigente = t.replace(/\r\n/g, "\n");
     cargar(t);
     huellaVigente = await huella(t);
     pintarVersiones();

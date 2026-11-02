@@ -6,8 +6,8 @@
 // dibuja. No llama al modelo.
 
 import {
-  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, historialTrabajos, navegacion, pedirTrabajo,
-  seguirTrabajo, tareasConocidas, conDetalle,
+  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, fechaCorta, historialTrabajos, navegacion,
+  pedirTrabajo, seguirTrabajo, tareasConocidas, conDetalle,
 } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
@@ -92,6 +92,8 @@ function htmlsDeLaTarea() {
 let estadoTarea = { tarea: null, datos: undefined };
 const zonaEstado = el("div");
 const zonaPestanas = el("div");
+// Si el paso elegido necesita uno anterior que no se ha hecho, lo dice aquí.
+const zonaFalta = el("div");
 
 async function leerTexto(ruta) {
   const r = await fetch(urlArchivo(ruta), { cache: "no-store" });
@@ -221,6 +223,22 @@ function pintarCabecera() {
   const d = estadoTarea.tarea === tarea ? estadoTarea.datos : undefined;
   zonaEstado.replaceChildren(lineaEstadoTarea(d));
   zonaPestanas.replaceChildren(pestanasDeTarea(d || null));
+  zonaFalta.replaceChildren(faltaPasoAnterior(d) || "");
+}
+
+/** El aviso de que el paso elegido llega antes de tiempo, o null. */
+function faltaPasoAnterior(d) {
+  if (!d) return null;
+  if (pestana.id === "enviar" && !d.generadas) {
+    return caja("aviso", `Todavía no hay preguntas generadas de ${tarea}: genéralas en el paso 1 antes de enviarlas.`);
+  }
+  if ((pestana.id === "recolectar" || pestana.id === "corregir") && !d.enviados) {
+    return caja("aviso", `${tarea} todavía no se envía: no hay respuestas que ${pestana.id === "corregir" ? "corregir" : "recolectar"}.`);
+  }
+  if (pestana.id === "segunda" && !d.enviados) {
+    return caja("aviso", `${tarea} todavía no se envía: la segunda oportunidad es para quienes no respondieron la primera.`);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- historial
@@ -270,12 +288,24 @@ function seguir(id, destino) {
 function selectorTarea() {
   const opciones = tareasConocidas(archivos);
   const texto = el("input", { type: "text", size: 6, pattern: "T\\d{1,2}" });
+  // "t2", "Tarea 3" y "3" valen como T2 y T3; lo demás se rechaza en voz alta,
+  // para que nadie crea que está trabajando sobre otra tarea.
   const cambiar = (t) => {
-    const valor = t.trim().toUpperCase();
-    if (!/^T\d{1,2}$/.test(valor) || valor === tarea) return;
+    const m = String(t).trim().match(/^(?:t|tarea)?\s*(\d{1,2})$/i);
+    const valor = m ? `T${Number(m[1])}` : "";
+    if (!valor || valor === "T0") {
+      texto.value = tarea;
+      texto.setCustomValidity("Escribe la tarea como T1, T2…");
+      texto.reportValidity();
+      return;
+    }
+    texto.setCustomValidity("");
+    texto.value = valor;
+    if (valor === tarea) return;
     tarea = valor;
     dibujar();
   };
+  texto.addEventListener("input", () => texto.setCustomValidity(""));
   texto.addEventListener("change", () => cambiar(texto.value));
   if (!opciones.length) {
     texto.value = tarea;
@@ -558,8 +588,7 @@ function vistaSegunda(destino) {
           el("tbody", {}, filas.map((f) => el("tr", {},
             el("td", {}, f[col("nombre")]), el("td", {}, f[col("pregunta_tarea")]),
             el("td", {}, el("div", { class: "celda-lectura" }, f[col("pregunta")] || "(sin preparar)")),
-            el("td", {}, f[col("enviado")] ? new Date(f[col("enviado")]).toLocaleString("es-CL",
-              { dateStyle: "short", timeStyle: "short" }) : "—")))))),
+            el("td", {}, f[col("enviado")] ? fechaCorta(new Date(f[col("enviado")])) : "—")))))),
         el("div", { class: "acciones" },
           el("a", { class: "descarga", href: `${urlArchivo(rutaCsv)}?descargar` }, "Descargar el CSV")));
     }).catch(() => vista.replaceChildren(caja("aviso", "No pude leer la lista de la segunda oportunidad.")));
@@ -674,7 +703,7 @@ function dibujar() {
   // Primero qué tarea y en qué va; después los pasos.
   app.replaceChildren(
     el("div", { class: "cabeza-operacion" }, chipSemestre(semestre)),
-    selectorTarea(), zonaEstado, zonaPestanas, ...vista.filter(Boolean), resultado, el("hr"), historial.nodo);
+    selectorTarea(), zonaEstado, zonaPestanas, zonaFalta, ...vista.filter(Boolean), resultado, el("hr"), historial.nodo);
   if (estadoTarea.tarea === tarea && estadoTarea.datos) pintarCabecera();
   else refrescarEstado();
   historial.dibujar(semestre);

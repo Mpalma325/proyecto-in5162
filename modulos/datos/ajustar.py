@@ -32,7 +32,7 @@ def ajustar(flujo: str, item: str, correo: str, nota: str, motivo: str, por: str
         raise ValueError(f"Flujo inválido: {flujo!r}")
     if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota.strip()):
         raise ValueError(f"Nota inválida: {nota!r} (se escribe como 6,5)")
-    if not 0.0 <= float(nota.replace(",", ".")) <= 7.0:
+    if not 1.0 <= float(nota.replace(",", ".")) <= 7.0:
         raise ValueError(f"Nota fuera de la escala: {nota}")
     # El motivo es opcional: si no se da, el log igual guarda la nota anterior y quién.
     motivo = " ".join((motivo or "").split()) or "sin motivo indicado"
