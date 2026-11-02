@@ -74,6 +74,7 @@ COLUMNAS = [
     "ModeloAntes", "ModeloDespues", "TokensEntrada", "TokensSalida",
     "Segundos", "FormatoOK",
     "Respuesta", "EvaluacionNueva",
+    "EvaluacionAntes",  # la corrección que se le mandó, para leerla al lado de la nueva
 ]
 
 
@@ -460,6 +461,7 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
             "FormatoOK": "SI" if nota_nueva else "NO",
             "Respuesta": fila["Respuesta"],
             "EvaluacionNueva": str(html),
+            "EvaluacionAntes": fila.get("EvaluacionIA", ""),
             **comparacion,
         }
         _agregar_fila(registro, salida)

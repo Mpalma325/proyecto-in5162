@@ -63,11 +63,10 @@ const PESTANAS = [
     todasLasSemanas: true,
     confirmar: () => "Vas a responder por correo las dudas pendientes de los alumnos.",
   },
-  {
-    id: "experimento", titulo: "Probar criterio de evaluación", flujo: "tests.experimento", aparte: true,
-    vista: (p, destino) => formularioExperimento(p, destino),
-  },
 ];
+
+// Probar criterio vivía acá; ahora está en Configuración › La IA.
+if (location.hash === "#experimento") location.replace("/datos#datos/probar");
 
 let pestana = PESTANAS.find((p) => p.id === location.hash.slice(1)) || PESTANAS[0];
 
@@ -170,7 +169,6 @@ function pestanasDeTests() {
       ] },
       { rotulo: "Cuando quieras", pestanas: [
         { id: "tutoria", titulo: "Responder dudas" },
-        { id: "experimento", titulo: "Probar criterio" },
       ] },
     ],
   });
@@ -242,12 +240,6 @@ function descarga(t) {
         await seguir(id, destino);
       },
     });
-  }
-  if (t.flujo === "tests.experimento" && t.estado === "terminado") {
-    // El nombre lleva la hora de la corrida; se toma de la línea "(guardados ...)" del motor.
-    const ruta = (t.salida.match(/tests_semanales\/data\/experimento_[\w-]+\.csv/) || [])[0];
-    return ruta ? el("a", { class: "descarga",
-      href: `/api/archivo/${encodeURIComponent(semestre)}/${ruta}?descargar` }, `Descargar ${ruta.split("/").pop()}`) : null;
   }
   const p = PESTANAS.find((x) => x.flujo === t.flujo);
   if (t.estado !== "terminado" || !p?.descarga || !t.argumentos.semana) return null;
@@ -344,75 +336,11 @@ function formulario(p, destino) {
   ];
 }
 
-// ---------------------------------------------------------------- probar un criterio de evaluación
-
-function formularioExperimento(p, destino) {
-  const area = el("textarea", { class: "prompt", spellcheck: "false" }, "Cargando el prompt vigente…");
-  area.disabled = true;
-  fetch(`/api/archivo/${encodeURIComponent(semestre)}/tests_semanales/prompts/evaluar_respuesta.md`,
-    { cache: "no-store" })
-    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`))))
-    .then((texto) => { area.value = texto; area.disabled = false; })
-    .catch(() => { area.value = ""; area.disabled = false; });
-
-  const n = el("input", { type: "number", min: "1", max: "300", step: "5", value: "20" });
-  const todas = el("input", { type: "checkbox", checked: true });
-  const semana = el("input", { type: "number", min: "1", max: "52", value: String(semanaElegida), disabled: true });
-  const campoSemana = el("label", {}, "Semana", semana);
-  const semilla = el("input", { type: "number", min: "0", max: "99999", value: "19",
-    title: "La misma semilla elige la misma muestra. Deja fija la semilla para comparar dos prompts "
-      + "sobre las mismas respuestas." });
-  const soloMuestra = el("input", { type: "checkbox", checked: true });
-  const aviso = el("div");
-  const boton = el("button", { class: "primario", type: "button" });
-  alCambiarDatos = () => {};
-
-  const actualizar = () => {
-    semana.disabled = todas.checked;
-    campoSemana.hidden = todas.checked;
-    boton.textContent = soloMuestra.checked ? "Ver la muestra" : `Probar el criterio (hasta ${n.value} llamadas)`;
-    aviso.replaceChildren(soloMuestra.checked ? ""
-      : caja("aviso", `Hasta ${n.value} llamadas a la API. Las notas no cambian.`));
-  };
-  for (const x of [todas, soloMuestra, n]) x.addEventListener("input", actualizar);
-
-  boton.addEventListener("click", async () => {
-    const argumentos = { prompt: area.value, n: Number(n.value), semilla: Number(semilla.value),
-      prueba: soloMuestra.checked };
-    if (!todas.checked) argumentos.semana = Number(semana.value);
-    if (!argumentos.prompt.trim()) { destino.replaceChildren(caja("aviso", "El prompt está vacío.")); return; }
-    boton.disabled = true;
-    try {
-      const id = await pedirTrabajo(semestre, p.flujo, argumentos);
-      await seguir(id, destino);
-      historial.dibujar(semestre);
-    } catch (e) {
-      destino.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
-    } finally {
-      boton.disabled = false;
-    }
-  });
-
-  actualizar();
-  return [
-    el("p", {}, "Reevalúa respuestas ya corregidas con un prompt distinto y compara notas y originalidad. "
-      + "No manda correos ni cambia el prompt del semestre."),
-    el("label", { class: "campo" }, "Prompt candidato", area),
-    el("div", { class: "form-trabajo" },
-      el("label", {}, "Cuántas respuestas", n),
-      el("label", { class: "interruptor" }, todas, "Todas las semanas"),
-      campoSemana,
-      el("label", {}, "Semilla", semilla),
-      el("label", { class: "interruptor" }, soloMuestra, "Solo ver la muestra"),
-      boton),
-    aviso,
-  ];
-}
-
 // ---------------------------------------------------------------- historial
 
 const historial = historialTrabajos({
-  incluye: (t) => t.flujo.startsWith("tests."),
+  // Las pruebas de criterio tienen su propio historial, en Configuración.
+  incluye: (t) => t.flujo.startsWith("tests.") && t.flujo !== "tests.experimento",
   columna: ["Semana", (a) => a.semana ?? "todas"],
   alElegir: (t) => {
     const destino = document.getElementById("resultado");
@@ -429,7 +357,7 @@ function dibujar() {
   app.replaceChildren(
     el("div", { class: "cabeza-operacion" }, chipSemestre(semestre)),
     zonaEstado, zonaPestanas,
-    ...(pestana.vista || formulario)(pestana, resultado).filter(Boolean), resultado, el("hr"), historial.nodo);
+    ...formulario(pestana, resultado).filter(Boolean), resultado, el("hr"), historial.nodo);
   historial.dibujar(semestre);
 }
 

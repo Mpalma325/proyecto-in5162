@@ -12,6 +12,7 @@ import { escribirCsv, leerCsv } from "./csv.js";
 import { editorPreguntas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import { leerPrecios } from "./consumo.js";
+import { vistaProbarCriterio } from "./probar.js";
 
 document.getElementById("nav").replaceWith(navegacion());
 const app = document.getElementById("app");
@@ -919,6 +920,7 @@ const SECCIONES = [
   ]],
   ["La IA", [
     ["prompts", "Prompts", vistaPrompts],
+    ["probar", "Probar criterio", () => vistaProbarCriterio({ semestre, archivos })],
     ["parametros", "Parámetros", vistaParametros],
   ]],
   ["Registro", [

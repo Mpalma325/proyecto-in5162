@@ -366,6 +366,8 @@ def ensayo_de_prompt():
             check("trae el antes y el después",
                   all(f["OriginalidadAntes"] is not None and f["OriginalidadDespues"] == "Muy Alta"
                       for f in filas), filas[:1])
+            check("guarda la corrección que recibió el alumno, para leerla al lado de la nueva",
+                  all(f.get("EvaluacionAntes", "").strip() for f in filas), [f.get("EvaluacionAntes", "")[:40] for f in filas])
 
         titulo("21. el modo prueba no llama al modelo")
         llamadas = []

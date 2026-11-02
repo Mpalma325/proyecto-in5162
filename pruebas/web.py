@@ -277,6 +277,17 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-sabana.mjs corre", False, r.stderr[-300:])
 
+titulo("7d2. probar criterio: costo estimado, versiones por semana y comparación")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-criterio.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        if nombre:
+            check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-criterio.mjs corre", False, r.stderr[-300:])
+
 titulo("7e. editar un prompt avisa antes de guardar algo que haría fallar un envío")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-prompts.mjs")],

@@ -635,3 +635,25 @@ details.correo-plegable > .correo-gmail { margin: 0; border: 0; border-top: 1px 
 /* Inicio: el semestre a la izquierda y el buscador de alumno, chico, a la derecha. */
 .cabeza-inicio { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
 .buscar-alumno input { width: 240px; max-width: 100%; font-size: 14px; padding: 6px 10px; }
+
+/* ---------------------------------------------------------- probar criterio */
+.costo-estimado { margin: 4px 0 8px; font-size: 14px; }
+.lista-comparacion { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 16px; }
+details.fila-comparacion { border: 1px solid var(--linea); border-radius: 8px; background: var(--caja); }
+details.fila-comparacion > summary {
+  display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 8px 12px; cursor: pointer; font-size: 14px;
+}
+details.fila-comparacion > summary .quien { flex: 1 1 220px; font-weight: 600; }
+details.fila-comparacion > summary .cambio { font-variant-numeric: tabular-nums; }
+.detalle-comparacion { padding: 0 12px 12px; }
+.detalle-comparacion h5 { margin: 12px 0 6px; font-size: 13px; color: var(--tenue); font-weight: 600; }
+.dos-columnas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 820px) { .dos-columnas { grid-template-columns: 1fr; } }
+.delta { font-weight: 600; font-size: 13px; }
+.delta.sube { color: var(--ok); }
+.delta.baja { color: var(--aviso); }
+.aviso-texto { color: var(--aviso); }
+.tabla-originalidad { border-collapse: collapse; font-size: 14px; margin: 4px 0 8px; }
+.tabla-originalidad th, .tabla-originalidad td { padding: 4px 12px; border-bottom: 1px solid var(--linea); text-align: right; }
+.tabla-originalidad th:first-child { text-align: left; }
+.tabla-originalidad tr:last-child > * { border-bottom: 0; }

@@ -11,7 +11,7 @@ export const PROMPTS = {
     variables: ["{NOMBRE}", "{TEMA}", "{FECHA_ENTREGA}", "{BLOQUE_PREGUNTAS}", "{SEMANA}"] },
   "tests_semanales/prompts/evaluar_respuesta.md": {
     titulo: "Cómo corrige la IA cada respuesta",
-    uso: "Antes de cambiarlo, conviene probarlo en Tests Semanales › Probar criterio.",
+    uso: "Antes de cambiarlo, conviene probarlo en Configuración › La IA › Probar criterio.",
     variables: ["{{PREGUNTAS}}", "{{PAUTAS}}"], obligatorias: ["NOTA FINAL:", "ORIGINALIDAD:"] },
   "tests_semanales/prompts/correo_correccion.md": {
     titulo: "Correo con la corrección",
