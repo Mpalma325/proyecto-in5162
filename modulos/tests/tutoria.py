@@ -24,6 +24,7 @@ from modulos.datos import esquema as _esquema
 from modulos.mail import buscar_no_leidos, enviar_correo, marcar_leidos
 
 from . import config
+from .evaluar import _normalizar_html_gpt
 from .ia_prompts import responder_duda
 from .preguntas import cargar_semana
 from modulos.progreso import avanzar
@@ -123,6 +124,9 @@ def main(semana: int | None = None, dry_run: bool = False) -> None:
             continue
 
         meta = getattr(html, "meta", {}) or {}
+        # Como en la corrección: a veces el modelo envuelve el HTML en ```html,
+        # y así le llegaba al alumno.
+        html = _normalizar_html_gpt(html)
         asunto = corr.get("asunto") or f"Re: Módulo {item}"
         if not asunto.lower().startswith("re:"):
             asunto = f"Re: {asunto}"

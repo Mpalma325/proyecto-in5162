@@ -151,6 +151,7 @@ details.casilla .orig { grid-row: 1 / span 2; grid-column: 3; }
   padding: 6px 10px; border-radius: 8px; cursor: pointer; min-height: 0;
 }
 .navegacion .tema:hover { background: var(--caja); color: var(--texto); }
+.navegacion .salir { font-size: 13px; }
 
 /* ---------------------------------------------------------- operación */
 .form-trabajo { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }

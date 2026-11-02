@@ -116,7 +116,9 @@ export function navegacion() {
   // Cloudflare sirve las páginas sin ".html" (tests.html se ve en /tests).
   const aqui = location.pathname.replace(/\.html$/, "").replace(/^\/index$/, "/");
   const nav = el("nav", { class: "navegacion" }, PAGINAS.map(([ruta, nombre]) =>
-    el("a", { href: ruta, "aria-current": ruta === aqui ? "page" : null }, nombre)), botonTema());
+    el("a", { href: ruta, "aria-current": ruta === aqui ? "page" : null }, nombre)), botonTema(),
+    // Cloudflare Access corta la sesión en esta dirección y vuelve a pedir el correo.
+    el("a", { href: "/cdn-cgi/access/logout", class: "salir" }, "Cerrar sesión"));
   centrarSeleccion(nav);
   return nav;
 }

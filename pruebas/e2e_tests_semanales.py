@@ -238,7 +238,7 @@ def tutoria_sobre_el_feedback():
         llamadas = []
         with patch("modulos.tests.tutoria.buscar_no_leidos", return_value=[duda]),              patch("modulos.tests.tutoria.responder_duda",
                    side_effect=lambda *a, **k: (llamadas.append(k.get("historial")),
-                                                "<p>Te falto mencionar X.</p>")[1]):
+                                                "```html\n<p>Te falto mencionar X.</p>\n```")[1]):
             tutoria.main(5, dry_run=False)
         check("le respondio la duda", len(enviados) == 1, enviados)
         check("llamo al modelo una vez", len(llamadas) == 1, len(llamadas))
@@ -247,6 +247,9 @@ def tutoria_sobre_el_feedback():
               len(datos.log.leer(sid, evento="repregunta", item="5")) == 1)
         check("quedo registrada la tutoria",
               len(datos.log.leer(sid, evento="tutoria", item="5")) == 1)
+        check("sin las marcas ``` del modelo en lo que se envió y se guardó",
+              [t["EvaluacionIA"] for t in datos.log.leer(sid, evento="tutoria", item="5")]
+              == ["<p>Te falto mencionar X.</p>"])
 
         titulo("13. LA NOTA NO CAMBIA")
         check("sigue siendo 6,0",
