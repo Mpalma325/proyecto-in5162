@@ -128,6 +128,23 @@ check("corregir: 'no enviar' solo cuenta en modo real",
       "--no-enviar" in corregir({"tarea": "T1", "no_enviar": True, "prueba": False}))
 check("enviar tareas: modo prueba por defecto",
       "--dry-run" in trabajo.FLUJOS["tareas.enviar"][1]({"tarea": "T2"}))
+_, enviar_t = trabajo.FLUJOS["tareas.enviar"]
+cmd = enviar_t({"tarea": "T2", "prueba": False, "minutos": 25, "a_las": "2026-11-13T13:00:00.000Z"})
+check("enviar tareas: los minutos y la hora programada llegan al script",
+      cmd[-4:] == ["--minutos", "25", "--desde", "2026-11-13T13:00:00.000Z"] and "--dry-run" not in cmd, cmd)
+check("enviar tareas: sin minutos ni hora, el script usa los suyos",
+      "--minutos" not in enviar_t({"tarea": "T2"}) and "--desde" not in enviar_t({"tarea": "T2"}))
+for malo in ({"minutos": 0}, {"minutos": 5000}, {"minutos": "20; rm"}, {"a_las": "mañana"}):
+    try:
+        enviar_t({"tarea": "T2", **malo})
+        check(f"enviar tareas: {malo} se rechaza", False)
+    except ValueError:
+        check(f"enviar tareas: {malo} se rechaza", True)
+_, mandar = trabajo.FLUJOS["tareas.feedback"]
+check("mandar correcciones: modo prueba por defecto, y solo a los elegidos",
+      mandar({"tarea": "T2"})[-1] == "--dry-run"
+      and "--dry-run" not in mandar({"tarea": "T2", "prueba": False, "solo": ["a@x.cl"]})
+      and "--solo" in mandar({"tarea": "T2", "prueba": False, "solo": ["a@x.cl"]}))
 for malo in ("T", "t1", "T123", "T1; rm", ""):
     try:
         corregir({"tarea": malo})
@@ -255,6 +272,19 @@ sitio.trabajos["t1"]["salida"] = ""
 trabajo.ejecutar("t1")
 check("si la cola lo entrega dos veces, la segunda no hace nada",
       sitio.trabajos["t1"]["salida"] == "")
+
+titulo("5b. un trabajo programado que llega antes de su hora vuelve a la cola")
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+from unittest import mock as _mk  # noqa: E402
+from motor import cola as _cola  # noqa: E402
+_hora = (_dt.now(_tz.utc) + _td(hours=1)).isoformat()
+sitio.trabajos["t_prog"] = {"estado": "pendiente", "semestre": "zz-prueba", "flujo": "tests.resumen",
+                            "argumentos": {"semana": 1, "a_las": _hora}}
+with _mk.patch.object(_cola, "encolar") as _reencolar:
+    trabajo.ejecutar("t_prog")
+check("no corre antes de tiempo y se vuelve a encolar con su hora",
+      sitio.trabajos["t_prog"]["estado"] == "pendiente" and not sitio.trabajos["t_prog"].get("salida")
+      and _reencolar.call_args == _mk.call("t_prog"), (sitio.trabajos["t_prog"], _reencolar.call_args))
 
 titulo("6. un error se informa, no se pierde")
 trabajo.FLUJOS["prueba.falla"] = ("tests", lambda a: ["-c", "import sys; print('✗ algo salió mal'); sys.exit(3)"])
@@ -476,5 +506,62 @@ with mock.patch.object(sitio_real, "_pedir", pedir_409), \
         check("si en la nube hay otra cosa, sigue siendo un conflicto", False)
     except RuntimeError:
         check("si en la nube hay otra cosa, sigue siendo un conflicto", True)
+
+titulo("17. un trabajo programado espera en la cola hasta su hora")
+import json  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from unittest import mock as _mock  # noqa: E402
+
+from motor import cola  # noqa: E402
+
+futuro = (datetime.now(timezone.utc) + timedelta(hours=2)).replace(microsecond=0)
+check("la hora programada se lee de los argumentos, en UTC",
+      cola.hora_programada({"argumentos": {"a_las": futuro.isoformat().replace("+00:00", "Z")}}) == futuro)
+check("sin hora, o con una que no se entiende, no se programa",
+      cola.hora_programada({"argumentos": {}}) is None
+      and cola.hora_programada({"argumentos": {"a_las": "mañana"}}) is None
+      and cola.hora_programada({"argumentos": {"a_las": "2026-11-13T10:00"}}) is None)
+
+pedidos_tareas = []
+
+
+class _Respuesta:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return b"{}"
+
+
+def _urlopen_tareas(req, timeout=None):
+    pedidos_tareas.append(json.loads(req.data))
+    return _Respuesta()
+
+
+entorno = {"GCP_PROYECTO": "p", "GCP_REGION": "r", "GCP_COLA": "reales", "GCP_COLA_SIMULACIONES": "sims",
+           "MOTOR_URL_PUBLICA": "https://motor", "TOKEN_WEB": "t"}
+with _mock.patch.dict(os.environ, entorno), \
+        _mock.patch.object(cola, "_token_google", return_value="tok"), \
+        _mock.patch.object(cola.urllib.request, "urlopen", _urlopen_tareas):
+    cola._cloudtasks("id1", {"prueba": 0, "argumentos": {"a_las": futuro.isoformat()}})
+    cola._cloudtasks("id2", {"prueba": 1, "argumentos": {}})
+    cola._cloudtasks("id3", {"prueba": 0, "argumentos": {"a_las": "2020-01-01T00:00:00Z"}})
+check("Cloud Tasks lo despacha recién a esa hora",
+      pedidos_tareas[0]["task"].get("scheduleTime") == futuro.strftime("%Y-%m-%dT%H:%M:%SZ"), pedidos_tareas[0])
+check("sin hora, o con una que ya pasó, sale de inmediato",
+      "scheduleTime" not in pedidos_tareas[1]["task"] and "scheduleTime" not in pedidos_tareas[2]["task"])
+
+encolados = []
+with _mock.patch.object(cola, "_pendientes") as _cola_local, \
+        _mock.patch.object(cola.threading, "Timer") as _timer:
+    _cola_local.put.side_effect = encolados.append
+    cola._local("ya", None)
+    cola._local("despues", futuro)
+check("en el PC, uno sin hora entra a la cola al tiro", encolados == ["ya"], encolados)
+check("y uno programado espera con un temporizador",
+      _timer.call_count == 1 and 7000 < _timer.call_args[0][0] <= 7200, _timer.call_args)
 
 sys.exit(resultado())

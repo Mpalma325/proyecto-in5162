@@ -281,31 +281,48 @@ function cargarJsZip() {
   return jszip;
 }
 
-const esBasuraMac = (m) => m.split("/").includes("__MACOSX") || nombre(m).startsWith("._");
+// Además de la metadata de macOS, hay grupos que suben su repositorio con la carpeta .git.
+const esBasuraMac = (m) => m.split("/").some((p) => p === "__MACOSX" || p === ".git")
+  || nombre(m).startsWith("._") || nombre(m) === ".DS_Store";
 const miembroValido = (m) => !(m.includes("..") || m.startsWith("/") || m.startsWith("\\"));
 const sinExtension = (m) => m.replace(/\.[^./]*$/, "");
-const NO_RAR = "(.rar: el navegador no los abre; descomprímelo en tu equipo y sube los .html)";
+// Algunos grupos incluyen el enunciado renderizado junto a su entrega (T2 de 2026-2).
+const esEnunciado = (m) => /enunciado/i.test(m);
+// El navegador no abre los .rar: se suben tal cual, con el nombre que tendrá su
+// HTML (Grupo1.rar -> Grupo1.html), y los abre el chequeo de Tareas en el motor
+// (modulos/tareas/desempacar.py).
+const esRar = (n) => /\.rar$/i.test(n);
 
 async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
   if (profundidad > 3) return;
   const JSZip = await cargarJsZip();
   const nombres = Object.keys(zip.files).filter((m) => !esBasuraMac(m));
   const con = (ext) => nombres.filter((m) => m.toLowerCase().endsWith(ext));
-  const [htmls, rmds, zips, rars] = [con(".html"), con(".rmd"), con(".zip"), con(".rar")];
-  const reconocidos = new Set([...htmls, ...rmds, ...zips, ...rars]);
+  const enunciados = [...con(".html"), ...con(".rmd")].filter(esEnunciado);
+  const [htmls, rmds, zips, rars] = [con(".html"), con(".rmd"), con(".zip"), con(".rar")]
+    .map((l) => l.filter((m) => !esEnunciado(m)));
+  const reconocidos = new Set([...htmls, ...rmds, ...zips, ...rars, ...enunciados]);
   const multiple = htmls.length > 1;
+  for (const m of enunciados) lote.omitidos.push(`${prefijo ? `${prefijo}/` : ""}${m} (es el enunciado)`);
 
   for (const m of htmls) {
     if (!miembroValido(m)) { lote.omitidos.push(`${m} (ruta inválida dentro del zip)`); continue; }
     // Un solo HTML en el zip de un grupo: toma el nombre del zip (Grupo1.zip -> Grupo1.html).
     const destino = prefijo && !multiple ? `${prefijo}.html` : prefijo ? `${prefijo}__${nombre(m)}` : nombre(m);
     lote.archivos.push([destino, await zip.file(m).async("uint8array")]);
+    // El .Rmd viaja con el nombre base de su HTML. Con un solo HTML sirve cualquier
+    // .Rmd (se prefiere el de igual nombre); con varios, solo el de igual nombre.
+    const base = sinExtension(m).toLowerCase();
+    const rmd = rmds.find((r) => sinExtension(r).toLowerCase() === base) ?? (multiple ? null : rmds[0]);
+    if (rmd && prefijo && miembroValido(rmd)) {
+      lote.archivos.push([`${sinExtension(destino)}.Rmd`, await zip.file(rmd).async("uint8array")]);
+    }
   }
-  // El .Rmd acompaña a su HTML con el mismo nombre; con varios HTML no hay cómo aparearlos.
-  if (rmds.length && prefijo && !multiple && miembroValido(rmds[0])) {
-    lote.archivos.push([`${prefijo}.Rmd`, await zip.file(rmds[0]).async("uint8array")]);
+  for (const m of rars) {
+    if (!miembroValido(m)) { lote.omitidos.push(`${m} (ruta inválida dentro del zip)`); continue; }
+    const base = sinExtension(m).replaceAll("/", "_");
+    lote.archivos.push([`${prefijo ? `${prefijo}__${base}` : base}.rar`, await zip.file(m).async("uint8array")]);
   }
-  for (const m of rars) lote.omitidos.push(`${m} ${NO_RAR}`);
   for (const m of zips) {
     if (!miembroValido(m)) { lote.omitidos.push(`${m} (ruta inválida dentro del zip)`); continue; }
     const anidado = sinExtension(m).replaceAll("/", "_");
@@ -325,7 +342,7 @@ async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
 // El Worker acepta letras, números, espacios y . _ - ( ). Lo demás se cambia
 // por "_" para que un nombre raro de U-Cursos no haga fallar la subida.
 function nombreSeguro(n) {
-  const ext = /\.rmd$/i.test(n) ? ".Rmd" : ".html";
+  const ext = /\.rmd$/i.test(n) ? ".Rmd" : esRar(n) ? ".rar" : ".html";
   const base = sinExtension(n).replace(/[^\p{L}\p{N} ._\-()]/gu, "_").replace(/\.{2,}/g, "_");
   return base + ext;
 }
@@ -344,7 +361,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
       } catch (e) {
         lote.omitidos.push(`${f.name} (${e.message.includes("lector") ? e.message : "no se pudo abrir el zip"})`);
       }
-    } else if (n.endsWith(".rar")) lote.omitidos.push(`${f.name} ${NO_RAR}`);
+    } else if (esRar(n)) lote.archivos.push([f.name, new Uint8Array(await f.arrayBuffer())]);
   }
 
   const agregados = [];
@@ -357,7 +374,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
       await api(urlArchivo(carpeta + seguro), {
         method: "PUT", body: datos,
         // Una entrega ya subida no se reemplaza (el sitio responde 409).
-        headers: { "content-type": seguro.endsWith(".html") ? "text/html" : "text/plain",
+        headers: { "content-type": seguro.endsWith(".html") ? "text/html" : esRar(seguro) ? "application/vnd.rar" : "text/plain",
           ...conDetalle(`Subió la entrega ${seguro} de ${tarea}`) },
       });
       agregados.push(seguro);
@@ -368,7 +385,11 @@ async function procesarEntregas(tarea, ficheros, destino) {
   archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
 
   const partes = [];
-  if (agregados.length) partes.push(caja("exito", `${agregados.length} HTML(s) agregados a entregas/${tarea}/.`));
+  const rars = agregados.filter(esRar).length;
+  if (agregados.length) {
+    partes.push(caja("exito", `${agregados.length - rars} archivo(s) agregados a entregas/${tarea}/`
+      + (rars ? `, y ${rars} .rar que se abren al revisar las entregas en Tareas › 1 · Generar preguntas.` : ".")));
+  }
   if (lote.omitidos.length) {
     const mas = lote.omitidos.length > 10 ? ` y ${lote.omitidos.length - 10} más` : "";
     partes.push(caja("aviso", `${lote.omitidos.length} archivo(s) omitidos: ${lote.omitidos.slice(0, 10).join(", ")}${mas}.`));
@@ -383,7 +404,7 @@ function vistaEntregas() {
   if (!conocidas.includes(porDefecto)) conocidas.push(porDefecto);
   const tarea = el("input", { type: "text", list: "tareas-conocidas", value: porDefecto, size: 6,
     pattern: "T\\d{1,2}" });
-  const ficheros = el("input", { type: "file", multiple: true, accept: ".zip,.html" });
+  const ficheros = el("input", { type: "file", multiple: true, accept: ".zip,.html,.rar" });
   const resultado = el("div");
   const listado = el("div");
   const boton = el("button", { class: "primario", type: "button" }, "Procesar entregas");
@@ -391,8 +412,12 @@ function vistaEntregas() {
   const dibujarListado = () => {
     const t = tarea.value.trim();
     const htmls = archivos.filter((a) => a.ruta.startsWith(`${RUTAS.entregas}${t}/`) && a.ruta.endsWith(".html"));
+    // Un .rar ya abierto deja su HTML con el mismo nombre: solo se cuentan los que faltan.
+    const sinAbrir = archivos.filter((a) => a.ruta.startsWith(`${RUTAS.entregas}${t}/`) && esRar(a.ruta)
+      && !htmls.some((h) => sinExtension(h.ruta) === sinExtension(a.ruta) || h.ruta.startsWith(`${sinExtension(a.ruta)}__`)));
     listado.replaceChildren(
-      el("p", { class: "nota-pie" }, `${htmls.length} HTML(s) actualmente en entregas/${t}/.`),
+      el("p", { class: "nota-pie" }, `${htmls.length} HTML(s) actualmente en entregas/${t}/.`
+        + (sinAbrir.length ? ` ${sinAbrir.length} .rar sin abrir todavía: se abren al revisar las entregas en Tareas.` : "")),
       htmls.length ? el("div", { class: "tabla-envoltura editor-envoltura" }, el("table", {},
         el("thead", {}, el("tr", {}, el("th", {}, "Archivo"))),
         el("tbody", {}, htmls.map((a) => el("tr", {}, el("td", {}, nombre(a.ruta))))))) : "");
@@ -427,7 +452,7 @@ function vistaEntregas() {
     el("datalist", { id: "tareas-conocidas" }, conocidas.map((t) => el("option", { value: t }))),
     el("div", { class: "fila-campos" },
       el("label", { class: "campo" }, "Tarea", tarea),
-      el("label", { class: "campo" }, "Entregas (.zip o .html; los .rar hay que descomprimirlos antes)", ficheros),
+      el("label", { class: "campo" }, "Entregas (.zip, .html o .rar)", ficheros),
       boton),
     el("p", { class: "nota-pie" }, "Una entrega que ya está no se reemplaza."),
     resultado,

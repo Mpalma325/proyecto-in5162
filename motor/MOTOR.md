@@ -53,11 +53,22 @@ la conexión abierta hasta 30 minutos.
 | `tareas.generar` | `modulos.tareas.generar --no-interactivo` con los HTML elegidos | llama al modelo |
 | `tareas.enviar`, `tareas.corregir` | los scripts de `modulos/tareas/` | correos reales solo con `prueba: false` |
 | `tareas.recolectar` | `modulos.tareas.recolectar` | lee el buzón |
+| `tareas.feedback` | `modulos.tareas.feedback`: manda las correcciones que `corregir` con `no_enviar` dejó para revisar, con lo que se haya editado en la página | correos reales solo con `prueba: false` |
 | `tareas.segunda` | segunda oportunidad: `preparar` genera las preguntas nuevas; `enviar` en modo prueba arma los borradores | preparar llama al modelo; enviar manda correos solo con `prueba: false` |
 | `datos.panel` | nada: solo recalcula la reportería después de editar alumnos o preguntas | ninguno |
 
 Un flujo nuevo se agrega en `FLUJOS` de `trabajo.py` y en `FLUJOS` de
 `web/src/index.ts`. `pruebas/web.py` falla si las dos listas no coinciden.
+
+Un trabajo puede pedirse para más tarde con `a_las` en sus argumentos (fecha
+ISO con zona; el sitio la guarda en UTC y acepta hasta 30 días). `cola.py` se
+la pasa a Cloud Tasks como `scheduleTime`, y en el PC espera con un
+temporizador. Mientras tanto queda "pendiente" y se puede cancelar. La página
+lo usa para programar el envío de una tarea: `tareas.enviar` a esa hora (el
+plazo se cuenta desde ella, con `--desde`), `tareas.recolectar` dos minutos
+después del plazo y `tareas.corregir` sin mandar el feedback un minuto más
+tarde. Los tres van a la cola de los reales, que corre de a uno, para que
+recolectar y corregir no escriban `notas.csv` a la vez.
 
 ## Parámetros
 

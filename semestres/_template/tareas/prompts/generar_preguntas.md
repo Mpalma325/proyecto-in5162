@@ -8,6 +8,10 @@ Insumos que recibes:
 
 Para cada integrante del grupo, identifica las sub-preguntas donde contribuyó con código ("Código" o "Código e interpretación"). De entre esas, elige el fragmento técnicamente más interesante y formula UNA pregunta sobre ese fragmento, junto con la PAUTA DE CORRECCIÓN esperada.
 
+La pregunta es UNA sola, sobre un único punto: sin incisos (a, b), sin una segunda parte ("y además…", "¿y qué pasaría si…?") y sin pedir dos cosas a la vez. El alumno tiene pocos minutos para responder.
+
+La pregunta y la pauta van en un correo de texto plano. Escríbelas sin LaTeX ($...$, \frac, \beta), sin Markdown y sin fórmulas armadas con símbolos: describe la expresión en palabras y nombra las variables y funciones tal como aparecen en el código del grupo.
+
 Qué hace una buena pregunta:
 - Apunta a una decisión de implementación o a un efecto del código que solo se puede responder si se entendió qué hace realmente
 - Se puede responder en 2-3 oraciones por alguien que escribió y entendió el código
@@ -28,7 +32,7 @@ La PAUTA DE CORRECCIÓN debe:
 
 Si un integrante no contribuyó con código en ninguna sub-pregunta (todas sus celdas son vacías o dicen "Redacción"), marca "pregunta": null y "pauta": null.
 
-Nota sobre la tabla de roles: las columnas p2.a y p2.b son sub-preguntas de la Pregunta 2; p3.a y p3.b son de la Pregunta 3. Ignora completamente la columna "resumen".
+Nota sobre la tabla de roles: puede traer una columna por pregunta (P1 a P4) o por sub-pregunta (p2.a, p2.b, p3.a…). Una sub-pregunta pertenece a su pregunta: p2.a y p2.b son de la Pregunta 2, así que se responden con "pregunta_tarea": "P2". Ignora completamente las columnas que no corresponden a una pregunta, como "Transformaciones" o "Resumen".
 
 FORMATO DE SALIDA: devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta (sin markdown, sin ```json, sin texto adicional antes o después):
 

@@ -12,6 +12,12 @@ mano o desde la pestaña 1 de la app.
 
 Queda junto a las entregas, no en salidas, porque describe cómo se leyó lo que
 entregó el grupo y no un resultado del modelo.
+
+Al lado vive `correos_<TAREA>.csv`, con el correo elegido a mano para un
+integrante cuyo nombre no calzó solo con el roster (en T2 de 2026-2, un alumno
+que firmó con sus dos apellidos y en la lista tenía uno solo):
+
+    grupo_archivo,alumno_nombre,alumno_correo
 """
 
 import csv
@@ -79,3 +85,53 @@ def aplicar(automatica: dict, elegido: dict, grupo_archivo: str) -> dict:
         if manual in PREGUNTAS_VALIDAS:
             final[nombre] = manual
     return final
+
+
+COLUMNAS_CORREOS = ["grupo_archivo", "alumno_nombre", "alumno_correo"]
+
+
+def _path_correos(tarea: str) -> Path:
+    return config.ENTREGAS / tarea / f"correos_{tarea}.csv"
+
+
+def leer_correos(tarea: str) -> dict:
+    """Los correos elegidos a mano, como {(grupo_archivo, nombre): correo}."""
+    path = _path_correos(tarea)
+    if not path.exists():
+        return {}
+
+    elegido = {}
+    with path.open(encoding="utf-8-sig") as f:
+        for fila in csv.DictReader(f):
+            grupo = (fila.get("grupo_archivo") or "").strip()
+            nombre = (fila.get("alumno_nombre") or "").strip()
+            correo = (fila.get("alumno_correo") or "").strip().lower()
+            if grupo and nombre and "@" in correo:
+                elegido[(grupo, nombre)] = correo
+    return elegido
+
+
+def escribir_correos(tarea: str, elegido: dict) -> Path:
+    """Reescribe el archivo completo con lo que se le pase."""
+    path = _path_correos(tarea)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        escritor = csv.DictWriter(f, fieldnames=COLUMNAS_CORREOS)
+        escritor.writeheader()
+        for (grupo, nombre), correo in sorted(elegido.items()):
+            escritor.writerow({"grupo_archivo": grupo, "alumno_nombre": nombre,
+                               "alumno_correo": correo})
+    return path
+
+
+def correo_elegido(correos: dict, grupo_archivo: str, nombre: str) -> str:
+    """El correo elegido a mano para ese integrante, o vacío.
+
+    El nombre puede venir con otro largo de espacios o mayúsculas según lo haya
+    copiado el modelo al generar: se compara sin eso.
+    """
+    clave = " ".join(nombre.split()).lower()
+    for (grupo, n), correo in correos.items():
+        if grupo == grupo_archivo and " ".join(n.split()).lower() == clave:
+            return correo
+    return ""

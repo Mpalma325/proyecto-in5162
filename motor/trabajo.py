@@ -28,6 +28,7 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import sitio
@@ -104,6 +105,25 @@ def _tarea(a: dict) -> str:
     if not re.fullmatch(r"T\d{1,2}", t):
         raise ValueError(f"Tarea inválida: {t!r}")
     return t
+
+
+def _minutos(a: dict) -> list[str]:
+    """El plazo para responder la pregunta de una tarea. Sin él, el del script (20)."""
+    if a.get("minutos") is None:
+        return []
+    m = int(a["minutos"])
+    if not 1 <= m <= 24 * 60:
+        raise ValueError(f"Minutos fuera de rango: {m}")
+    return ["--minutos", str(m)]
+
+
+def _desde(a: dict) -> list[str]:
+    """Un envío programado cuenta el plazo desde la hora programada (la valida el sitio)."""
+    if not a.get("a_las"):
+        return []
+    cuando = str(a["a_las"])
+    datetime.fromisoformat(cuando.replace("Z", "+00:00"))  # ValueError si no es una fecha
+    return ["--desde", cuando]
 
 
 def _entregas(a: dict) -> list[str]:
@@ -187,7 +207,8 @@ FLUJOS = {
     # Llama al modelo pero no manda correos, igual que en Streamlit.
     "tareas.generar": ("tareas", lambda a: ["-m", "modulos.tareas.generar", _tarea(a), "--no-interactivo",
                                             *_entregas(a)]),
-    "tareas.enviar": ("tareas", lambda a: ["-m", "modulos.tareas.enviar", _tarea(a), *_prueba(a)]),
+    "tareas.enviar": ("tareas", lambda a: ["-m", "modulos.tareas.enviar", _tarea(a), *_prueba(a), *_minutos(a),
+                                           *_desde(a)]),
     # Solo lee el buzón y actualiza el CSV.
     "tareas.recolectar": ("tareas", lambda a: ["-m", "modulos.tareas.recolectar", _tarea(a)]),
     # Segunda oportunidad: "preparar" genera las preguntas nuevas (llama al
@@ -197,6 +218,8 @@ FLUJOS = {
     "tareas.corregir": ("tareas", lambda a: ["-m", "modulos.tareas.corregir", _tarea(a), *_prueba(a), *_solo(a),
                                              *(["--no-enviar"] if a.get("no_enviar") is True
                                                and a.get("prueba") is False else [])]),
+    # Manda las correcciones que se guardaron para revisarlas (corregir sin enviar).
+    "tareas.feedback": ("tareas", lambda a: ["-m", "modulos.tareas.feedback", _tarea(a), *_prueba(a), *_solo(a)]),
 }
 
 # Los parámetros de la página que el motor le pasa al script. config.py los toma
@@ -478,6 +501,14 @@ def ejecutar(id_trabajo: str) -> None:
         if t.get("estado") != "pendiente":
             # Cloud Tasks puede entregar dos veces el mismo pedido. Un trabajo
             # que ya empezó no se repite: podría mandar correos dos veces.
+            return
+        # Un trabajo programado que llega antes de su hora (al encolarlo no se
+        # pudo leer la hora) vuelve a la cola, ahora con ella. Si corriera, las
+        # preguntas saldrían antes de tiempo.
+        from . import cola
+        cuando = cola.hora_programada(t)
+        if cuando and cuando > datetime.now(timezone.utc) + timedelta(seconds=60):
+            cola.encolar(id_trabajo)
             return
         semestre, flujo, args = t["semestre"], t["flujo"], t.get("argumentos") or {}
         if flujo not in FLUJOS:

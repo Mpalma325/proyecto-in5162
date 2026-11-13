@@ -19,6 +19,7 @@ from modulos import datos
 from . import asignacion as _asignacion
 from . import contexto as _contexto
 from . import config
+from .desempacar import desempacar_rars
 from .alumnos import cargar_alumnos, buscar_correo
 from .generar import _leer_entrega, _asignar_preguntas
 from .limpieza_html import (revisar_entrega, extraer_tabla_roles,
@@ -39,7 +40,11 @@ def revisar(tarea: str) -> dict:
     """El chequeo completo de una tarea, como datos. La impresión va aparte."""
     alumnos = cargar_alumnos()
     elegido = _asignacion.leer(tarea)
+    correos = _asignacion.leer_correos(tarea)
     entregas_dir = config.ENTREGAS / tarea
+    # La página sube los .rar sin abrir: se abren acá, y sus HTML quedan como
+    # una entrega más (el motor los guarda en la nube).
+    desempacados, rar_omitidos = desempacar_rars(entregas_dir)
     archivos = sorted(entregas_dir.glob("*.html"))
 
     grupos = []
@@ -55,10 +60,12 @@ def revisar(tarea: str) -> dict:
 
         integrantes = []
         for nombre in nombres:
-            correo, candidatos = buscar_correo(nombre, alumnos)
+            a_mano = _asignacion.correo_elegido(correos, path.name, nombre)
+            correo, candidatos = (a_mano, []) if a_mano else buscar_correo(nombre, alumnos)
             integrantes.append({
                 "nombre": nombre,
                 "correo": correo or "",
+                "correo_a_mano": bool(a_mano),
                 "candidatos": [(a["nombre"], a["correo"], round(s, 2))
                                for a, s in candidatos[:3]] if not correo else [],
             })
@@ -83,6 +90,19 @@ def revisar(tarea: str) -> dict:
     con_correo = {i["correo"].lower()
                   for g in grupos if not g["bloqueo"]
                   for i in g["integrantes"] if i["correo"]}
+
+    # Alguien que aparece en dos entregas recibiría dos preguntas. Pasó en T2 de
+    # 2026-2: un alumno subió una versión propia además de la de su grupo.
+    donde: dict[str, list[str]] = {}
+    for g in grupos:
+        if g["bloqueo"]:
+            continue
+        for i in g["integrantes"]:
+            if i["correo"]:
+                donde.setdefault(i["correo"].lower(), []).append(g["archivo"])
+    nombre_de = {a["correo"].lower(): a["nombre"] for a in alumnos}
+    duplicados = [{"correo": c, "nombre": nombre_de.get(c, c), "archivos": archivos_}
+                  for c, archivos_ in sorted(donde.items()) if len(archivos_) > 1]
     roster = [(a["Nombre"], a["Correo"]) for a in datos.alumnos.leer()]
     sin_entrega = [n for n, c in roster if c.lower() not in con_correo]
 
@@ -91,6 +111,9 @@ def revisar(tarea: str) -> dict:
         "carpeta": entregas_dir,
         "grupos": grupos,
         "sin_entrega": sin_entrega,
+        "duplicados": duplicados,
+        "desempacados": desempacados,
+        "rar_omitidos": rar_omitidos,
         "total_roster": len(roster),
         "contexto": _contexto.resumen(),
     }
@@ -104,6 +127,11 @@ def imprimir(informe: dict) -> int:
     print(f"[CHEQUEO] semestre {_sem.activo_o_error()}")
     print(f"Entregas en {informe['carpeta']}")
     print(_contexto.describir(informe["contexto"]) + "\n")
+
+    if informe.get("desempacados"):
+        print(f"Abrí los .rar: {', '.join(informe['desempacados'])}\n")
+    for o in informe.get("rar_omitidos", []):
+        print(f"⚠ {o}")
 
     if not informe["grupos"]:
         print("No hay HTMLs en esa carpeta. Súbelos desde la app, en "
@@ -138,7 +166,8 @@ def imprimir(informe: dict) -> int:
             marca = "*" if i["nombre"] in g["a_mano"] else ""
             etiqueta = f" [{asignada}{marca}]" if asignada else ""
             if i["correo"]:
-                print(f"    ✓ {i['nombre']:28s}{etiqueta:6s} → {i['correo']}")
+                elegido = " (elegido a mano)" if i.get("correo_a_mano") else ""
+                print(f"    ✓ {i['nombre']:28s}{etiqueta:6s} → {i['correo']}{elegido}")
                 a_generar += 1
             else:
                 print(f"    ⚠ {i['nombre']:28s}{etiqueta:6s} → SIN CORREO, hay que elegirlo a mano")
@@ -148,6 +177,11 @@ def imprimir(informe: dict) -> int:
                     print("        (ningún candidato razonable en el roster)")
                 pendientes += 1
         print()
+
+    for d in informe.get("duplicados", []):
+        print(f"⚠ {d['nombre']} aparece en {len(d['archivos'])} entregas: "
+              f"{', '.join(d['archivos'])}. Recibe una sola pregunta, la de la primera.")
+        pendientes += 1
 
     print("-" * 60)
     print(f"Preguntas que se generarían ahora: {a_generar}")

@@ -19,6 +19,12 @@ max-concurrent-dispatches=1 por la misma razón. Las simulaciones no mandan
 correos ni cambian notas, y van a otra cola (GCP_COLA_SIMULACIONES) que deja
 correr varias a la vez; si alguna llegara a escribir el mismo archivo, la subida
 con etag lo rechaza en vez de pisarlo.
+
+Un trabajo con "a_las" en sus argumentos (un envío de tareas programado, y la
+recolección y la corrección que lo siguen) espera hasta esa hora: Cloud Tasks
+lo despacha recién entonces (scheduleTime), y en el PC lo hace un temporizador.
+Si se cancela antes, al llegar la hora el motor ve que ya no está pendiente y no
+lo corre.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import os
 import queue
 import threading
 import urllib.request
+from datetime import datetime, timezone
 
 from . import trabajo
 
@@ -45,8 +52,14 @@ def _trabajador() -> None:
             _pendientes.task_done()
 
 
-def _local(id_trabajo: str) -> None:
+def _local(id_trabajo: str, a_las: datetime | None = None) -> None:
     global _hilo
+    espera = (a_las - datetime.now(timezone.utc)).total_seconds() if a_las else 0
+    if espera > 0:
+        t = threading.Timer(espera, _local, args=(id_trabajo,))
+        t.daemon = True
+        t.start()
+        return
     if _hilo is None or not _hilo.is_alive():
         _hilo = threading.Thread(target=_trabajador, name="cola-local", daemon=True)
         _hilo.start()
@@ -67,18 +80,32 @@ def _token_google() -> str:
         return json.loads(r.read())["access_token"]
 
 
-def _es_simulacion(id_trabajo: str) -> bool:
+def _ver(id_trabajo: str) -> dict:
     try:
-        return bool(trabajo.sitio.ver_trabajo(id_trabajo).get("prueba"))
-    except Exception:  # noqa: BLE001  (si no se sabe, va a la cola de a uno)
-        return False
+        return trabajo.sitio.ver_trabajo(id_trabajo)
+    except Exception:  # noqa: BLE001  (si no se sabe, va a la cola de a uno y sale ya)
+        return {}
 
 
-def _cloudtasks(id_trabajo: str) -> None:
+def hora_programada(t: dict) -> datetime | None:
+    """La hora a la que se pidió correr el trabajo, si se programó (en UTC)."""
+    a_las = (t.get("argumentos") or {}).get("a_las")
+    if not a_las:
+        return None
+    try:
+        cuando = datetime.fromisoformat(str(a_las).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if cuando.tzinfo is None:
+        return None
+    return cuando.astimezone(timezone.utc)
+
+
+def _cloudtasks(id_trabajo: str, t: dict) -> None:
     proyecto = os.environ["GCP_PROYECTO"]
     region = os.environ["GCP_REGION"]
     simulaciones = os.environ.get("GCP_COLA_SIMULACIONES")
-    cola = simulaciones if simulaciones and _es_simulacion(id_trabajo) else os.environ["GCP_COLA"]
+    cola = simulaciones if simulaciones and t.get("prueba") else os.environ["GCP_COLA"]
     destino = os.environ["MOTOR_URL_PUBLICA"].rstrip("/") + "/ejecutar"
     tarea = {
         "task": {
@@ -95,6 +122,9 @@ def _cloudtasks(id_trabajo: str) -> None:
             "dispatchDeadline": "1800s",
         }
     }
+    cuando = hora_programada(t)
+    if cuando and cuando > datetime.now(timezone.utc):
+        tarea["task"]["scheduleTime"] = cuando.strftime("%Y-%m-%dT%H:%M:%SZ")
     url = (f"https://cloudtasks.googleapis.com/v2/projects/{proyecto}/locations/{region}"
            f"/queues/{cola}/tasks")
     req = urllib.request.Request(
@@ -106,7 +136,8 @@ def _cloudtasks(id_trabajo: str) -> None:
 
 
 def encolar(id_trabajo: str) -> None:
+    t = _ver(id_trabajo)
     if os.environ.get("COLA", "local") == "cloudtasks":
-        _cloudtasks(id_trabajo)
+        _cloudtasks(id_trabajo, t)
     else:
-        _local(id_trabajo)
+        _local(id_trabajo, hora_programada(t))

@@ -405,6 +405,7 @@ const NOMBRE_FLUJO = {
   "tests.tutoria": "Responder dudas", "tests.experimento": "Probar criterio",
   "tareas.chequeo": "Revisar entregas", "tareas.generar": "Generar preguntas", "tareas.enviar": "Enviar preguntas",
   "tareas.recolectar": "Recolectar respuestas", "tareas.corregir": "Corregir", "tareas.segunda": "Segunda oportunidad",
+  "tareas.feedback": "Mandar correcciones",
   "datos.ajustar": "Ajustar nota", "datos.sabana": "Armar la sábana", "datos.panel": "Actualizar los resultados",
 };
 
@@ -454,7 +455,7 @@ export function resumenCsv(columnas, antes, despues) {
 // prueba = 1 porque nadie lo pide en falso, pero sí llaman al modelo o
 // escriben archivos: de ellos no se puede decir "no se hizo nada".
 const SIMULABLES = new Set(["tests.enviar", "tests.evaluar", "tests.tutoria", "tests.experimento",
-  "tareas.enviar", "tareas.corregir"]);
+  "tareas.enviar", "tareas.corregir", "tareas.feedback"]);
 const simula = (t) => (t.flujo === "tareas.segunda" ? t.argumentos?.paso === "enviar" : SIMULABLES.has(t.flujo));
 
 /** Si el trabajo fue una simulación: no mandó correos ni guardó notas. */
@@ -482,6 +483,32 @@ export function fallidosSinResolver(trabajos) {
     else porClave.set(k, { ...t, intentos: 1 });
   }
   return [...porClave.values()];
+}
+
+/**
+ * La hora a la que se programó un trabajo que todavía espera (Date), o null.
+ * Un envío de tareas programado, y la recolección y la corrección que lo siguen,
+ * quedan "pendiente" hasta esa hora (motor/cola.py).
+ */
+export function programadoPara(t, ahora = Date.now()) {
+  if (t.estado !== "pendiente" || !t.argumentos?.a_las) return null;
+  const d = new Date(t.argumentos.a_las);
+  return Number.isNaN(d.getTime()) || d.getTime() <= ahora - 60_000 ? null : d;
+}
+
+/** "hoy 10:00", "mañana 10:00" o "vie 14/11 10:00". */
+export function textoProgramado(d, ahora = new Date()) {
+  const dia = (x) => x.toDateString();
+  const manana = new Date(ahora.getTime() + 86_400_000);
+  const cuando = dia(d) === dia(ahora) ? "hoy" : dia(d) === dia(manana) ? "mañana" : diaCorto(d);
+  return `${cuando} ${horaCorta(d)}`;
+}
+
+// Desde cuándo corre un trabajo: si se programó, desde esa hora, no desde que se pidió.
+function inicioDe(t) {
+  const creado = new Date(t.creado).getTime();
+  const a_las = t.argumentos?.a_las ? new Date(t.argumentos.a_las).getTime() : NaN;
+  return Number.isNaN(a_las) ? creado : Math.max(creado, a_las);
 }
 
 /** Si el trabajo, corrido de verdad, manda correos a los alumnos. */
@@ -612,7 +639,7 @@ const promedio = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length 
 function duracionTipica(t) {
   const iguales = historialVisto.filter((o) => o.id !== t.id && o.flujo === t.flujo
     && Boolean(o.prueba) === Boolean(t.prueba) && o.estado === "terminado").slice(0, 10);
-  return promedio(iguales.map((o) => new Date(o.actualizado) - new Date(o.creado)).filter((d) => d > 0));
+  return promedio(iguales.map((o) => new Date(o.actualizado) - inicioDe(o)).filter((d) => d > 0));
 }
 
 function textoRestante(ms) {
@@ -632,7 +659,7 @@ export function avanceDe(t, p, ahora = Date.now()) {
   if (ESTADOS_FINALES.has(t.estado)) {
     return cuenta ? { pct: Math.min(100, Math.round((p.hechos / p.total) * 100)), texto: cuenta, final: true } : null;
   }
-  const pasado = ahora - new Date(t.creado).getTime();
+  const pasado = ahora - inicioDe(t);
   let total = null;
   if (p && p.total && p.hechos > 0 && p.hechos < p.total) total = (pasado * p.total) / p.hechos;
   else total = duracionTipica(t);
@@ -651,11 +678,13 @@ function vistaTrabajo(t, extra, precios = {}) {
     .flatMap(([s, clase, texto], i) => [i ? " · " : "", el("span", { class: `l-${clase}` }, `${s} ${texto(cuenta[s], simulacion)}`)]);
   const detalle = [nombreFlujo(t), sobreQue(t.argumentos || {}), `pedido por ${t.pedido_por}`]
     .filter(Boolean).join(" · ");
-  const esperando = t.estado === "pendiente" ? "Esperando que el motor lo tome…"
+  const programado = programadoPara(t);
+  const esperando = programado ? `Programado para ${textoProgramado(programado)}. Hasta esa hora se puede detener.`
+    : t.estado === "pendiente" ? "Esperando que el motor lo tome…"
     : t.estado === "cancelando" ? "Deteniéndose…"
       : ESTADOS_FINALES.has(t.estado) ? "(el trabajo no dejó salida)" : "Corriendo…";
   return [
-    el("p", { class: "cabeza-trabajo" }, el("span", { class: `estado ${t.estado}` }, t.estado), " ", insigniaModo(t), " ",
+    el("p", { class: "cabeza-trabajo" }, etiquetaEstado(t), " ", insigniaModo(t), " ",
       el("span", { class: "tenue" }, detalle), botonDetener(t)),
     simulacion && t.estado !== "fallido"
       ? el("p", { class: "titulo-salida" }, "Esto es lo que pasaría (no se hizo nada)") : null,
@@ -676,10 +705,12 @@ function vistaTrabajo(t, extra, precios = {}) {
  */
 function botonDetener(t) {
   if (t.estado !== "pendiente" && t.estado !== "corriendo") return null;
+  const programado = programadoPara(t);
   return el("button", {
     class: "enlace detener", type: "button",
     onclick: async (e) => {
-      if (!confirm("¿Detener este trabajo? Para antes del alumno siguiente; lo que ya hizo queda guardado.")) return;
+      if (!confirm(programado ? `¿Cancelar este trabajo programado para ${textoProgramado(programado)}? No va a correr.`
+        : "¿Detener este trabajo? Para antes del alumno siguiente; lo que ya hizo queda guardado.")) return;
       e.target.disabled = true;
       try {
         await api(`/api/trabajos/${t.id}/cancelar`, { method: "POST" });
@@ -688,7 +719,15 @@ function botonDetener(t) {
         e.target.disabled = false;
       }
     },
-  }, "Detener");
+  }, programado ? "Cancelar" : "Detener");
+}
+
+/** El estado de un trabajo; uno programado dice para cuándo. */
+function etiquetaEstado(t) {
+  const programado = programadoPara(t);
+  return programado
+    ? el("span", { class: "estado pendiente", title: "Corre solo a esa hora" }, `programado · ${textoProgramado(programado)}`)
+    : el("span", { class: `estado ${t.estado}` }, t.estado);
 }
 
 /** Lo que gastó el trabajo en la API, si llamó al modelo. */
@@ -786,8 +825,11 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
     if (!lista.length) { nodo.replaceChildren(); return; }
     // Mientras haya algo en la fila o corriendo, la tabla se pone al día sola:
     // así se ve avanzar cada trabajo, también varias simulaciones a la vez.
-    if (lista.some((t) => !ESTADOS_FINALES.has(t.estado))) {
-      nodo._refresco = setTimeout(() => { if (nodo.isConnected) dibujar(semestre); }, 3000);
+    // Uno programado para más tarde no necesita mirarse cada 3 segundos.
+    const activos = lista.filter((t) => !ESTADOS_FINALES.has(t.estado));
+    if (activos.length) {
+      const espera = activos.every((t) => programadoPara(t)) ? 30_000 : 3000;
+      nodo._refresco = setTimeout(() => { if (nodo.isConnected) dibujar(semestre); }, espera);
     }
     const [titulo, valor] = columna;
     // La fila entera abre el trabajo, también con el teclado (Tab y Enter).
@@ -802,7 +844,7 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
     el("td", {}, nombreFlujo(t)),
     el("td", {}, valor(t.argumentos)),
     el("td", {}, insigniaModo(t)),
-    el("td", {}, el("span", { class: `estado ${t.estado}` }, t.estado), avanceEnFila(t)),
+    el("td", {}, etiquetaEstado(t), avanceEnFila(t)),
     el("td", { class: "col-costo" }, costoCorto(costos.get(t.id))),
     el("td", { class: "col-quien" }, t.pedido_por));
     nodo.replaceChildren(
@@ -843,9 +885,14 @@ function cuando(texto) {
  * Después de una corrida en modo prueba de evaluar o corregir: las respuestas
  * que se procesarían, con casillas, y un botón para procesar solo esas.
  * `ruta` es el JSON que dejó el script (…/cache/candidatos_<item>.json) y
- * `alProcesar(correos)` pide el trabajo real con esa lista.
+ * `alProcesar(correos)` pide el trabajo real con esa lista. Con
+ * `mandaFeedback: false` el trabajo real deja las correcciones para revisarlas
+ * antes de mandarlas, y los textos lo dicen.
+ *
+ * Quien respondió fuera de plazo (tareas) viene marcado y sin elegir: se
+ * corrige solo si alguien lo marca.
  */
-export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
+export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedback = true }) {
   const nodo = el("div", { class: "candidatos" }, el("p", { class: "cargando" }, "Cargando las respuestas…"));
   const url = `/api/archivo/${encodeURIComponent(semestre)}/${ruta.split("/").map(encodeURIComponent).join("/")}`;
   // El script deja la lista siempre, aunque esté vacía. Que falte el archivo
@@ -865,12 +912,13 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
       nodo.replaceChildren(caja("info", `Ninguna respuesta nueva: la simulación no encontró nada que ${verbo.toLowerCase()}.`));
       return;
     }
-    const casillas = lista.map((c) => el("input", { type: "checkbox", checked: !c.ya_tiene_nota, value: c.correo }));
+    const casillas = lista.map((c) => el("input", { type: "checkbox", checked: !c.ya_tiene_nota && !c.fuera_de_plazo,
+      value: c.correo }));
     const boton = el("button", { class: "primario real", type: "button" });
     const actualizar = () => {
       const n = casillas.filter((x) => x.checked).length;
       boton.textContent = n === 0 ? `${verbo}: marca al menos una`
-        : `${verbo} ${n === 1 ? "la elegida" : `las ${n} elegidas`} y mandar feedback`;
+        : `${verbo} ${n === 1 ? "la elegida" : `las ${n} elegidas`}${mandaFeedback ? " y mandar feedback" : ""}`;
       boton.disabled = n === 0;
     };
     casillas.forEach((x) => x.addEventListener("change", actualizar));
@@ -879,8 +927,10 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
     boton.addEventListener("click", async () => {
       const elegidos = casillas.filter((x) => x.checked).map((x) => x.value);
       const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
-      if (!confirm(`Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\n`
-        + "Las demás quedan como están. ¿Confirmas?")) return;
+      if (!confirm(mandaFeedback
+        ? `Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\nLas demás quedan como están. ¿Confirmas?`
+        : `Vas a ${verbo.toLowerCase()} a: ${nombres}.\n\nLas notas quedan guardadas y las correcciones esperan tu `
+          + "revisión antes de mandarse. Las demás quedan como están. ¿Confirmas?")) return;
       boton.disabled = true;
       aviso.replaceChildren();
       try {
@@ -893,7 +943,9 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
     actualizar();
     nodo.replaceChildren(
       el("h4", {}, "Elegir qué respuestas procesar"),
-      el("p", { class: "nota-pie" }, "Las no marcadas quedan pendientes."),
+      el("p", { class: "nota-pie" }, lista.some((c) => c.fuera_de_plazo)
+        ? "Las no marcadas quedan pendientes. Las que llegaron fuera de plazo vienen sin marcar."
+        : "Las no marcadas quedan pendientes."),
       el("div", { class: "acciones" },
         el("button", { class: "enlace", type: "button", onclick: () => todas(true) }, "Todas"),
         el("button", { class: "enlace", type: "button", onclick: () => todas(false) }, "Ninguna")),
@@ -901,7 +953,9 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar }) {
         el("summary", {}, el("label", { class: "interruptor", onclick: (e) => e.stopPropagation() }, casillas[i],
           el("strong", {}, c.nombre)),
           el("span", { class: "tenue" }, [cuando(c.llegada), c.grupo, c.pregunta].filter(Boolean).join(" · ")),
-          c.ya_tiene_nota ? el("span", { class: "estado fallido" }, `ya tiene nota ${c.ya_tiene_nota}`) : null),
+          c.ya_tiene_nota ? el("span", { class: "estado fallido" }, `ya tiene nota ${c.ya_tiene_nota}`) : null,
+          c.fuera_de_plazo ? el("span", { class: "estado fallido", title: "Respondió después del plazo del correo" },
+            "fuera de plazo") : null),
         el("div", { class: "contenido respuesta" }, respuestaLegible(c.respuesta)))),
       el("div", { class: "acciones" }, boton), aviso);
   }).catch(() => noPude("no hubo conexión o el archivo vino dañado"));

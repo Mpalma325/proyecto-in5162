@@ -8,11 +8,9 @@ Pregunta (sobre la {pregunta_tarea} de tu grupo):
 
 {pregunta}
 
-Responde directamente a este correo. Así podemos asociar tu respuesta automáticamente. En esta etapa de marcha blanca, para la mayoría de ustedes su respuesta no tiene asociada una nota. La excepción es para quienes no están presentes en la sesión de discusión para quienes incluiremos su respuesta en la evaluación formal de la tarea.  
-
 Responde directamente a este correo. Así podemos asociar tu respuesta automáticamente.
 
-Plazo: 10 minutos a partir de la recepción de este correo.
+Plazo de respuesta: {plazo} hrs. Tienes {minutos} minutos para responder a este correo.
 
 
 Saludos,

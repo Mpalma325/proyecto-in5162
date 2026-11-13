@@ -12,7 +12,9 @@ COPY motor motor
 ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 # Hora de Chile, como en el PC. Sin esto el log mezclaba horas en UTC (nube) y
 # en -03:00 (PC), y lo que se ordena por fecha quedaba desordenado.
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+# bsdtar (libarchive-tools) abre los .rar que la página sube sin abrir: el
+# navegador no los lee (modulos/tareas/desempacar.py).
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata libarchive-tools \
     && rm -rf /var/lib/apt/lists/*
 ENV TZ=America/Santiago
 # Cloud Run define PORT; el servidor lo lee.

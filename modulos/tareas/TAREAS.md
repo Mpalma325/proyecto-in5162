@@ -38,25 +38,51 @@ Desde la raíz del proyecto:
 ```
 python -m modulos.tareas.chequeo T1
 python -m modulos.tareas.generar T1
-python -m modulos.tareas.enviar T1
+python -m modulos.tareas.enviar T1 --minutos 25
 python -m modulos.tareas.recolectar T1
-python -m modulos.tareas.corregir T1
+python -m modulos.tareas.corregir T1 --no-enviar
+python -m modulos.tareas.feedback T1
 ```
+
+`enviar` calcula el plazo al empezar (o desde `--desde`, la hora de un envío
+programado) y lo escribe en el correo a través de `{plazo}` y `{minutos}` en
+`correo_pregunta.md`. También lo guarda por alumno en `feedback_<T>.csv`, y con
+eso `recolectar` avisa quién respondió tarde y `corregir` lo deja fuera salvo
+que se lo elija con `--solo`. "Hasta las 10:25" incluye todo ese minuto.
+
+`corregir --no-enviar` guarda la nota en datos y deja en `feedback_<T>.csv` el
+comentario, la marca de IA y la justificación del modelo, con
+`feedback_pendiente`. En la página se leen y se editan; `feedback` manda lo que
+quedó escrito y, si la nota cambió, la registra como ajuste. La marca de IA y la
+justificación nunca van al correo del alumno.
+
+El correo de quien no calzó con la lista de alumnos se elige en el chequeo de
+la página y queda en `entregas/<T>/correos_<T>.csv`; generar y enviar lo leen
+de ahí. El chequeo también avisa a quien aparece en dos entregas, que recibe
+una sola pregunta.
 
 ## Lo que llega de U-Cursos
 
 La descarga es un zip con un comprimido por alumno adentro. Cada uno trae el
 HTML renderizado, el `.Rmd`, los datos y a veces basura de macOS, y varios
 grupos entregan su HTML con el mismo nombre. De eso se encarga
-`app/utils/runner.py`, que entra a los comprimidos anidados, prefija cada
-archivo con el nombre del grupo para que no se pisen, y guarda el `.Rmd` con el
-mismo nombre base que su HTML. Lo que no reconoce lo informa en pantalla.
+`desempacar.py` (lo usa Streamlit; la página repite las mismas reglas en
+`web/public/datos.js`): entra a los comprimidos anidados, prefija cada archivo
+con el nombre del grupo para que no se pisen, guarda el `.Rmd` con el mismo
+nombre base que su HTML y omite el enunciado que algunos grupos incluyen. Lo
+que no reconoce lo informa en pantalla.
 
 Algunos alumnos entregan `.rar`. No hay lector de rar en la biblioteca estándar,
 así que se usa el `tar` de Windows, que trae libarchive y lee RAR4 y RAR5 sin
 instalar nada. Va por ruta explícita a `System32`: si el PATH tiene primero el
-`tar` de Git Bash, ese es GNU tar y no abre rar. Fuera de Windows se buscan
-`unar` y `unrar`; si no hay ninguno, la entrega se reporta en vez de perderse.
+`tar` de Git Bash, ese es GNU tar y no abre rar. En Linux se usa `bsdtar` (el
+motor lo instala con `libarchive-tools`), y si no está, `unar` o `unrar`; si no
+hay ninguno, la entrega se reporta en vez de perderse.
+
+El navegador no abre `.rar`, así que la página los sube tal cual, con el nombre
+que tendrá su HTML (`Grupo3.rar` → `Grupo3.html`). Los abre el chequeo (y
+generar, si no hubo chequeo) con `desempacar_rars`; un `.rar` cuyo HTML ya
+existe no se vuelve a abrir.
 
 ## Cuando el entregable no viene como se espera
 

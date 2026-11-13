@@ -4,10 +4,15 @@
 // motor, igual que en Tests Semanales. El chequeo de las entregas también: lee
 // los HTML en el motor y deja el resultado en tareas/cache/, que esta página
 // dibuja. No llama al modelo.
+//
+// Lo que antes había que hacer a mano en los archivos se hace aquí: elegir el
+// correo de quien no calzó con la lista de alumnos (paso 1), corregir una
+// pregunta antes de enviarla y programar el envío con su plazo (paso 2), y leer
+// y editar las correcciones antes de mandarlas (paso 4).
 
 import {
-  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, fechaCorta, historialTrabajos, navegacion,
-  pedirTrabajo, seguirTrabajo, tareasConocidas, conDetalle,
+  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, fechaCorta, historialTrabajos, horaCorta,
+  navegacion, pedirTrabajo, respuestaLegible, seguirTrabajo, tareasConocidas, textoProgramado, conDetalle,
 } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
@@ -26,11 +31,7 @@ const PESTANAS = [
   { id: "generar", titulo: "1 · Generar preguntas", flujo: "tareas.generar" },
   {
     id: "enviar", titulo: "2 · Enviar preguntas", flujo: "tareas.enviar",
-    prueba: "Solo simular",
-    botonPrueba: () => `Simular envío de ${tarea}`,
-    botonReal: () => `Enviar las preguntas de ${tarea}`,
-    alerta: () => "Cada alumno recibe su pregunta por correo. No se puede deshacer.",
-    confirmar: () => `Vas a mandar las preguntas de ${tarea} a los alumnos. Son correos reales.`,
+    vista: (p, d) => vistaEnviar(p, d),
   },
   {
     id: "recolectar", titulo: "3 · Recolectar respuestas", flujo: "tareas.recolectar",
@@ -40,15 +41,19 @@ const PESTANAS = [
   {
     id: "corregir", titulo: "4 · Corregir", flujo: "tareas.corregir",
     prueba: "Solo simular",
-    noEnviar: "Guardar las notas sin mandar el feedback",
+    // Por defecto, las correcciones esperan revisión: se leen y se editan abajo
+    // antes de mandarlas (vistaRevision).
+    noEnviar: "Revisarlas antes de mandar el feedback", noEnviarMarcado: true,
     botonPrueba: () => `Simular corrección de ${tarea}`,
-    botonReal: (envia) => (envia ? `Corregir ${tarea} y mandar feedback` : `Corregir ${tarea} sin mandar correos`),
+    botonReal: (envia) => (envia ? `Corregir ${tarea} y mandar feedback` : `Corregir ${tarea} y dejarlas para revisar`),
     alerta: (envia) => (envia
       ? "Se llama al modelo (gasta API), las notas quedan guardadas y cada alumno recibe su feedback por correo."
-      : "Se llama al modelo (gasta API) y las notas quedan guardadas. No sale ningún correo."),
+      : "Se llama al modelo (gasta API) y las notas quedan guardadas. No sale ningún correo: las correcciones "
+        + "quedan abajo para leerlas, editarlas y mandarlas."),
     confirmar: (a) => (a.no_enviar
-      ? `Vas a corregir ${tarea} con GPT (gasta tokens) y guardar las notas, sin mandar correos.`
+      ? `Vas a corregir ${tarea} con GPT (gasta tokens) y guardar las notas. El feedback queda para revisarlo antes de mandarlo.`
       : `Vas a corregir ${tarea} con GPT y mandarle el feedback por correo a cada alumno. Son correos reales.`),
+    despues: (d) => vistaRevision(d),
   },
   {
     id: "segunda", titulo: "Segunda oportunidad", flujo: "tareas.segunda", aparte: true,
@@ -68,7 +73,11 @@ const urlArchivo = (ruta) => `/api/archivo/${encodeURIComponent(semestre)}/${rut
 const carpetaEntregas = () => `tareas/data/entregas/${tarea}/`;
 const rutaChequeo = () => `tareas/cache/chequeo_${tarea}.json`;
 const rutaAsignacion = () => `${carpetaEntregas()}asignacion_${tarea}.csv`;
+const rutaCorreos = () => `${carpetaEntregas()}correos_${tarea}.csv`;
+const rutaFeedbackDe = (t) => `tareas/data/salidas/feedback_${t}.csv`;
 const buscar = (ruta) => archivos.find((a) => a.ruta === ruta);
+// Las columnas de correos_<T>.csv (modulos/tareas/asignacion.py).
+const COLUMNAS_CORREOS = ["grupo_archivo", "alumno_nombre", "alumno_correo"];
 
 async function actualizarArchivos() {
   archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
@@ -102,15 +111,42 @@ async function leerTexto(ruta) {
   return r.text();
 }
 
+/** El texto de un archivo y su etag, para guardarlo después sin pisar otra versión. */
+async function leerConEtag(ruta) {
+  // Si no está en la lista, se crea. Si la lista estaba vieja y sí existía, el
+  // sitio rechaza la escritura (if-none-match) en vez de pisarlo.
+  if (!buscar(ruta)) return { texto: "", etag: null };
+  const r = await fetch(urlArchivo(ruta), { cache: "no-store" });
+  if (r.status === 404) return { texto: "", etag: null };
+  if (!r.ok) throw new Error(String(r.status));
+  const etag = (r.headers.get("etag") || buscar(ruta)?.etag || "").replace(/"/g, "");
+  return { texto: await r.text(), etag: etag || null };
+}
+
+/** Guarda un CSV. Si en la nube cambió desde que se leyó, el sitio responde 409 y no se pisa. Devuelve el etag nuevo. */
+async function guardarCsv(ruta, texto, etag, detalle) {
+  const r = await api(urlArchivo(ruta), {
+    method: "PUT", body: texto, headers: {
+      "content-type": "text/csv; charset=utf-8", ...conDetalle(detalle),
+      ...(etag ? { "if-match": etag } : { "if-none-match": "*" }),
+    },
+  });
+  return r?.etag || null;
+}
+
+const enCsv = (v) => (v || "").trim();
+
 async function leerEstadoTarea(t) {
-  const rutaFeedback = `tareas/data/salidas/feedback_${t}.csv`;
+  const rutaFeedback = rutaFeedbackDe(t);
   const [notas, feedback] = await Promise.all([leerTexto("notas.csv"),
     buscar(rutaFeedback) ? leerTexto(rutaFeedback) : ""]);
-  const datos = { generadas: 0, enviados: 0, primerEnvio: "", respondieron: 0, corregidas: 0 };
+  const datos = { generadas: 0, enviados: 0, primerEnvio: "", respondieron: 0, corregidas: 0, porMandar: 0 };
   if (feedback.trim()) {
     const { columnas, filas } = leerCsv(feedback);
-    const ip = columnas.indexOf("pregunta");
-    datos.generadas = filas.filter((f) => (f[ip] || "").trim()).length;
+    const [ip, ipend, ic] = ["pregunta", "feedback_pendiente", "alumno_correo"].map((c) => columnas.indexOf(c));
+    datos.generadas = filas.filter((f) => enCsv(f[ip])).length;
+    // Corregidas que esperan revisión antes de mandarse (corregir --no-enviar).
+    if (ipend >= 0) datos.porMandar = filas.filter((f) => enCsv(f[ipend]) && enCsv(f[ic])).length;
   }
   if (notas.trim()) {
     const { columnas, filas } = leerCsv(notas);
@@ -153,6 +189,11 @@ function ahoraTocaTarea(d) {
     return { id: "corregir", texto: `Corregir ${porCorregir === 1 ? "la respuesta pendiente" : `las ${porCorregir} respuestas pendientes`} de ${tarea}`,
       motivo: "Simula primero para elegir a quién corregir." };
   }
+  if (d.porMandar > 0) {
+    return { id: "corregir", texto: `Revisar y mandar ${d.porMandar === 1 ? "la corrección pendiente"
+      : `las ${d.porMandar} correcciones pendientes`} de ${tarea}`,
+      motivo: "Las notas ya están guardadas; el feedback no ha salido." };
+  }
   if (d.respondieron < d.enviados) {
     const faltan = d.enviados - d.respondieron;
     return { id: "recolectar", texto: `Recolectar las respuestas de ${tarea}`,
@@ -176,11 +217,12 @@ function pestanasDeTarea(d) {
     // Respondio se llena al recolectar: lo que no se ha recolectado no se sabe.
     detalle.recolectar = d.respondieron ? `${d.respondieron} de ${d.enviados} recolectadas` : null;
     detalle.corregir = porCorregir > 0 ? `${porCorregir} por corregir`
-      : d.corregidas ? plural(d.corregidas, "corregida", "corregidas") : null;
+      : d.porMandar > 0 ? `${d.porMandar} por mandar`
+        : d.corregidas ? plural(d.corregidas, "corregida", "corregidas") : null;
     hecho.generar = d.generadas > 0;
     hecho.enviar = d.enviados > 0;
     hecho.recolectar = d.enviados > 0 && d.respondieron >= d.enviados;
-    hecho.corregir = d.corregidas > 0 && porCorregir === 0;
+    hecho.corregir = d.corregidas > 0 && porCorregir === 0 && !d.porMandar;
   }
   const paso = (id, numero, titulo) => ({ id, numero, titulo, detalle: detalle[id], hecho: hecho[id], toca: toca?.id === id });
   return barraPestanas({
@@ -264,11 +306,14 @@ function elegir(t) {
   }
   if (t.flujo !== "tareas.corregir" || !t.prueba || t.estado !== "terminado") return null;
   const tareaRevisada = t.argumentos.tarea;
-  // El semestre y la lista son los de esta revisión, no los del selector.
+  // El semestre y la lista son los de esta revisión, no los del selector. Las
+  // correcciones quedan para revisarlas antes de mandarlas (vistaRevision).
   return elegirCandidatos({
     semestre: t.semestre, ruta: `tareas/cache/candidatos_${tareaRevisada}_${t.id}.json`, verbo: "Corregir",
+    mandaFeedback: false,
     alProcesar: async (solo) => {
-      const id = await pedirTrabajo(t.semestre, "tareas.corregir", { tarea: tareaRevisada, prueba: false, solo });
+      const id = await pedirTrabajo(t.semestre, "tareas.corregir",
+        { tarea: tareaRevisada, prueba: false, no_enviar: true, solo });
       await seguir(id, document.getElementById("resultado"));
     },
   });
@@ -280,6 +325,8 @@ function seguir(id, destino) {
     // Generar deja feedback_<T>.csv: hay que volver a listar antes de leer el estado.
     await actualizarArchivos().catch(() => {});
     refrescarEstado();
+    // Corregir y mandar cambian qué correcciones esperan revisión.
+    recargarRevision();
   } });
 }
 
@@ -329,7 +376,44 @@ function selectorTarea() {
 const kpi = (etiqueta, valor) => el("div", { class: "kpi" },
   el("div", { class: "etiqueta" }, etiqueta), el("div", { class: "valor" }, valor));
 
-function grupoChequeo(g, selects) {
+/** La lista de alumnos, [nombre, correo] por nombre, para elegir a mano un correo. */
+async function leerRoster() {
+  const { columnas, filas } = leerCsv(await leerTexto("alumnos.csv"));
+  const [iN, iC] = ["Nombre", "Correo"].map((c) => columnas.indexOf(c));
+  return filas.map((f) => [enCsv(f[iN]), enCsv(f[iC]).toLowerCase()]).filter(([, c]) => c.includes("@"))
+    .sort((a, b) => a[0].localeCompare(b[0], "es"));
+}
+
+/**
+ * El correo de un integrante. El que no calzó con la lista de alumnos se elige
+ * aquí, entre los parecidos o en la lista completa; uno que calzó mal se puede
+ * cambiar. Lo elegido va a correos_<T>.csv, que leen generar y enviar.
+ */
+function celdaCorreo(g, i, correosSel, roster) {
+  const automatico = i.correo && !i.correo_a_mano ? i.correo.toLowerCase() : "";
+  const selector = () => {
+    const sel = el("select", { class: "elegir-correo", "aria-label": `Correo de ${i.nombre}` },
+      el("option", { value: "" }, i.correo_a_mano ? "Sin correo (quitar lo elegido)" : "Elegir de la lista de alumnos…"),
+      i.candidatos.length ? el("optgroup", { label: "Parecidos" },
+        i.candidatos.map(([n, c, sim]) => el("option", { value: c.toLowerCase() }, `${n} · ${c} (parecido ${sim})`))) : null,
+      el("optgroup", { label: "Todos los alumnos" }, roster.map(([n, c]) =>
+        el("option", { value: c, selected: c === (i.correo || "").toLowerCase() }, `${n} · ${c}`))));
+    correosSel.push({ archivo: g.archivo, nombre: i.nombre, sel, automatico });
+    return sel;
+  };
+  if (!i.correo) {
+    return el("div", {}, el("span", { class: "falta-correo" }, "No calzó con la lista de alumnos"),
+      i.candidatos.length ? null : el("div", { class: "nota-pie" }, "Ningún parecido razonable: búscalo en la lista."),
+      selector());
+  }
+  if (i.correo_a_mano) return el("div", {}, selector(), el("div", { class: "nota-pie" }, "Elegido a mano"));
+  const zona = el("div", {}, el("code", {}, i.correo), " ");
+  zona.append(el("button", { class: "enlace", type: "button", title: "Si calzó con otro alumno",
+    onclick: () => zona.replaceChildren(selector()) }, "cambiar"));
+  return zona;
+}
+
+function grupoChequeo(g, selects, correosSel, roster) {
   let icono, resumen;
   if (g.bloqueo.length) [icono, resumen] = ["❌", "se va a saltar"];
   else if (g.sin_roles || g.integrantes.some((i) => !i.correo)) [icono, resumen] = ["⚠️", "pide revisión"];
@@ -360,11 +444,7 @@ function grupoChequeo(g, selects) {
       }
       return el("div", { class: "integrante" },
         el("strong", {}, i.nombre),
-        i.correo ? el("code", {}, i.correo) : el("div", {},
-          el("span", { class: "falta-correo" }, "Sin correo en Configuración › Tareas › Alumnos"),
-          i.candidatos.length
-            ? i.candidatos.map(([n, c, sim]) => el("div", { class: "nota-pie" }, `¿${n}? ${c} (parecido ${sim})`))
-            : el("div", { class: "nota-pie" }, "Ningún candidato razonable en el roster.")),
+        celdaCorreo(g, i, correosSel, roster),
         pregunta || el("span"));
     })));
   }
@@ -373,7 +453,7 @@ function grupoChequeo(g, selects) {
     el("div", { class: "contenido" }, contenido));
 }
 
-async function guardarAsignacion(selects, mensaje) {
+async function guardarAsignacion(selects) {
   // Igual que asignacion.escribir(): lo que ya estaba elegido a mano, más lo
   // que muestra cada selector, en orden por grupo y nombre.
   const elegido = new Map();
@@ -401,7 +481,38 @@ async function guardarAsignacion(selects, mensaje) {
       ...(previo ? { "if-match": previo.etag } : { "if-none-match": "*" }),
     },
   });
-  mensaje.replaceChildren(caja("exito", `Guardado en asignacion_${tarea}.csv. Generar va a usar esto.`));
+}
+
+/** Guarda en correos_<T>.csv lo elegido en los selectores de correo. Devuelve cuántos cambiaron. */
+async function guardarCorreos(correosSel) {
+  const ruta = rutaCorreos();
+  const { texto, etag } = await leerConEtag(ruta);
+  const elegido = new Map();
+  if (texto.trim()) {
+    const { columnas, filas } = leerCsv(texto);
+    const [ig, ia, ic] = COLUMNAS_CORREOS.map((c) => columnas.indexOf(c));
+    for (const f of filas) {
+      if (enCsv(f[ig]) && enCsv(f[ia]) && enCsv(f[ic]).includes("@")) {
+        elegido.set(JSON.stringify([enCsv(f[ig]), enCsv(f[ia])]), enCsv(f[ic]).toLowerCase());
+      }
+    }
+  }
+  let cambios = 0;
+  for (const { archivo, nombre, sel, automatico } of correosSel) {
+    const k = JSON.stringify([archivo, nombre]);
+    // Elegir el mismo correo con que ya calzaba no es una elección a mano.
+    const ahora = sel.value !== automatico ? sel.value : "";
+    if (ahora === (elegido.get(k) || "")) continue;
+    if (ahora) elegido.set(k, ahora);
+    else elegido.delete(k);
+    cambios++;
+  }
+  if (!cambios) return 0;
+  const filas = [...elegido.entries()].map(([k, c]) => [...JSON.parse(k), c])
+    .sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1], "es") : a[0] < b[0] ? -1 : 1));
+  await guardarCsv(ruta, escribirCsv({ columnas: COLUMNAS_CORREOS, filas, formato: { sep: ",", eol: "\r\n" } }),
+    etag, `Eligió a mano el correo de ${cambios} integrante(s) de ${tarea}`);
+  return cambios;
 }
 
 /** Qué material del curso va a ver el modelo al generar (modulos/tareas/contexto.py). */
@@ -416,7 +527,7 @@ function lineaContexto(c) {
     + `${Math.round(c.caracteres / 1000)} mil caracteres (`, enlace, ").");
 }
 
-function dibujarChequeo(informe, destino, cuando) {
+function dibujarChequeo(informe, destino, cuando, roster = []) {
   const grupos = informe.grupos;
   if (!grupos.length) {
     destino.replaceChildren(caja("aviso", "No hay entregas que revisar."));
@@ -426,30 +537,47 @@ function dibujarChequeo(informe, destino, cuando) {
   const aGenerar = activos.reduce((n, g) => n + g.integrantes.filter((i) => i.correo).length, 0);
   const sinCorreo = activos.reduce((n, g) => n + g.integrantes.filter((i) => !i.correo).length, 0);
   const selects = [];
+  const correosSel = [];
   const mensaje = el("div");
+  const duplicados = informe.duplicados || [];
   const partes = [
     el("p", { class: "nota-pie" }, `Revisado el ${cuando} · `,
       el("button", { class: "enlace", type: "button", onclick: () => revisar(destino) }, "Volver a revisar")),
     lineaContexto(informe.contexto),
+    informe.desempacados?.length ? caja("info", `Se abrieron los .rar: ${informe.desempacados.join(", ")}.`) : null,
+    ...(informe.rar_omitidos || []).map((o) => caja("aviso", o)),
     el("div", { class: "kpis", style: "grid-template-columns: repeat(3, 1fr)" },
       kpi("Preguntas que se generarían", aGenerar), kpi("Sin correo, a resolver", sinCorreo),
       kpi("Grupos que se saltarían", grupos.length - activos.length)),
-    ...grupos.map((g) => grupoChequeo(g, selects)),
-  ];
-  if (grupos.some((g) => Object.keys(g.asignacion).length)) {
-    const boton = el("button", { class: "descarga", type: "button" }, "Guardar asignación");
+    // Pasó en T2 de 2026-2: un alumno subió una versión propia además de la de su grupo.
+    duplicados.length ? caja("aviso", el("div", {},
+      "Aparecen en más de una entrega. Reciben una sola pregunta, la de la primera entrega:",
+      el("ul", {}, duplicados.map((d) => el("li", {}, `${d.nombre} (${d.correo}): ${d.archivos.join(" y ")}`))))) : null,
+    ...grupos.map((g) => grupoChequeo(g, selects, correosSel, roster)),
+  ].filter(Boolean);
+  if (activos.some((g) => g.integrantes.length)) {
+    const boton = el("button", { class: "descarga", type: "button" }, "Guardar lo elegido");
     boton.addEventListener("click", async () => {
       boton.disabled = true;
       try {
-        await guardarAsignacion(selects, mensaje);
+        if (selects.length) await guardarAsignacion(selects);
+        const cambios = correosSel.length ? await guardarCorreos(correosSel) : 0;
         await actualizarArchivos();
+        if (cambios) {
+          // Se vuelve a revisar para ver los correos elegidos en su lugar.
+          await revisar(destino);
+          return;
+        }
+        mensaje.replaceChildren(caja(selects.length ? "exito" : "info", selects.length
+          ? `Guardado en asignacion_${tarea}.csv. Generar va a usar esto.` : "No había nada nuevo que guardar."));
       } catch (e) {
         mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
       } finally {
         boton.disabled = false;
       }
     });
-    partes.push(el("div", { class: "acciones" }, boton), mensaje);
+    partes.push(el("p", { class: "nota-pie" }, "Las preguntas asignadas y los correos elegidos a mano los usan "
+      + "Generar y Enviar."), el("div", { class: "acciones" }, boton), mensaje);
   }
   if (informe.sin_entrega.length) {
     partes.push(el("details", {},
@@ -463,10 +591,16 @@ function dibujarChequeo(informe, destino, cuando) {
 
 async function mostrarChequeo(destino) {
   const info = buscar(rutaChequeo());
-  const informe = JSON.parse(await (await fetch(urlArchivo(rutaChequeo()), { cache: "no-store" })).text());
+  const [informe, roster] = await Promise.all([
+    fetch(urlArchivo(rutaChequeo()), { cache: "no-store" }).then((r) => r.text()).then(JSON.parse),
+    leerRoster().catch(() => [])]);
   const cuando = new Date(info.subido).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" });
-  dibujarChequeo(informe, destino, cuando);
+  dibujarChequeo(informe, destino, cuando, roster);
+  return informe;
 }
+
+// Los HTML que salieron de un .rar y ya se mostraron, como "T2/Grupo3.html".
+const rarsVistos = new Set();
 
 /** Pide un chequeo al motor y lo dibuja cuando termina. */
 async function revisar(destino) {
@@ -489,7 +623,14 @@ async function revisar(destino) {
             el("button", { class: "enlace", type: "button", onclick: () => revisar(destino) }, "Volver a revisar"))));
           return;
         }
-        await mostrarChequeo(destino);
+        const informe = await mostrarChequeo(destino);
+        // Los .rar que se abrieron son entregas nuevas: la lista de arriba tiene
+        // que mostrarlas. Una sola vez por .rar: si su HTML no alcanzó a quedar
+        // en la nube, el chequeo siguiente lo vuelve a abrir, y redibujar de
+        // nuevo pediría otro chequeo, y otro.
+        const nuevos = (informe.desempacados || []).filter((n) => !rarsVistos.has(`${tareaPedida}/${n}`));
+        nuevos.forEach((n) => rarsVistos.add(`${tareaPedida}/${n}`));
+        if (nuevos.length && pestana.id === "generar") dibujar();
       },
     });
   } catch (e) {
@@ -513,6 +654,8 @@ function chequeoAlDia() {
 
 function vistaGenerar(destino) {
   const htmls = htmlsDeLaTarea();
+  // La página sube los .rar sin abrir; el chequeo los abre.
+  const rars = archivos.filter((a) => a.ruta.startsWith(carpetaEntregas()) && /\.rar$/i.test(a.ruta));
   const partes = [];
   const casillas = htmls.map((n) => el("input", { type: "checkbox", checked: true, value: n }));
   const boton = el("button", { class: "primario", type: "button", disabled: !htmls.length },
@@ -520,12 +663,12 @@ function vistaGenerar(destino) {
   const actualizar = () => { boton.disabled = !casillas.some((c) => c.checked); };
   for (const c of casillas) c.addEventListener("change", actualizar);
 
-  if (!htmls.length) {
+  if (!htmls.length && !rars.length) {
     partes.push(caja("aviso", el("span", {}, `No hay entregas de ${tarea}. Se suben en `,
       el("a", { href: "/datos#datos/entregas" }, "Configuración › Tareas › Entregas"), ".")));
   } else {
     const todos = (v) => { for (const c of casillas) c.checked = v; actualizar(); };
-    partes.push(el("details", {},
+    if (htmls.length) partes.push(el("details", {},
       el("summary", {}, `Entregas a procesar (${htmls.length})`),
       el("div", { class: "contenido" },
         el("div", { class: "acciones" },
@@ -545,7 +688,8 @@ function vistaGenerar(destino) {
   }
 
   partes.push(
-    el("p", { class: "nota-pie" }, "Los nombres que no calcen con Configuración › Tareas › Alumnos quedan sin correo."),
+    el("p", { class: "nota-pie" }, "Los nombres que no calcen con Configuración › Tareas › Alumnos quedan sin correo "
+      + "hasta que se elija en el estado de las entregas."),
     el("div", { class: "form-trabajo" }, boton,
       el("span", { class: "costo" }, "Una llamada al modelo por alumno. No manda correos.")));
 
@@ -645,7 +789,7 @@ function vistaSegunda(destino) {
 
 function vistaPaso(p, destino) {
   const prueba = p.prueba ? el("input", { type: "checkbox", checked: true }) : null;
-  const noEnviar = p.noEnviar ? el("input", { type: "checkbox" }) : null;
+  const noEnviar = p.noEnviar ? el("input", { type: "checkbox", checked: Boolean(p.noEnviarMarcado) }) : null;
   // "Sin mandar el feedback" solo cambia algo corriendo de verdad: en la
   // simulación no sale nada igual. Se oculta para que no parezca otro modo seguro.
   const campoNoEnviar = noEnviar ? el("label", { class: "interruptor" }, noEnviar, p.noEnviar) : null;
@@ -693,6 +837,387 @@ function vistaPaso(p, destino) {
   ];
 }
 
+// ---------------------------------------------------------------- enviar
+
+const MINUTOS_POR_DEFECTO = 20; // el de modulos/tareas/enviar.py
+// En un envío programado, cuántos minutos después del plazo se recolecta y se
+// corrige. "Hasta las 10:20" incluye todo ese minuto, y el correo tarda en llegar.
+const RECOLECTAR_DESPUES = 2;
+const CORREGIR_DESPUES = 3;
+
+const sumarMinutos = (d, m) => new Date(d.getTime() + m * 60_000);
+const alMinuto = (d) => { const x = new Date(d); x.setSeconds(0, 0); return x; };
+
+/** "2026-11-13T10:00", para un <input type="datetime-local">, en la hora de quien mira. */
+function valorLocal(d) {
+  const dos = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}T${dos(d.getHours())}:${dos(d.getMinutes())}`;
+}
+
+/**
+ * Las preguntas y pautas generadas, para leerlas y corregirlas antes de enviar.
+ * Solo las que no han salido: una pregunta enviada ya no se cambia. Devuelve
+ * el nodo y `guardar()`, que enviar llama antes de pedir el trabajo para que no
+ * se pierda lo editado.
+ */
+function editorPreguntas() {
+  const nodo = el("div");
+  const ruta = rutaFeedbackDe(tarea);
+  let guardar = async () => {};
+  if (!buscar(ruta)) return { nodo, guardar: () => guardar() };
+  nodo.append(el("p", { class: "cargando" }, "Cargando las preguntas…"));
+  (async () => {
+    const leido = await leerConEtag(ruta);
+    let etag = leido.etag;
+    const csv = leerCsv(leido.texto);
+    const col = (n) => csv.columnas.indexOf(n);
+    const [iN, iG, iP, iQ, iPa, iM] = ["alumno_nombre", "grupo_archivo", "pregunta_tarea", "pregunta", "pauta",
+      "message_id"].map(col);
+    const porEnviar = csv.filas.filter((f) => enCsv(f[iQ]) && !enCsv(f[iM]));
+    if (!porEnviar.length) { nodo.replaceChildren(); return; }
+    const editadas = new Set();
+    const boton = el("button", { class: "secundario", type: "button", disabled: true }, "Guardar cambios");
+    const mensaje = el("div");
+    guardar = async () => {
+      if (!editadas.size) return;
+      const n = editadas.size;
+      etag = await guardarCsv(ruta, escribirCsv(csv), etag,
+        `Corrigió a mano ${n === 1 ? "una pregunta" : `${n} preguntas`} de ${tarea} antes de enviarla${n === 1 ? "" : "s"}`) || etag;
+      editadas.clear();
+      boton.disabled = true;
+      mensaje.replaceChildren(caja("exito", "Guardado. Enviar manda lo que quedó escrito."));
+    };
+    boton.addEventListener("click", async () => {
+      boton.disabled = true;
+      try {
+        await guardar();
+      } catch (e) {
+        mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
+        boton.disabled = false;
+      }
+    });
+    const campo = (f, i, etiqueta, filas) => {
+      const area = el("textarea", { rows: filas }, f[i] || "");
+      area.addEventListener("input", () => {
+        f[i] = area.value;
+        editadas.add(f);
+        boton.disabled = false;
+        mensaje.replaceChildren();
+      });
+      return el("label", { class: "campo campo-ancho" }, etiqueta, area);
+    };
+    nodo.replaceChildren(el("details", { class: "preguntas-tarea" },
+      el("summary", {}, `Leer o corregir las preguntas antes de enviarlas (${porEnviar.length})`),
+      el("div", { class: "contenido" },
+        el("p", { class: "nota-pie" }, "El alumno recibe la pregunta. La pauta no la ve: es lo que usa el modelo al corregir."),
+        ...porEnviar.map((f) => el("details", { class: "candidato" },
+          el("summary", {}, el("strong", {}, f[iN]), " ",
+            el("span", { class: "tenue" }, [f[iP], f[iG]].filter(Boolean).join(" · "))),
+          el("div", { class: "contenido" }, campo(f, iQ, "Pregunta", 5), campo(f, iPa, "Pauta", 7)))),
+        el("div", { class: "acciones" }, boton), mensaje)));
+  })().catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer las preguntas generadas (${e.message}).`)));
+  return { nodo, guardar: () => guardar() };
+}
+
+/**
+ * Enviar: con cuántos minutos tienen para responder y, si se quiere, a qué
+ * hora. Un envío programado deja también agendadas la recolección y la
+ * corrección (sin mandar el feedback), para el minuto en que vence el plazo.
+ */
+function vistaEnviar(p, destino) {
+  const editor = editorPreguntas();
+  const prueba = el("input", { type: "checkbox", checked: true });
+  const minutos = el("input", { type: "number", min: 1, max: 1440, step: 1, value: MINUTOS_POR_DEFECTO,
+    "aria-label": "Minutos para responder" });
+  const programar = el("input", { type: "checkbox" });
+  const proxima = new Date();
+  proxima.setHours(proxima.getHours() + 1, 0, 0, 0); // la próxima hora en punto
+  const aLas = el("input", { type: "datetime-local", value: valorLocal(proxima), "aria-label": "Fecha y hora del envío" });
+  const campoProgramar = el("span", { class: "fila-campos" },
+    el("label", { class: "interruptor" }, programar, "Programar para"), aLas);
+  const alerta = el("div");
+  const hecho = el("div");
+  const boton = el("button", { class: "primario", type: "button" });
+
+  const leerMinutos = () => {
+    const m = Number(minutos.value);
+    return Number.isInteger(m) && m >= 1 && m <= 1440 ? m : null;
+  };
+  const leerHora = () => {
+    const d = new Date(aLas.value);
+    return aLas.value && !Number.isNaN(d.getTime()) ? alMinuto(d) : null;
+  };
+  // Lo mismo que hace el motor: el plazo se cuenta desde el minuto programado.
+  const plan = (inicio, m) => {
+    const plazo = sumarMinutos(inicio, m);
+    return { inicio, plazo, recolectar: sumarMinutos(plazo, RECOLECTAR_DESPUES), corregir: sumarMinutos(plazo, CORREGIR_DESPUES) };
+  };
+
+  // Solo textos y avisos: qué se manda al pedir el trabajo se decide en el clic.
+  const actualizar = () => {
+    const real = !prueba.checked;
+    const m = leerMinutos();
+    const hora = programar.checked ? leerHora() : null;
+    campoProgramar.hidden = !real;
+    aLas.disabled = !programar.checked;
+    boton.classList.toggle("real", real);
+    boton.disabled = !m || (real && programar.checked && !hora);
+    boton.textContent = !real ? `Simular envío de ${tarea}`
+      : hora ? `Programar el envío de ${tarea} para ${textoProgramado(hora)}` : `Enviar las preguntas de ${tarea}`;
+    let aviso = "";
+    if (real && hora && m) {
+      const pl = plan(hora, m);
+      aviso = `La pregunta sale ${textoProgramado(pl.inicio)}, con plazo hasta las ${horaCorta(pl.plazo)}. A las `
+        + `${horaCorta(pl.recolectar)} se recolectan las respuestas y a las ${horaCorta(pl.corregir)} se corrigen, sin `
+        + "mandar el feedback: queda para revisarlo en el paso 4. Una vez que sale no se puede deshacer.";
+    } else if (real) {
+      aviso = `Cada alumno recibe su pregunta por correo, con ${m || "?"} minutos para responder. No se puede deshacer.`;
+    }
+    alerta.replaceChildren(aviso ? el("div", { class: "nota-real" }, el("strong", {}, aviso)) : "");
+  };
+  [prueba, programar].forEach((x) => x.addEventListener("change", actualizar));
+  [minutos, aLas].forEach((x) => x.addEventListener("input", actualizar));
+
+  boton.addEventListener("click", async () => {
+    const m = leerMinutos();
+    const real = !prueba.checked;
+    const hora = real && programar.checked ? leerHora() : null;
+    if (!m) return;
+    let pl = null;
+    if (hora) {
+      pl = plan(hora, m);
+      if (pl.inicio.getTime() < Date.now() - 60_000) { alert("Esa hora ya pasó. Elige otra."); return; }
+      if (!confirm(`Vas a programar las preguntas de ${tarea}: salen ${textoProgramado(pl.inicio)}, con ${m} minutos `
+        + `para responder (hasta las ${horaCorta(pl.plazo)}). Después se recolectan y se corrigen solas, sin mandar el `
+        + "feedback.\n\nSon correos reales. Hasta esa hora se puede cancelar en Últimos trabajos. ¿Confirmas?")) return;
+    } else if (real && !confirm(`Vas a mandar las preguntas de ${tarea} a los alumnos, con ${m} minutos para `
+      + "responder. Son correos reales.\n\n¿Confirmas?")) return;
+    boton.disabled = true;
+    hecho.replaceChildren();
+    const pedidos = [];
+    try {
+      await editor.guardar();
+      if (!pl) {
+        const id = await pedirTrabajo(semestre, p.flujo, { tarea, prueba: !real, minutos: m });
+        await seguir(id, destino);
+      } else {
+        pedidos.push(await pedirTrabajo(semestre, "tareas.enviar",
+          { tarea, prueba: false, minutos: m, a_las: pl.inicio.toISOString() }));
+        // Recolectar va a la cola de los reales (de a uno): así corregir no
+        // corre a la vez y los dos no se pisan notas.csv.
+        pedidos.push(await pedirTrabajo(semestre, "tareas.recolectar",
+          { tarea, prueba: false, a_las: pl.recolectar.toISOString() }));
+        pedidos.push(await pedirTrabajo(semestre, "tareas.corregir",
+          { tarea, prueba: false, no_enviar: true, a_las: pl.corregir.toISOString() }));
+        hecho.replaceChildren(caja("exito", `Quedó programado. Las preguntas salen ${textoProgramado(pl.inicio)}, con `
+          + `plazo hasta las ${horaCorta(pl.plazo)}; a las ${horaCorta(pl.recolectar)} se recolecta y a las `
+          + `${horaCorta(pl.corregir)} se corrige, para revisar en el paso 4. Si alguien responde tarde, recolecta de `
+          + "nuevo a mano."));
+        await seguir(pedidos[0], destino);
+      }
+      historial.dibujar(semestre);
+    } catch (e) {
+      hecho.replaceChildren(caja("aviso", pedidos.length
+        ? `Se programaron ${pedidos.length} de los 3 trabajos y el resto falló (${e.message}). Revisa Últimos trabajos.`
+        : `No pude pedir el trabajo: ${e.message}`));
+    } finally {
+      actualizar();
+    }
+  });
+
+  actualizar();
+  return [
+    editor.nodo,
+    el("div", { class: "form-trabajo" },
+      el("label", { class: "interruptor" }, prueba, "Solo simular"),
+      el("label", {}, "Minutos para responder", minutos),
+      campoProgramar,
+      boton),
+    alerta,
+    hecho,
+  ];
+}
+
+// ---------------------------------------------------------------- revisar antes de mandar
+
+// Vuelve a leer las correcciones por revisar; la pestaña Corregir lo deja
+// apuntando a su lista, y se llama al terminar cada trabajo.
+let recargarRevision = () => {};
+
+/** Los valores de la escala (tareas/prompts/escala.json), o null si el semestre no tiene. */
+async function leerEscala() {
+  try {
+    const t = await leerTexto("tareas/prompts/escala.json");
+    const valores = t.trim() ? JSON.parse(t).valores : null;
+    return Array.isArray(valores) && valores.length ? valores.map(Number) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lo que respondió cada alumno en una tarea, por correo, desde el registro. */
+async function respuestasDe(t) {
+  const { columnas, filas } = leerCsv(await leerTexto("log_envios.csv"));
+  const [iF, iI, iC, iE, iR] = ["Flujo", "Item", "Correo", "Evento", "Respuesta"].map((c) => columnas.indexOf(c));
+  const respuestas = new Map();
+  for (const f of filas) {
+    if (enCsv(f[iF]) === "tarea" && enCsv(f[iI]).toUpperCase() === t && enCsv(f[iE]) === "respuesta" && enCsv(f[iR])) {
+      respuestas.set(enCsv(f[iC]).toLowerCase(), f[iR]);
+    }
+  }
+  return respuestas;
+}
+
+const textoNota = (v) => {
+  const n = Number(String(v).replace(",", "."));
+  if (String(v).trim() === "" || !Number.isFinite(n)) return String(v || "sin nota");
+  return `${n > 0 ? "+" : ""}${n.toLocaleString("es-CL", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`;
+};
+
+/**
+ * Las correcciones que quedaron sin mandar (corregir --no-enviar): la nota y el
+ * comentario se pueden editar, y la justificación y la marca de IA del modelo se
+ * leen aquí, porque al alumno no le llegan. "Mandar" pide tareas.feedback.
+ */
+function vistaRevision(destino) {
+  const nodo = el("div", { class: "revision" });
+  const t = tarea;
+  const cargar = () => cargarRevision(nodo, destino, t)
+    .catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer las correcciones por revisar (${e.message}).`)));
+  recargarRevision = () => { if (nodo.isConnected && tarea === t) cargar(); };
+  if (buscar(rutaFeedbackDe(t))) cargar();
+  return nodo;
+}
+
+async function cargarRevision(nodo, destino, t) {
+  const ruta = rutaFeedbackDe(t);
+  const leido = await leerConEtag(ruta);
+  let etag = leido.etag;
+  const csv = leerCsv(leido.texto);
+  const col = (n) => csv.columnas.indexOf(n);
+  const [iN, iG, iP, iQ, iC, iNota, iCom, iIA, iJ, iPend] = ["alumno_nombre", "grupo_archivo", "pregunta_tarea",
+    "pregunta", "alumno_correo", "nota", "comentario", "senales_ia", "justificacion", "feedback_pendiente"].map(col);
+  const pendientes = iPend < 0 ? [] : csv.filas.filter((f) => enCsv(f[iPend]) && enCsv(f[iC]));
+  if (!pendientes.length) { nodo.replaceChildren(); return; }
+  nodo.replaceChildren(el("p", { class: "cargando" }, "Cargando las correcciones por revisar…"));
+  const [respuestas, escala] = await Promise.all([respuestasDe(t).catch(() => new Map()), leerEscala()]);
+  if (tarea !== t || !nodo.isConnected) return;
+
+  const editadas = new Set();
+  const guardarBoton = el("button", { class: "secundario", type: "button", disabled: true }, "Guardar cambios");
+  const mensaje = el("div");
+  const guardar = async () => {
+    if (!editadas.size) return;
+    const n = editadas.size;
+    etag = await guardarCsv(ruta, escribirCsv(csv), etag,
+      `Editó ${n === 1 ? "una corrección" : `${n} correcciones`} de ${t} antes de mandarla${n === 1 ? "" : "s"}`) || etag;
+    editadas.clear();
+    guardarBoton.disabled = true;
+  };
+  guardarBoton.addEventListener("click", async () => {
+    guardarBoton.disabled = true;
+    try {
+      await guardar();
+      mensaje.replaceChildren(caja("exito", "Guardado. Al mandar sale lo que quedó escrito."));
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
+      guardarBoton.disabled = false;
+    }
+  });
+
+  const casillas = [];
+  const fichas = pendientes.map((f) => {
+    const correo = enCsv(f[iC]).toLowerCase();
+    const casilla = el("input", { type: "checkbox", checked: true, value: correo });
+    casillas.push(casilla);
+    const actual = Number(enCsv(f[iNota]).replace(",", "."));
+    // Una nota fuera de la escala (no debería pasar) se muestra igual, para que se vea y se cambie.
+    const valores = escala && !escala.includes(actual) && enCsv(f[iNota]) ? [...escala, enCsv(f[iNota])] : escala;
+    const nota = valores
+      ? el("select", { "aria-label": `Nota de ${f[iN]}` }, valores.map((v) =>
+        el("option", { value: String(v), selected: Number(v) === actual }, textoNota(v))))
+      : el("input", { type: "text", value: f[iNota] || "", size: 5, "aria-label": `Nota de ${f[iN]}` });
+    const comentario = el("textarea", { rows: 8, "aria-label": `Comentario para ${f[iN]}` }, f[iCom] || "");
+    const insignia = el("span", { class: "estado" }, textoNota(f[iNota]));
+    const cambio = () => {
+      f[iNota] = nota.value;
+      f[iCom] = comentario.value;
+      insignia.textContent = textoNota(nota.value);
+      editadas.add(f);
+      guardarBoton.disabled = false;
+      mensaje.replaceChildren();
+    };
+    nota.addEventListener("change", cambio);
+    comentario.addEventListener("input", cambio);
+    const ia = enCsv(f[iIA]);
+    return el("details", { class: "candidato" },
+      el("summary", {},
+        el("label", { class: "interruptor", onclick: (e) => e.stopPropagation() }, casilla, el("strong", {}, f[iN])),
+        el("span", { class: "tenue" }, [f[iP], f[iG]].filter(Boolean).join(" · ")), " ", insignia,
+        ia ? el("span", { class: "estado fallido", title: "El modelo vio señales de que la respuesta es de IA. "
+          + "El alumno no lo ve." }, "señales de IA") : null),
+      el("div", { class: "contenido" },
+        el("p", {}, el("strong", {}, "Pregunta")), el("div", { class: "celda-lectura" }, f[iQ] || ""),
+        el("p", {}, el("strong", {}, "Lo que respondió")),
+        el("div", { class: "respuesta" }, respuestaLegible(respuestas.get(correo) || "(no la encontré en el registro)")),
+        el("div", { class: "fila-campos" }, el("label", { class: "campo" }, "Nota", nota)),
+        el("label", { class: "campo campo-ancho" }, "Comentario: es lo que recibe el alumno, con la nota", comentario),
+        f[iJ] || ia ? el("p", { class: "nota-pie" }, el("strong", {}, "Solo para el equipo docente. "),
+          ia ? "El modelo vio señales de que la respuesta es de IA. " : "", f[iJ] || "") : null));
+  });
+
+  const prueba = el("input", { type: "checkbox", checked: true });
+  const mandar = el("button", { class: "primario", type: "button" });
+  const actualizar = () => {
+    const n = casillas.filter((c) => c.checked).length;
+    mandar.classList.toggle("real", !prueba.checked);
+    mandar.disabled = n === 0;
+    mandar.textContent = n === 0 ? "Marca al menos una"
+      : prueba.checked ? `Ver ${n === 1 ? "el correo de la elegida" : `los correos de las ${n} elegidas`}`
+        : `Mandar ${n === 1 ? "la corrección elegida" : `las ${n} correcciones elegidas`}`;
+  };
+  casillas.forEach((c) => c.addEventListener("change", actualizar));
+  prueba.addEventListener("change", actualizar);
+  const todas = (v) => { casillas.forEach((c) => { c.checked = v; }); actualizar(); };
+
+  mandar.addEventListener("click", async () => {
+    const elegidos = casillas.filter((c) => c.checked).map((c) => c.value);
+    const vacias = pendientes.filter((f) => elegidos.includes(enCsv(f[iC]).toLowerCase()) && !enCsv(f[iCom]));
+    if (vacias.length) {
+      alert(`El comentario quedó vacío para: ${vacias.map((f) => f[iN]).join(", ")}. Escríbelo o desmárcalas.`);
+      return;
+    }
+    if (!prueba.checked && !confirm(`Vas a mandarle su corrección por correo a ${elegidos.length} `
+      + `alumno${elegidos.length === 1 ? "" : "s"} de ${t}. Son correos reales.\n\n¿Confirmas?`)) return;
+    mandar.disabled = true;
+    try {
+      await guardar();
+      const id = await pedirTrabajo(semestre, "tareas.feedback", { tarea: t, prueba: prueba.checked, solo: elegidos });
+      destino.scrollIntoView({ behavior: "smooth", block: "start" });
+      await seguir(id, destino);
+      historial.dibujar(semestre);
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
+    } finally {
+      actualizar();
+    }
+  });
+
+  actualizar();
+  nodo.replaceChildren(
+    el("hr"),
+    el("h4", {}, `Correcciones por revisar (${pendientes.length})`),
+    el("p", { class: "nota-pie" }, "Las notas ya quedaron guardadas, pero el alumno no ha recibido nada. Si cambias "
+      + "una nota, queda registrada como ajuste."),
+    el("div", { class: "acciones" },
+      el("button", { class: "enlace", type: "button", onclick: () => todas(true) }, "Todas"),
+      el("button", { class: "enlace", type: "button", onclick: () => todas(false) }, "Ninguna")),
+    ...fichas,
+    el("div", { class: "acciones" }, guardarBoton),
+    el("div", { class: "form-trabajo" }, el("label", { class: "interruptor" }, prueba, "Solo simular"), mandar),
+    mensaje);
+}
+
 // ---------------------------------------------------------------- pantalla
 
 function dibujar() {
@@ -700,6 +1225,8 @@ function dibujar() {
   const resultado = el("div", { id: "resultado" });
   const vista = pestana.vista ? pestana.vista(pestana, resultado)
     : pestana.id === "generar" ? vistaGenerar(resultado) : vistaPaso(pestana, resultado);
+  if (pestana.despues) vista.push(pestana.despues(resultado));
+  else recargarRevision = () => {};
   // Primero qué tarea y en qué va; después los pasos.
   app.replaceChildren(
     el("div", { class: "cabeza-operacion" }, chipSemestre(semestre)),

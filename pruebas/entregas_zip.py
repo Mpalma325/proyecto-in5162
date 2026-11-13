@@ -10,9 +10,11 @@ No hay red ni API acá: es todo desempaquetado.
 """
 
 import shutil
+import struct
 import sys
 import tempfile
 import zipfile
+import zlib
 from io import BytesIO
 from pathlib import Path
 
@@ -23,6 +25,23 @@ from pruebas.comun import check, resultado  # noqa: E402
 # en el Python (pasa con proyectos en modo editable), le ganaría a esta carpeta.
 sys.path.insert(0, "app")
 from utils import runner  # noqa: E402
+from modulos.tareas import desempacar  # noqa: E402
+
+
+def _bloque_rar(tipo: int, flags: int, resto: bytes) -> bytes:
+    cuerpo = struct.pack("<BHH", tipo, flags, 7 + len(resto)) + resto
+    return struct.pack("<H", zlib.crc32(cuerpo) & 0xFFFF) + cuerpo
+
+
+def _rar(archivos: dict[str, bytes]) -> bytes:
+    """Un .rar de verdad (RAR 4, sin comprimir): no hay con qué crearlos en el PC."""
+    salida = b"Rar!\x1a\x07\x00" + _bloque_rar(0x73, 0, b"\x00" * 6)
+    for nombre, datos in archivos.items():
+        n = nombre.encode()
+        resto = struct.pack("<IIBIIBBHI", len(datos), len(datos), 2, zlib.crc32(datos),
+                            0x5A6D0000, 20, 0x30, len(n), 0x20) + n
+        salida += _bloque_rar(0x74, 0x8000, resto) + datos
+    return salida + _bloque_rar(0x7B, 0x4000, b"")
 
 
 class _Subido:
@@ -95,11 +114,60 @@ def main() -> int:
         check("un comprimido ilegible se reporta sin cortar la subida",
               agregados2 == [] and "Roto.zip" in omitidos2, (agregados2, omitidos2))
 
+    # T2 de 2026-2: un grupo subió su repositorio con .git y el enunciado
+    # renderizado al lado de su entrega, con un .Rmd de nombre distinto.
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("t2-repo/Tarea_2.html", b"<html>entrega</html>")
+        zf.writestr("t2-repo/Tarea_2.Rmd", b"rmd de la entrega")
+        zf.writestr("t2-repo/enunciado/Enunciado_T2.html", b"<html>enunciado</html>")
+        zf.writestr("t2-repo/enunciado/Enunciado_T2.Rmd", b"rmd del enunciado")
+        zf.writestr("t2-repo/.git/config", b"[core]")
+        zf.writestr("t2-repo/.DS_Store", b"basura")
+    subido = _Subido("Tarea 2.zip", _zip_de_ucursos({"Lagos_Pino__Eva_33333333.zip": buf.getvalue()}))
+    with tempfile.TemporaryDirectory() as tmp:
+        destino = Path(tmp) / "T2"
+        agregados, omitidos = runner.extraer_entregas([subido], destino)
+        check("el enunciado no se toma como una entrega más",
+              sorted(agregados) == ["Lagos_Pino__Eva_33333333.Rmd", "Lagos_Pino__Eva_33333333.html"],
+              agregados)
+        check("el .Rmd es el de la entrega y no el del enunciado",
+              (destino / "Lagos_Pino__Eva_33333333.Rmd").read_bytes() == b"rmd de la entrega")
+        check("el enunciado se informa como omitido", any("es el enunciado" in o for o in omitidos), omitidos)
+        check("la carpeta .git y .DS_Store no llenan la lista de omitidos",
+              not any(".git" in o or ".DS_Store" in o for o in omitidos), omitidos)
+
     # El .rar depende de una herramienta del sistema; se comprueba que la
     # decisión sea explícita y no un descarte en silencio.
     lector = runner._hay_lector_rar()
     if lector:
         check("hay con qué abrir .rar en este equipo", True)
+        # La página sube el .rar sin abrir, con el nombre que tendrá su HTML; el
+        # chequeo lo abre en la carpeta de entregas (desempacar.desempacar_rars).
+        with tempfile.TemporaryDirectory() as tmp:
+            carpeta = Path(tmp) / "T3"
+            carpeta.mkdir()
+            (carpeta / "T3-Soto, Pino.rar").write_bytes(_rar({
+                "entrega/informe.html": b"<html>la entrega</html>",
+                "entrega/informe.Rmd": b"el rmd",
+                "entrega/Enunciado T3.html": b"<html>enunciado</html>",
+                "__MACOSX/entrega/._informe.html": b"basura",
+            }))
+            agregados, omitidos = desempacar.desempacar_rars(carpeta)
+            check("un .rar subido sin abrir deja su HTML y su .Rmd con el nombre del .rar",
+                  sorted(agregados) == ["T3-Soto, Pino.Rmd", "T3-Soto, Pino.html"], agregados)
+            check("del .rar sale la entrega y no el enunciado",
+                  (carpeta / "T3-Soto, Pino.html").read_bytes() == b"<html>la entrega</html>")
+            check("el enunciado del .rar se informa", any("enunciado" in o for o in omitidos), omitidos)
+            otra_vez = desempacar.desempacar_rars(carpeta)
+            check("un .rar ya abierto no se vuelve a abrir", otra_vez == ([], []), otra_vez)
+            (carpeta / "T3-Vacio.rar").write_bytes(_rar({"datos.csv": b"a,b"}))
+            _, omitidos = desempacar.desempacar_rars(carpeta)
+            check("un .rar sin HTML se avisa", any("T3-Vacio.rar" in o for o in omitidos), omitidos)
+            (carpeta / "T3-Roto.rar").write_bytes(b"Rar!\x1a\x07\x00 roto")
+            _, omitidos = desempacar.desempacar_rars(carpeta)
+            check("un .rar que no se puede abrir se avisa",
+                  any("T3-Roto.rar" in o for o in omitidos), omitidos)
     else:
         agregados3: list[str] = []
         omitidos3: list[str] = []

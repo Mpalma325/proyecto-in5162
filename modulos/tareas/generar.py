@@ -109,7 +109,8 @@ def _asignar_preguntas(nombres: list[str], semilla: str) -> dict:
 
 
 def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
-                     interactivo: bool = True, elegido: dict | None = None) -> list[dict]:
+                     interactivo: bool = True, elegido: dict | None = None,
+                     correos: dict | None = None) -> list[dict]:
     """Procesa una entrega y devuelve la lista de filas a agregar al CSV."""
     print(f"\n[{path_html.name}]")
     print(f"  → Limpiando HTML...")
@@ -163,7 +164,8 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
             print(f"    ⚠  Fila ignorada: '{nombre}' no es el nombre de una persona")
             continue
 
-        correo = resolver_interactivo(nombre, alumnos, interactivo=interactivo) or ""
+        correo = (_asignacion.correo_elegido(correos or {}, path_html.name, nombre)
+                  or resolver_interactivo(nombre, alumnos, interactivo=interactivo) or "")
 
         fila = {
             "tarea": tarea,
@@ -186,9 +188,33 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
     return filas
 
 
+def _sin_repetidos(tarea: str, filas: list[dict]) -> list[dict]:
+    """
+    Una sola pregunta por alumno, aunque aparezca en dos entregas.
+
+    En T2 de 2026-2 un alumno subió una versión propia además de la de su
+    grupo. Con dos filas para el mismo correo, enviar le mandaba dos preguntas.
+    Queda la que ya estaba en el CSV o, si no, la de la primera entrega.
+    """
+    vistos = {f["alumno_correo"].strip().lower(): f["grupo_archivo"]
+              for f in storage.leer_csv(tarea) if f.get("alumno_correo", "").strip()}
+    salida = []
+    for f in filas:
+        correo = f["alumno_correo"].strip().lower()
+        if correo and correo in vistos and vistos[correo] != f["grupo_archivo"]:
+            print(f"  ⚠ {f['alumno_nombre']} ya tiene pregunta por {vistos[correo]}; "
+                  f"no se guarda la de {f['grupo_archivo']}.")
+            continue
+        if correo:
+            vistos.setdefault(correo, f["grupo_archivo"])
+        salida.append(f)
+    return salida
+
+
 def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
     alumnos = cargar_alumnos()
     elegido = _asignacion.leer(tarea)
+    correos = _asignacion.leer_correos(tarea)
     print(f"Tarea: {tarea} | {len(alumnos)} alumnos en CSV | {len(archivos)} HTMLs a procesar")
     print(_contexto.describir())
     if elegido:
@@ -198,12 +224,13 @@ def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
     for archivo in archivos:
         try:
             filas = procesar_entrega(archivo, tarea, alumnos,
-                                     interactivo=interactivo, elegido=elegido)
+                                     interactivo=interactivo, elegido=elegido, correos=correos)
             todas_las_filas.extend(filas)
         except Exception as e:
             print(f"  ✗ Error procesando {archivo.name}: {e}")
             continue
 
+    todas_las_filas = _sin_repetidos(tarea, todas_las_filas)
     if todas_las_filas:
         path_csv = storage.agregar_filas(tarea, todas_las_filas)
         print(f"\n✓ Guardado en {path_csv.relative_to(config.PROJECT_ROOT)}")
@@ -211,7 +238,7 @@ def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
 
         sin_correo = [f for f in todas_las_filas if not f["alumno_correo"]]
         if sin_correo:
-            print(f"\n⚠️  {len(sin_correo)} integrante(s) sin correo (edítalos manualmente en el CSV antes del paso 2):")
+            print(f"\n⚠️  {len(sin_correo)} integrante(s) sin correo (elígelo en el chequeo del paso 1; enviar lo toma de ahí):")
             for f in sin_correo:
                 print(f"   - {f['alumno_nombre']} ({f['grupo_archivo']})")
 
@@ -233,6 +260,10 @@ if __name__ == "__main__":
         archivos_arg = [Path(a) for a in args]
     else:
         entregas_tarea = config.ENTREGAS / tarea
+        # Los .rar que la página subió sin abrir, por si no se hizo el chequeo antes.
+        from .desempacar import desempacar_rars
+        for nuevo in desempacar_rars(entregas_tarea)[0]:
+            print(f"  abrí el .rar: {nuevo}")
         archivos_arg = sorted(entregas_tarea.glob("*.html"))
         if not archivos_arg:
             print(f"No hay HTMLs en {entregas_tarea}")

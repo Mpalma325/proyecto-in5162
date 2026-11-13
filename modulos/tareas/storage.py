@@ -12,18 +12,20 @@ Columnas (en orden):
     pregunta            - pregunta generada por GPT
     pauta               - pauta de corrección generada por GPT
     motivo_sin_pregunta - si no hay pregunta, por qué
-    fecha_envio         - ISO timestamp cuando se envió el correo
     message_id          - Message-ID del correo enviado (para matchear respuestas)
-    respuesta           - texto de la respuesta del alumno
-    fecha_respuesta     - ISO timestamp cuando se recibió
-    nota                - nota numérica asignada
-    comentario          - feedback cualitativo del corrector
-    fecha_correccion    - ISO timestamp de la corrección
+    plazo               - hasta cuándo podía responder (ISO, al minuto)
+    nota, comentario    - la corrección del modelo, editable antes de mandarla
+    senales_ia          - "sí" si el modelo vio señales de que la respuesta es de IA
+    justificacion       - por qué el modelo puso esa nota; solo para el equipo docente
+    feedback_pendiente  - "sí" si se corrigió sin mandar el correo: espera revisión
+
+La respuesta del alumno y cuándo llegó viven en modulos/datos (log y notas).
 
 La clave natural de cada fila es (tarea, grupo_archivo, alumno_nombre).
 """
 
 import csv
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config
@@ -45,6 +47,15 @@ COLUMNAS = [
     "pauta",
     "motivo_sin_pregunta",
     "message_id",
+    # Hasta cuándo podía responder: lo deja enviar y lo usan recolectar y corregir.
+    "plazo",
+    # La corrección, para revisarla antes de mandarla (modulos/tareas/feedback.py).
+    # La nota que cuenta sigue viviendo en datos (notas.csv).
+    "nota",
+    "comentario",
+    "senales_ia",
+    "justificacion",
+    "feedback_pendiente",
 ]
 
 
@@ -63,7 +74,9 @@ def leer_csv(tarea: str) -> list[dict]:
     path = _path_tarea(tarea)
     if not path.exists():
         return []
-    with path.open(encoding='utf-8') as f:
+    # utf-8-sig: si alguien lo guardó desde Excel, la primera columna no queda
+    # como "﻿tarea".
+    with path.open(encoding='utf-8-sig') as f:
         return list(csv.DictReader(f))
 
 
@@ -119,3 +132,28 @@ def actualizar_por_message_id(tarea: str, message_id: str, campos: dict) -> bool
     if encontrado:
         escribir_csv(tarea, filas)
     return encontrado
+
+
+def respondio_tarde(fila: dict, respondio: str) -> bool:
+    """
+    Si la respuesta llegó después del plazo de esa fila.
+
+    "hasta las 10:25" incluye todo el minuto 10:25: una respuesta de las
+    10:25:20 llega a tiempo (pasó en T2 de 2026-2). Sin plazo guardado, o con una
+    fecha que no se entiende, no es tarde: así se comportan T1 y T2, que se
+    enviaron antes de que existiera la columna.
+    """
+    try:
+        plazo = datetime.fromisoformat((fila.get("plazo") or "").strip())
+        llegada = datetime.fromisoformat((respondio or "").strip())
+        return llegada >= plazo + timedelta(minutes=1)
+    except (ValueError, TypeError):
+        return False
+
+
+def hora(iso: str) -> str:
+    """La hora local de una fecha ISO ("10:28"). El correo puede traerla en otra zona."""
+    try:
+        return f"{datetime.fromisoformat(iso).astimezone():%H:%M}"
+    except (ValueError, TypeError):
+        return iso

@@ -61,6 +61,10 @@ def main(tarea: str) -> None:
 
         vista_previa = respuesta["texto"][:80].replace("\n", " ")
         print(f"  ✓ {fila['alumno_nombre']:30s}: '{vista_previa}...'")
+        if storage.respondio_tarde(fila, respuesta["fecha"]):
+            # Se recolecta igual: corregir la deja fuera salvo que se elija a mano.
+            print(f"     ⏰ fuera de plazo: respondió a las {storage.hora(respuesta['fecha'])}, "
+                  f"el plazo era hasta las {storage.hora(fila['plazo'])}")
 
 
 if __name__ == "__main__":

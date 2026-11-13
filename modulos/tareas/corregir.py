@@ -4,8 +4,14 @@ Paso 4 del flujo: corregir respuestas con GPT y enviar feedback al alumno.
 Lee el CSV. Para cada fila con respuesta pero sin nota:
   1. Arma prompt de corrección (pregunta + pauta + respuesta)
   2. Llama a OpenAI para obtener (nota, comentario)
-  3. Guarda en el CSV
-  4. Envía el feedback al alumno por correo
+  3. Guarda la nota en datos, y la corrección completa en el CSV de la tarea
+  4. Envía el feedback al alumno por correo, salvo con --no-enviar
+
+Con --no-enviar la corrección queda esperando revisión (feedback_pendiente):
+se puede leer y editar en la página, y feedback.py la manda después.
+
+Quien respondió después del plazo (la columna plazo, que deja enviar) queda
+fuera, salvo que se lo elija a mano con --solo.
 
 Uso:
     python -m modulos.tareas.corregir                # tarea = config.TAREA_DEFAULT
@@ -120,13 +126,28 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
         if respuestas.get(f.get("alumno_correo", "").strip().lower())
         and not _datos.notas.ya_evaluado(f.get("alumno_correo", ""), _datos.TAREAS, tarea)
     ]
+    # Cuándo respondió, según el correo (notas.csv), no cuándo se recolectó.
+    for f in pendientes:
+        correo = f["alumno_correo"].strip().lower()
+        e = _datos.notas.estado(correo, _datos.TAREAS, tarea) or {}
+        llegada[correo] = (e.get("Respondio") or "").strip() or llegada.get(correo, "")
+    tarde = {f["alumno_correo"].strip().lower() for f in pendientes
+             if storage.respondio_tarde(f, llegada[f["alumno_correo"].strip().lower()])}
     if dry_run:
         _candidatos.guardar("tareas", tarea, [{
             "correo": f["alumno_correo"].strip().lower(), "nombre": f["alumno_nombre"],
             "grupo": f.get("grupo_archivo", ""), "pregunta": f.get("pregunta_tarea", ""),
             "llegada": llegada.get(f["alumno_correo"].strip().lower(), ""),
+            "fuera_de_plazo": f["alumno_correo"].strip().lower() in tarde,
             "respuesta": respuestas[f["alumno_correo"].strip().lower()][:3000],
         } for f in pendientes])
+    if tarde and solo is None:
+        for f in pendientes:
+            if f["alumno_correo"].strip().lower() in tarde:
+                print(f"  ⏰ {f['alumno_nombre']:30s}: respondió fuera de plazo "
+                      f"({storage.hora(llegada[f['alumno_correo'].strip().lower()])}); "
+                      "no se corrige salvo que se elija a mano")
+        pendientes = [f for f in pendientes if f["alumno_correo"].strip().lower() not in tarde]
     if solo is not None:
         for f in pendientes:
             if f["alumno_correo"].strip().lower() not in solo:
@@ -167,12 +188,20 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
         try:
             _datos.notas.registrar_nota(fila["alumno_correo"], _datos.TAREAS,
                                         fila["tarea"], str(nota))
+            # La justificación y la marca de IA son para el equipo docente: van
+            # al log y al CSV de la tarea, nunca al correo del alumno.
             _datos.log.registrar("evaluacion", _datos.TAREAS, fila["tarea"],
                                  fila["alumno_correo"], Modelo=config.MODELO,
                                  Versiones=_versiones(fila, template_feedback if enviar else None),
-                                 Nota=str(nota), EvaluacionIA=comentario)
+                                 Nota=str(nota), EvaluacionIA=comentario,
+                                 Detalle=("Señales de IA. " if senales_ia else "") + justif)
         except Exception as _e:  # noqa: BLE001
             print(f"     ⚠ no pude registrar en el esquema nuevo: {_e}")
+        storage.actualizar_fila(tarea, fila["grupo_archivo"], fila["alumno_nombre"], {
+            "nota": str(nota), "comentario": comentario, "senales_ia": "sí" if senales_ia else "",
+            # Queda pendiente hasta que el correo sale: si el envío falla, feedback.py lo reintenta.
+            "justificacion": justif, "feedback_pendiente": "sí",
+        })
 
         marcador_ia = " 🤖" if senales_ia else ""
         print(f"  ✓ {nombre:30s}: nota {nota}{marcador_ia}")
@@ -186,6 +215,8 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
             asunto = f"Revisión de tu respuesta — {config.CURSO} {fila['tarea']}"
             cuerpo = _construir_cuerpo_feedback(template_feedback, fila_actualizada)
             enviar_correo(fila["alumno_correo"], asunto, cuerpo)
+            storage.actualizar_fila(tarea, fila["grupo_archivo"], fila["alumno_nombre"],
+                                    {"feedback_pendiente": ""})
             print(f"     ✉ feedback enviado a {fila['alumno_correo']}")
         except Exception as e:
             print(f"     ✗ error enviando feedback: {e}")

@@ -33,6 +33,8 @@ _IDS_PREGUNTA = {
     3: ("pregunta-3", "desarrollo-p3", "p3"),
     4: ("pregunta-4", "desarrollo-p4", "p4"),
 }
+_RE_PREGUNTA_SUELTA = {n: re.compile(r"#{2,6}\s*(?:\*\*)?\s*Pregunta\s*" + str(n) + r"\b", re.I)
+                       for n in (1, 2, 3, 4)}
 # Dónde termina la última pregunta.
 _IDS_CIERRE = ("roles", "resumen", "anexos")
 # Dónde empieza el desarrollo, para cuando el grupo no marcó la pregunta 1 y
@@ -56,6 +58,13 @@ def extraer_secciones(html_limpio: str) -> dict:
     Devuelve dict con keys: 'p1', 'p2', 'p3', 'p4', 'roles_html'
     """
     inicios = {n: _pos_id(html_limpio, ids) for n, ids in _IDS_PREGUNTA.items()}
+    # Un encabezado sin línea en blanco antes no se renderiza: queda como texto
+    # "### Pregunta 2" al final del párrafo anterior (pasó en T2 de 2026-2).
+    for n in (1, 2, 3, 4):
+        if inicios[n] < 0:
+            m = _RE_PREGUNTA_SUELTA[n].search(html_limpio, max(inicios[n - 1], 0) if n > 1 else 0)
+            if m:
+                inicios[n] = m.start()
     cierre = _pos_id(html_limpio, _IDS_CIERRE)
     if cierre < 0:
         cierre = len(html_limpio)
@@ -260,6 +269,10 @@ def extraer_autores(html: str) -> list[str]:
     hizo qué, solo quiénes son.
     """
     m = re.search(r'<meta\s+name="author"\s+content="([^"]*)"', html)
+    if not m:
+        # Algunas plantillas de RMarkdown no dejan el <meta>, pero sí el
+        # encabezado visible (T2 de 2026-2).
+        m = re.search(r'<h4\s+class="author">\s*([^<]+?)\s*</h4>', html)
     if not m:
         # El .Rmd todavía no está renderizado: el campo sigue en el YAML.
         m = re.search(r'^author:\s*"?([^"\n]+?)"?\s*$', html, re.M)

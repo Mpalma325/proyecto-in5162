@@ -71,7 +71,7 @@ const FLUJOS = new Set([
   "tests.enviar", "tests.evaluar", "tests.resumen", "tests.tutoria", "tests.chequeo", "tests.experimento",
   "datos.panel", "datos.ajustar", "datos.sabana",
   "tareas.chequeo", "tareas.generar", "tareas.enviar", "tareas.recolectar", "tareas.corregir",
-  "tareas.segunda",
+  "tareas.feedback", "tareas.segunda",
 ]);
 
 // Los parámetros que se pueden cambiar desde la página, con su validación.
@@ -102,9 +102,14 @@ const EDITABLES = [
   /^tests_semanales\/data\/preguntas\.csv$/,
   /^(tests_semanales|tareas)\/prompts\/[A-Za-z0-9_\-]+\.md$/,
   // Las entregas: el HTML de cada grupo y, si venía, el .Rmd con el mismo nombre.
-  // Y la asignación de preguntas elegida a mano en el chequeo de Tareas.
-  /^tareas\/data\/entregas\/(T\d{1,2})\/asignacion_\1\.csv$/,
-  /^tareas\/data\/entregas\/T\d{1,2}\/[^/]{1,200}\.(html|Rmd)$/,
+  // Un .rar se sube sin abrir (el navegador no los lee) y lo abre el chequeo.
+  // Y lo que se elige a mano en el chequeo de Tareas: la asignación de
+  // preguntas y el correo de quien no calzó con la lista de alumnos.
+  /^tareas\/data\/entregas\/(T\d{1,2})\/(asignacion|correos)_\1\.csv$/,
+  /^tareas\/data\/entregas\/T\d{1,2}\/[^/]{1,200}\.(html|Rmd|rar)$/,
+  // Las preguntas y pautas de cada alumno, que se pueden corregir antes de
+  // enviarlas, y las correcciones que esperan revisión antes de mandarse.
+  /^tareas\/data\/salidas\/feedback_T\d{1,2}\.csv$/,
   // El contexto del curso para el modelo: clases renderizadas, apuntes, código.
   CONTEXTO,
 ];
@@ -263,6 +268,8 @@ async function bajarArchivo(env: Env, semestre: string, ruta: string): Promise<R
   // navegador igual intentara mostrarlas, sin poder correr nada en el sitio.
   return new Response(objeto.body, { headers: {
     "content-type": "application/octet-stream", "x-content-type-options": "nosniff",
+    // Para escribirlo después sin pisar una versión que alguien guardó mientras tanto.
+    etag: objeto.httpEtag,
     "content-security-policy": "sandbox",
   } });
 }
@@ -304,7 +311,7 @@ async function subirArchivo(req: Request, env: Env, semestre: string, ruta: stri
     `INSERT INTO ediciones (semestre, ruta, quien, cuando, bytes_antes, bytes_despues, version_anterior, detalle)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(semestre, ruta, quien, t, actual ? actual.size : null, cuerpo.byteLength, versionAnterior, detalle).run();
-  return json({ ruta, bytes: cuerpo.byteLength });
+  return json({ ruta, bytes: cuerpo.byteLength, etag: escrito.etag });
 }
 
 /** Borra un archivo, dejando antes su última versión en el historial. */
@@ -401,8 +408,29 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
   if (!p.semestre || !ID_VALIDO.test(p.semestre)) return error(400, "Semestre inválido.");
   if (!FLUJOS.has(p.flujo)) return error(400, `Flujo desconocido: ${p.flujo}`);
   const args = p.argumentos && typeof p.argumentos === "object" ? p.argumentos : {};
+  if (args.a_las !== undefined) {
+    const a_las = horaProgramada(args.a_las);
+    if (typeof a_las !== "string") return a_las;
+    args.a_las = a_las;
+  }
   // Salvo que se pida explícitamente lo contrario, todo trabajo es de prueba.
   return json({ id: await crearTrabajo(env, p.semestre, p.flujo, args, quien) }, 201);
+}
+
+// Un trabajo programado (enviar las preguntas de una tarea a una hora, y
+// recolectar y corregir al vencer el plazo) espera en la cola del motor hasta
+// esa hora. Cloud Tasks acepta hasta 30 días; se guarda en UTC, como toISOString.
+const PROGRAMAR_HASTA_DIAS = 30;
+
+function horaProgramada(v: unknown): string | Response {
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+  const cuando = typeof v === "string" && iso.test(v) ? Date.parse(v) : NaN;
+  if (Number.isNaN(cuando)) return error(400, "La hora programada no es una fecha con zona horaria.");
+  if (cuando < Date.now() - 60_000) return error(400, "La hora programada ya pasó.");
+  if (cuando > Date.now() + PROGRAMAR_HASTA_DIAS * 86_400_000) {
+    return error(400, `Se puede programar hasta ${PROGRAMAR_HASTA_DIAS} días antes.`);
+  }
+  return new Date(cuando).toISOString();
 }
 
 /** Registra el trabajo y le avisa al motor. Lo usan la página y el cron. */
@@ -728,7 +756,7 @@ export default {
         if (!ID_VALIDO.test(partes[2]) || !RUTA_VALIDA.test(ruta)) return error(400, "Ruta inválida.");
         if (!editable(ruta)) return error(403, "Ese archivo no se edita desde la página.");
         // Una entrega ya subida no se reemplaza: igual que en Streamlit, se omite.
-        if (/^tareas\/data\/entregas\/.*\.(html|Rmd)$/.test(ruta) && await env.ARCHIVOS.head(clave(partes[2], ruta))) {
+        if (/^tareas\/data\/entregas\/.*\.(html|Rmd|rar)$/.test(ruta) && await env.ARCHIVOS.head(clave(partes[2], ruta))) {
           return error(409, "Esa entrega ya existe.");
         }
         return await subirArchivo(req, env, partes[2], ruta, quien);
