@@ -22,6 +22,11 @@ from modulos.datos import _csv as _tablas
 from modulos.datos.esquema import ALUMNOS, LOG, NOTAS
 
 
+# Lo que se compara de una casilla presente en las dos tablas.
+_CAMPOS_CASILLA = ("Enviado", "Respondio", "Nota", "Originalidad",
+                   "Corregido", "Logro", "Descartada")
+
+
 def _leer(ruta: Path) -> list[dict]:
     if not ruta.is_file():
         return []
@@ -96,7 +101,7 @@ def main(carpeta: str, semestre_id: str | None = None, detalle: bool = False,
     # por eso se cuenta antes de imprimir: una tabla con las mismas casillas
     # pero distinto contenido no puede salir marcada como igual.
     discrepan = sorted({k for k in notas["comunes"]
-                        for c in ("Enviado", "Respondio", "Nota", "Originalidad")
+                        for c in _CAMPOS_CASILLA
                         if (notas["_a"][k].get(c) or "").strip()
                         and (notas["_b"][k].get(c) or "").strip()
                         and notas["_a"][k][c].strip() != notas["_b"][k][c].strip()})
@@ -135,7 +140,7 @@ def main(carpeta: str, semestre_id: str | None = None, detalle: bool = False,
               f"porque no sabe cuál es la buena. Hay que mirarlas:")
         for k in discrepan[:5]:
             campos = [f"{c}: {notas['_a'][k].get(c)!r} vs {notas['_b'][k].get(c)!r}"
-                      for c in ("Enviado", "Respondio", "Nota", "Originalidad")
+                      for c in _CAMPOS_CASILLA
                       if (notas["_a"][k].get(c) or "").strip()
                       != (notas["_b"][k].get(c) or "").strip()]
             print(f"      {k[0]} {k[1]} {k[2]}: {'; '.join(campos)}")

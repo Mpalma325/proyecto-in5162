@@ -48,7 +48,8 @@ def main(archivo: str, semestre_id: str | None = None, simular: bool = False) ->
 
     e = _notas.sincronizar_desde_log(sid)
     print(f"Estado al día: {e['FilasNuevas']} filas nuevas, "
-          f"{e['Enviado']} envíos, {e['Respondio']} respuestas, {e['Nota']} notas.")
+          f"{e['Enviado']} envíos, {e['Respondio']} respuestas, {e['Nota']} notas"
+          + (f", {e['NotaAlDia']} notas atrasadas puestas al día." if e["NotaAlDia"] else "."))
     return 0
 
 

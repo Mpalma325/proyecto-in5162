@@ -232,10 +232,78 @@ def estado_desde_el_log(tmp, sid):
           estado[(ELISA, "tarea", "T1")]["Respondio"] == "2026-11-03T10:00:00-03:00")
 
 
+FRANCO = "franco.ejemplo@correo.test"
+
+
+def sincronizar_y_comparar(tmp, sid):
+    import io
+    import shutil
+    from contextlib import redirect_stdout
+
+    from modulos import datos
+    from modulos.datos import comparar
+    from modulos.datos.esquema import COLUMNAS_LOG, COLUMNAS_NOTAS, LOG, NOTAS
+
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, LOG_DE_PRUEBA + [
+        _evento(2, "evaluacion", FRANCO, Nota="5,0", Originalidad="Baja"),
+        _evento(3, "ajuste", FRANCO, Nota="6,0"),
+    ])
+    vacia = {c: "" for c in COLUMNAS_NOTAS}
+    _escribir_csv(tmp / NOTAS, COLUMNAS_NOTAS, [
+        # Atrasada: la tabla quedó con la evaluación; el ajuste y el recálculo
+        # llegaron por el log de otro equipo.
+        dict(vacia, Correo=CARLA, Flujo="test", Item="4", Enviado="SI", Respondio="SI",
+             Nota="6,5", Originalidad="Media", Logro="0.8333"),
+        # Editada a mano: 5,5 no es ninguna nota que el log haya tenido.
+        dict(vacia, Correo=FRANCO, Flujo="test", Item="4", Nota="5,5", Originalidad="Baja"),
+        # Corregida y descartada en el log, sin reflejo en la tabla.
+        dict(vacia, Correo=DIEGO, Flujo="test", Item="4", Enviado="SI", Respondio="SI"),
+    ])
+
+    titulo("9. sincronizar pone al día la nota atrasada y no pisa la editada a mano")
+    sim = datos.notas.sincronizar_desde_log(sid, simular=True)
+    check("simular cuenta la nota atrasada aparte", sim["NotaAlDia"] == 1, sim)
+    check("y las columnas nuevas que faltan", sim["Corregido"] >= 1 and sim["Descartada"] == 1, sim)
+    check("pero no escribe", datos.notas.estado(CARLA, "test", "4", sid)["Nota"] == "6,5")
+    hecho = datos.notas.sincronizar_desde_log(sid)
+    check("aplicar hace lo mismo que dijo", hecho == sim, (hecho, sim))
+    carla = datos.notas.estado(CARLA, "test", "4", sid)
+    check("la atrasada queda con la última nota del log y su logro",
+          carla["Nota"] == "6,8" and carla["Logro"] == "0.9333", carla)
+    check("sin perder la originalidad", carla["Originalidad"] == "Media", carla)
+    check("la editada a mano no se toca", datos.notas.estado(FRANCO, "test", "4", sid)["Nota"] == "5,5")
+    diego = datos.notas.estado(DIEGO, "test", "4", sid)
+    check("Corregido y Descartada llegan desde el log",
+          diego["Corregido"] == "2026-11-03T10:00:00-03:00" and diego["Descartada"] == "2026-11-04T10:00:00-03:00"
+          and not diego["Nota"], diego)
+    otra = datos.notas.sincronizar_desde_log(sid)
+    check("la segunda pasada no hace nada", not any(otra.values()), otra)
+
+    titulo("10. comparar ve una diferencia en Corregido")
+    alla = tmp.parent / "_tmp_esquema_alla"
+    shutil.rmtree(alla, ignore_errors=True)
+    shutil.copytree(tmp, alla)
+    try:
+        campos, filas = _leer_csv(alla / NOTAS)
+        for f in filas:
+            if f["Correo"] == DIEGO:
+                f["Corregido"] = "2026-11-05T10:00:00-03:00"
+        _escribir_csv(alla / NOTAS, campos, filas)
+        salida = io.StringIO()
+        with redirect_stdout(salida):
+            rc = comparar.main(str(alla), sid)
+        check("no las da por iguales", rc == 1, salida.getvalue()[-300:])
+        check("y dice cuál casilla y qué campo", DIEGO in salida.getvalue() and "Corregido" in salida.getvalue(),
+              salida.getvalue()[-400:])
+    finally:
+        shutil.rmtree(alla, ignore_errors=True)
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
     columnas_y_eventos_nuevos(tmp, sid)
     estados_de_una_casilla(tmp, sid)
     estado_desde_el_log(tmp, sid)
+    sincronizar_y_comparar(tmp, sid)
 
 sys.exit(resultado())

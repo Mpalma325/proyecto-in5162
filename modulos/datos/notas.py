@@ -156,6 +156,23 @@ def pendientes_de_envio(correos: list[str], flujo: str, item: str,
     return [c for c in correos if c.strip().lower() not in enviados]
 
 
+def _misma_nota(a: str, b: str) -> bool:
+    """6,5 y 6.5 son la misma nota: tests escribe con coma y tareas con punto."""
+    a, b = (a or "").strip().replace(",", "."), (b or "").strip().replace(",", ".")
+    try:
+        return float(a) == float(b)
+    except ValueError:
+        return a == b
+
+
+def _nota_atrasada(en_tabla: str | None, historia: list[str]) -> bool:
+    """Si la nota de la tabla es una anterior del log y no la última."""
+    en_tabla = (en_tabla or "").strip()
+    if not en_tabla or not historia or _misma_nota(en_tabla, historia[-1]):
+        return False
+    return any(_misma_nota(en_tabla, n) for n in historia[:-1])
+
+
 def sincronizar_desde_log(semestre_id: str | None = None,
                           simular: bool = False) -> dict:
     """Completa esta tabla con lo que el log sabe y a ella le falta.
@@ -168,10 +185,16 @@ def sincronizar_desde_log(semestre_id: str | None = None,
     pendientes.
 
     **Solo agrega.** Crea la fila que falte y llena el campo que esté vacío;
-    nunca borra una fila ni pisa un valor ya escrito. Las dos razones: la tabla
-    también se edita a mano cuando el equipo docente corrige una nota, y los
-    semestres que vienen del esquema viejo tienen filas que el log no conoce
-    porque son anteriores a él.
+    nunca borra una fila ni pisa un valor escrito a mano. Las dos razones: la
+    tabla también se edita a mano cuando el equipo docente corrige una nota, y
+    los semestres que vienen del esquema viejo tienen filas que el log no
+    conoce porque son anteriores a él.
+
+    La única nota que se reemplaza es la atrasada: si la de la tabla es una de
+    las notas anteriores que el log fue dejando (`historia_nota`) y no la
+    última, falta un ajuste o un recálculo que llegó por el log de otro equipo,
+    y se pone la última. Una nota que el log nunca tuvo es una edición a mano y
+    no se toca. Esas se cuentan aparte, en `NotaAlDia`.
 
     Con `simular` dice cuánto cambiaría sin escribir nada.
     """
@@ -179,7 +202,8 @@ def sincronizar_desde_log(semestre_id: str | None = None,
     filas = _csv.leer(NOTAS, semestre_id)
     indice = {_clave(f): f for f in filas}
 
-    resumen = {"FilasNuevas": 0, "Enviado": 0, "Respondio": 0, "Nota": 0}
+    resumen = {"FilasNuevas": 0, "Enviado": 0, "Respondio": 0, "Nota": 0,
+               "Corregido": 0, "Logro": 0, "Descartada": 0, "NotaAlDia": 0}
 
     for clave, desde_log in _log.reconstruir_estado(semestre_id).items():
         correo, flujo, item = clave
@@ -192,7 +216,14 @@ def sincronizar_desde_log(semestre_id: str | None = None,
             indice[clave] = fila
             resumen["FilasNuevas"] += 1
 
-        for campo in ("Enviado", "Respondio", "Nota"):
+        if _nota_atrasada(fila.get("Nota"), desde_log.get("historia_nota") or []):
+            fila["Nota"] = desde_log.get("Nota", "")
+            fila["Logro"] = desde_log.get("Logro", "")
+            if (desde_log.get("Originalidad") or "").strip():
+                fila["Originalidad"] = desde_log["Originalidad"]
+            resumen["NotaAlDia"] += 1
+
+        for campo in ("Enviado", "Respondio", "Nota", "Corregido", "Logro", "Descartada"):
             valor = (desde_log.get(campo) or "").strip()
             if valor and not (fila.get(campo) or "").strip():
                 fila[campo] = valor
