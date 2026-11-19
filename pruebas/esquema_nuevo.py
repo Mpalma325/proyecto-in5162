@@ -174,9 +174,68 @@ def estados_de_una_casilla(tmp, sid):
           n.esta_corregida({"Nota": "6,0"}) and not n.esta_por_revisar({"Nota": "6,0"}))
 
 
+def _evento(ts, evento, correo, flujo="test", item="4", **campos):
+    return {"Timestamp": f"2026-11-0{ts}T10:00:00-03:00", "Semestre": "_tmp_esquema", "Flujo": flujo,
+            "Item": item, "Correo": correo, "Evento": evento, **campos}
+
+
+CARLA, DIEGO, ELISA = "carla.prueba@correo.test", "diego.ensayo@correo.test", "elisa.muestra@correo.test"
+LOG_DE_PRUEBA = [
+    _evento(1, "envio", CARLA),
+    _evento(2, "respuesta", CARLA, Respuesta="mi respuesta de verdad", MessageId="<c1@correo.test>"),
+    _evento(2, "correccion", CARLA, Logro="0.8333", Nota="6,5"),
+    _evento(3, "evaluacion", CARLA, Nota="6,5", Originalidad="Media", Logro="0.8333"),
+    _evento(4, "respuesta", CARLA, Respuesta="la mando otra vez", MessageId="<c2@correo.test>",
+            Detalle="duplicado"),
+    _evento(5, "ajuste", CARLA, Nota="7,0"),
+    _evento(6, "recalculo", CARLA, Nota="6,8", Logro="0.9333"),
+    _evento(1, "envio", DIEGO),
+    _evento(2, "respuesta", DIEGO, Respuesta="respuesta de diego"),
+    _evento(3, "correccion", DIEGO, Logro="0.5"),
+    _evento(4, "descarte", DIEGO, Detalle="respondió otra pregunta; por profe@correo.test"),
+    # Tareas con segunda oportunidad: dos respuestas legítimas, se corrige la segunda.
+    _evento(1, "respuesta", ELISA, flujo="tarea", item="T1", Respuesta="primera entrega"),
+    _evento(3, "respuesta", ELISA, flujo="tarea", item="T1", Respuesta="segunda oportunidad"),
+    _evento(4, "evaluacion", ELISA, flujo="tarea", item="T1", Nota="5.5"),
+]
+
+
+def estado_desde_el_log(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, LOG
+
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, LOG_DE_PRUEBA)
+    estado = datos.log.reconstruir_estado(sid)
+
+    titulo("7. reconstruir_estado con corrección, duplicado, ajuste y recálculo")
+    carla = estado[(CARLA, "test", "4")]
+    check("Respondio es la respuesta que se corrigió, no el duplicado",
+          carla["Respondio"] == "2026-11-02T10:00:00-03:00", carla["Respondio"])
+    check("Corregido sale de la corrección", carla["Corregido"] == "2026-11-02T10:00:00-03:00")
+    check("la última nota manda (el recálculo), con su logro",
+          carla["Nota"] == "6,8" and carla["Logro"] == "0.9333", carla)
+    check("la originalidad sigue siendo la de la evaluación", carla["Originalidad"] == "Media")
+    check("historia_nota guarda las notas en orden", carla["historia_nota"] == ["6,5", "7,0", "6,8"],
+          carla["historia_nota"])
+    diego = estado[(DIEGO, "test", "4")]
+    check("el descarte llena Descartada y no pone nota",
+          diego["Descartada"] == "2026-11-04T10:00:00-03:00" and not diego["Nota"], diego)
+
+    titulo("8. la vista por casilla no confunde el duplicado con la respuesta")
+    vista = {(f["Correo"], f["Item"]): f for f in datos.log.como_interacciones(sid)}
+    check("Tests: la respuesta es la que se corrigió",
+          vista[(CARLA, "4")]["Respuesta"] == "mi respuesta de verdad", vista[(CARLA, "4")])
+    check("y su fecha también", vista[(CARLA, "4")]["FechaRespuesta"] == "2026-11-02T10:00:00-03:00")
+    check("Tareas con segunda oportunidad: la última respuesta, que es la corregida",
+          vista[(ELISA, "T1")]["Respuesta"] == "segunda oportunidad", vista[(ELISA, "T1")])
+    check("y Respondio también es la segunda",
+          estado[(ELISA, "tarea", "T1")]["Respondio"] == "2026-11-03T10:00:00-03:00")
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
     columnas_y_eventos_nuevos(tmp, sid)
     estados_de_una_casilla(tmp, sid)
+    estado_desde_el_log(tmp, sid)
 
 sys.exit(resultado())

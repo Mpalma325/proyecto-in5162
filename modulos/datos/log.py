@@ -61,34 +61,57 @@ def leer(semestre_id: str | None = None, flujo: str | None = None,
     return filas
 
 
+# El `Detalle` de una 'respuesta' que llegó cuando el alumno ya estaba
+# corregido: recibió el correo de duplicado y no cuenta como su respuesta.
+DUPLICADO = "duplicado"
+
+
+def es_duplicado(fila: dict) -> bool:
+    return fila.get("Evento") == "respuesta" and (fila.get("Detalle") or "").strip() == DUPLICADO
+
+
 def reconstruir_estado(semestre_id: str | None = None) -> dict:
     """Rearma, desde el log, en qué va cada alumno.
 
     Devuelve {(correo, flujo, item): {...}} con lo último registrado de cada
     tipo. Sirve para regenerar notas.csv si se perdió o quedó desincronizado
     entre dos equipos.
+
+    Cada casilla trae además `historia_nota`: las notas que el log fue dejando,
+    en orden. Con eso se distingue una tabla atrasada (tiene una nota anterior)
+    de una editada a mano (tiene una que el log nunca tuvo).
     """
     estado: dict = {}
     for fila in leer(semestre_id):
         clave = (fila.get("Correo", ""), fila.get("Flujo", ""), fila.get("Item", ""))
         actual = estado.setdefault(clave, {
+            **{c: "" for c in _esquema.COLUMNAS_NOTAS},
             "Correo": clave[0], "Flujo": clave[1], "Item": clave[2],
-            "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": "",
+            "historia_nota": [],
         })
         ts, ev = fila.get("Timestamp", ""), fila.get("Evento")
         if ev == "envio":
             actual["Enviado"] = ts
         elif ev == "respuesta":
-            actual["Respondio"] = ts
-        elif ev == "evaluacion":
-            actual["Nota"] = fila.get("Nota", "")
-            actual["Originalidad"] = fila.get("Originalidad", "")
-        elif ev == "ajuste":
-            # Un ajuste manual manda sobre la evaluación anterior. La
-            # originalidad no la cambia salvo que el ajuste la traiga.
-            actual["Nota"] = fila.get("Nota", "")
-            if fila.get("Originalidad"):
-                actual["Originalidad"] = fila["Originalidad"]
+            # El duplicado no es su respuesta: la que se corrigió fue la anterior.
+            if not es_duplicado(fila):
+                actual["Respondio"] = ts
+        elif ev == "correccion":
+            actual["Corregido"] = ts
+            actual["Logro"] = fila.get("Logro", "")
+        elif ev == "descarte":
+            actual["Descartada"] = ts
+        elif ev in ("evaluacion", "ajuste", "recalculo"):
+            # La última nota manda: el feedback que salió, un ajuste manual o
+            # un cambio de escala. La originalidad viene con la evaluación; un
+            # ajuste o un recálculo no la cambian salvo que la traigan.
+            nota = fila.get("Nota", "")
+            actual["Nota"] = nota
+            actual["Logro"] = fila.get("Logro", "")
+            if ev == "evaluacion" or fila.get("Originalidad"):
+                actual["Originalidad"] = fila.get("Originalidad", "")
+            if nota.strip():
+                actual["historia_nota"].append(nota.strip())
     return estado
 
 
@@ -206,7 +229,9 @@ def como_interacciones(semestre_id: str | None = None) -> list[dict]:
         ev, ts = e.get("Evento"), e.get("Timestamp", "")
         if ev == "envio":
             fila["FechaEnvio"] = ts
-        elif ev == "respuesta":
+        elif ev == "respuesta" and not es_duplicado(e):
+            # La última respuesta que no es un duplicado: en Tareas, con segunda
+            # oportunidad, la segunda es la que se corrigió.
             fila["FechaRespuesta"] = ts
             if e.get("Respuesta", "").strip():
                 fila["Respuesta"] = e["Respuesta"]
