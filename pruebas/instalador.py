@@ -168,6 +168,9 @@ check("id de proyecto vs nombre del proyecto",
       validar.error_proyecto("curso-motor-123") is None and validar.error_proyecto("Mi Proyecto") is not None)
 check("account id de Cloudflare: 32 hexadecimales",
       validar.error_cuenta_cf(CUENTA) is None and validar.error_cuenta_cf("abc") is not None)
+check("nombre del curso y del profesor: no vacíos y sin llaves (los correos usan str.format)",
+      validar.error_nombre("Investigación & Desarrollo") is None and validar.error_nombre("  ") is not None
+      and validar.error_nombre("Curso {2027}") is not None)
 
 # ---------------------------------------------------------------- 2. correo
 
@@ -232,6 +235,10 @@ check("Zero Trust sin activar: lo dice", ok is False and "Zero Trust" in msg, ms
 red = Red([("GET", A + r"/r2/buckets$", 403, cf_error(10042, "Please enable R2"))] + base_cf)
 ok, msg, det = validar.probar_cloudflare("token-cf-falso", CUENTA, Ejecutor(abrir=red))
 check("R2 sin activar: lo dice", ok is False and "R2" in msg, msg)
+red = Red([("GET", A + r"/workers/scripts$", 503, cf_error(10013, "unavailable"))] + base_cf)
+ok, msg, det = validar.probar_cloudflare("token-cf-falso", CUENTA, Ejecutor(abrir=red))
+check("un 503 al revisar un permiso: no se sabe (None), no «falta el permiso»",
+      ok is None and "Workers Scripts" in msg, msg)
 red = Red([("GET", r"/tokens/verify$", 401, cf_error(1000, "Invalid API Token"))])
 ok, msg, det = validar.probar_cloudflare("malo", CUENTA, Ejecutor(abrir=red))
 check("token inválido: rechazo", ok is False and "token" in msg.lower(), msg)
@@ -374,6 +381,33 @@ with tempfile.TemporaryDirectory() as tmp:
     check("crea la base y el bucket", red.hubo("POST", r"/d1/database$") and red.hubo("POST", r"/r2/buckets$"))
     check("y anota el id nuevo", env.get("CLOUDFLARE_D1_ID") == "uuid-nuevo")
 
+    # Un 5xx o un permiso que falta no es «no existe»: leerlo así crearía un duplicado.
+    caida = Red([("GET", A + r"/(d1/database|workers/scripts|access/apps)", 503, cf_error(10013, "unavailable")),
+                 ("GET", A + r"/workers/subdomain$", 200, cf_ok({"subdomain": "miscursos"}))])
+    cf_caido = cfl.Cloudflare(Ejecutor(abrir=caida, escribir=lambda *a: None), "token-cf-falso", CUENTA)
+    for nombre_, llamada in (("la lista de bases D1", lambda: cf_caido.id_d1("zz9999")),
+                             ("la lista de Workers", lambda: cf_caido.worker_existe("zz9999")),
+                             ("las apps de Access", lambda: cf_caido.app_access("zz9999.miscursos.workers.dev"))):
+        try:
+            r = llamada()
+            check(f"{nombre_} con 503: error, no «no existe»", False, r)
+        except Falla as e:
+            check(f"{nombre_} con 503: error, no «no existe»", "10013" in str(e), str(e))
+    ej = Ejecutor(abrir=caida, escribir=lambda *a: None)
+    preg, _ = preguntador([])
+    try:
+        preparar_cloudflare(Contexto(ej=ej, env=env, preg=preg, escribir=lambda *a: None),
+                            cfl.Cloudflare(ej, "token-cf-falso", CUENTA))
+        check("con D1 caída, preparar_cloudflare se detiene sin crear nada", False)
+    except Falla:
+        check("con D1 caída, preparar_cloudflare se detiene sin crear nada",
+              not any(m == "POST" for m, *_ in caida.pedidos), caida.pedidos)
+    vacia = Red([("GET", A + r"/workers/scripts$", 200, cf_ok([{"id": "otro"}])),
+                 ("GET", A + r"/access/apps$", 200, cf_ok([{"domain": "otro.workers.dev"}]))])
+    cf_vacio = cfl.Cloudflare(Ejecutor(abrir=vacia), "token-cf-falso", CUENTA)
+    check("una lista que responde bien y no lo trae sí es «no existe»",
+          cf_vacio.worker_existe("zz9999") is False and cf_vacio.app_access("zz9999.x.workers.dev") is None)
+
 # ---------------------------------------------------------------- 9. wrangler.<curso>.toml
 
 titulo("9. la configuración de wrangler del curso no arrastra datos de IN5162")
@@ -404,6 +438,45 @@ try:
     check("un valor con comillas no rompe el TOML", False)
 except Falla:
     check("un valor con comillas no rompe el TOML", True)
+
+# Si el archivo ya existe, la base y Access no se pisan.
+with tempfile.TemporaryDirectory() as tmp:
+    carpeta = Path(tmp)
+    ej = Ejecutor(escribir=lambda *a: None)
+    ruta, conservados = cfl.escribir_config(ej, "ZZ9999", valores, carpeta)
+    check("la primera vez se escribe tal cual", conservados == {} and cfl.leer_vars(
+        ruta.read_text(encoding="utf-8"))["database_id"] == "uuid-1")
+    sin_access = {**valores, "ACCESO_EQUIPO": "", "ACCESO_AUD": ""}
+    ruta, conservados = cfl.escribir_config(ej, "ZZ9999", sin_access, carpeta)
+    leido = cfl.leer_vars(ruta.read_text(encoding="utf-8"))
+    check("si el .env perdió Access, se conserva el del archivo y se devuelve al .env",
+          leido["ACCESO_AUD"] == "aud-1" and leido["ACCESO_EQUIPO"] == "equipo.cloudflareaccess.com"
+          and conservados == {"ACCESO_AUD": "aud-1", "ACCESO_EQUIPO": "equipo.cloudflareaccess.com"}, conservados)
+    antes = ruta.read_text(encoding="utf-8")
+    for clave, previo, otro in (("database_id", "uuid-1", "uuid-otra"), ("ACCESO_AUD", "aud-1", "aud-otro")):
+        try:
+            cfl.escribir_config(ej, "ZZ9999", {**valores, clave: otro}, carpeta)
+            check(f"{clave} distinto del archivo: se detiene", False)
+        except Falla as e:
+            check(f"{clave} distinto del archivo: se detiene, dice cuál y no toca el archivo",
+                  all(s in str(e) for s in (clave, previo, otro))
+                  and ruta.read_text(encoding="utf-8") == antes, str(e))
+    # Por el instalador: lo recuperado vuelve al .env.
+    import instalador.cloudflare as modulo_cf  # noqa: E402
+    import instalador.principal as modulo_principal  # noqa: E402
+
+    env = Entorno(carpeta / ".env")
+    for k, v in {"CURSO": "ZZ9999", "CLOUDFLARE_D1_ID": "uuid-1", "MOTOR_URL": URL}.items():
+        env.set(k, v)
+    escribir_original = modulo_cf.escribir_config
+    modulo_cf.escribir_config = lambda ej_, curso, vals: escribir_original(ej_, curso, vals, carpeta)
+    try:
+        preg, _ = preguntador([])
+        modulo_principal._config(Contexto(ej=ej, env=env, preg=preg, escribir=lambda *a: None))
+    finally:
+        modulo_cf.escribir_config = escribir_original
+    check("instalar.py devuelve al .env los datos de Access recuperados",
+          env.get("ACCESO_AUD") == "aud-1" and env.get("ACCESO_EQUIPO") == "equipo.cloudflareaccess.com")
 
 # ---------------------------------------------------------------- 10. plantilla
 
@@ -484,6 +557,31 @@ check("subir.py también sube la plantilla llena, igual que instalar.py",
 check("y los archivos de un semestre los sube tal cual",
       subir._contenido("2099-1", plantilla.PLANTILLA / ruta_eval, None)
       == (plantilla.PLANTILLA / ruta_eval).read_bytes())
+with tempfile.TemporaryDirectory() as tmp:
+    sin_marcas, con_marcas = Path(tmp) / "resumen.md", Path(tmp) / "firma.md"
+    sin_marcas.write_bytes("Resumen de la semana\r\n{RESPUESTAS}\r\n".encode("utf-8"))
+    con_marcas.write_bytes("Saludos,\r\n«PROFESOR»\r\n".encode("utf-8"))
+    check("un archivo de la plantilla sin marcas sube byte a byte (su MD5 sigue calzando con R2)",
+          subir._contenido("_template", sin_marcas, datos_curso) == sin_marcas.read_bytes())
+    check("uno con marcas sube lleno",
+          subir._contenido("_template", con_marcas, datos_curso) == "Saludos,\nAna Prueba\n".encode("utf-8"))
+
+# Los correos de tests_semanales son HTML: el nombre va escapado. Los de tareas, texto.
+raro = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Investigación & Desarrollo", "PROFESOR": "Ana <Bea> & Co."}
+html_ = dict(plantilla.archivos(raro))
+correo_html = html_["tests_semanales/prompts/correo_pregunta.md"].decode("utf-8")
+correo_txt = html_["tareas/prompts/correo_pregunta.md"].decode("utf-8")
+check("en un correo HTML, & < > del nombre van escapados",
+      "Ana &lt;Bea&gt; &amp; Co. y el equipo docente" in correo_html and "<Bea>" not in correo_html,
+      correo_html[-200:])
+check("en los archivos de texto (correos y prompts de tareas) van tal cual",
+      "Ana <Bea> & Co. y el equipo docente" in correo_txt
+      and "Investigación & Desarrollo" in html_["tareas/prompts/corregir_respuesta.md"].decode("utf-8"))
+try:
+    plantilla.renderizar("Saludos, «PROFESOR»", {**datos_curso, "PROFESOR": "Ana {x}"})
+    check("un nombre con llaves no se mete en un correo que se llena con str.format", False)
+except ValueError:
+    check("un nombre con llaves no se mete en un correo que se llena con str.format", True)
 
 # ---------------------------------------------------------------- 11. .env
 
@@ -589,6 +687,25 @@ codigo = main(["estado", "--simular"], ctx)
 check("estado solo consulta: ningún create, deploy ni PUT",
       not re.search(r" create | deploy |^PUT |^POST .*/(d1/database|r2/buckets)$|remove-iam",
                     "\n".join(ctx.ej.registro), re.M), ctx.ej.registro)
+# Sin simular: Cloudflare responde 503 al listar Workers. Eso es «?», no «falta».
+with tempfile.TemporaryDirectory() as tmp:
+    env = Entorno(Path(tmp) / ".env")
+    for k in ("CURSO", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "WEB_URL"):
+        env.set(k, COMPLETO[k])
+    red = Red([
+        ("GET", A + r"/workers/scripts$", 503, cf_error(10013, "unavailable")),
+        ("GET", A + r"/d1/database\?name=zz9999$", 200, cf_ok([{"name": "zz9999", "uuid": "uuid-1"}])),
+        ("GET", A + r"/r2/buckets/zz9999-semestres$", 200, cf_ok({"name": "zz9999-semestres"})),
+        ("GET", A + r"/access/apps$", 200, cf_ok([{"domain": "zz9999.miscursos.workers.dev"}]))] + base_cf)
+    salida = []
+    preg, _ = preguntador([])
+    ctx = Contexto(ej=Ejecutor(abrir=red, correr_proceso=prohibido, escribir=salida.append), env=env,
+                   preg=preg, escribir=salida.append)
+    main(["estado"], ctx)
+    lineas = [str(s) for s in salida]
+    check("estado con un 503 de Cloudflare: marca «?» y sigue con lo demás",
+          any(s.startswith("  ? sitio publicado") and "10013" in s for s in lineas)
+          and any(s.startswith("  ✓ Access configurado") for s in lineas), lineas)
 ctx, salida = contexto_simulado(COMPLETO, ["2", "sk-otra-falsa"])
 codigo = main(["credenciales", "--simular"], ctx)
 reg = "\n".join(ctx.ej.registro)

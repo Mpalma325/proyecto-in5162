@@ -23,6 +23,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import cloudflare as cfl
 from . import gcp, validar
@@ -104,8 +105,10 @@ def preguntar_curso(ctx: Contexto) -> None:
     paso("El curso", ctx.escribir)
     ctx.datos["curso"] = _valor(ctx, "CURSO", "Código del curso, como lo verán los alumnos (ej. IN3401)",
                                 revisar=validar.error_codigo, normalizar=lambda v: v.strip().upper())
-    ctx.datos["nombre"] = _valor(ctx, "NOMBRE_CURSO", "Nombre del curso (ej. Economía de la Empresa)")
-    ctx.datos["profesor"] = _valor(ctx, "PROFESOR", "Nombre del profesor o profesora a cargo")
+    ctx.datos["nombre"] = _valor(ctx, "NOMBRE_CURSO", "Nombre del curso (ej. Economía de la Empresa)",
+                                 revisar=validar.error_nombre)
+    ctx.datos["profesor"] = _valor(ctx, "PROFESOR", "Nombre del profesor o profesora a cargo",
+                                   revisar=validar.error_nombre)
 
 
 def preguntar_correo(ctx: Contexto, de_nuevo: bool = False) -> None:
@@ -234,6 +237,16 @@ def _valores_wrangler(ctx: Contexto) -> dict[str, str]:
     }
 
 
+def _config(ctx: Contexto) -> Path:
+    """web/wrangler.<curso>.toml al día con el .env. Lo que el archivo tenía y el
+    .env no (el id de la base, los datos de Access) vuelve al .env."""
+    config, conservados = cfl.escribir_config(ctx.ej, ctx.env.get("CURSO"), _valores_wrangler(ctx))
+    for clave, valor in conservados.items():
+        ctx.env.set(clave, valor)
+        ctx.escribir(f"  ✓ {clave} recuperado de web/{config.name}")
+    return config
+
+
 def _motor(ctx: Contexto) -> gcp.Motor:
     return gcp.Motor(ctx.env.get("CURSO"), ctx.env.get("GCP_PROYECTO"), ctx.env.get("GCP_REGION"),
                      ctx.env.get("WEB_URL"))
@@ -279,7 +292,7 @@ def preparar_cloudflare(ctx: Contexto, cf: Cloudflare) -> None:
 
 def migrar_base(ctx: Contexto, cf: Cloudflare) -> None:
     paso("Base de datos: migraciones pendientes", ctx.escribir)
-    config = cfl.escribir_config(ctx.ej, ctx.env.get("CURSO"), _valores_wrangler(ctx))
+    config = _config(ctx)
     cf.aplicar_migraciones(config)
 
 
@@ -301,7 +314,7 @@ def desplegar_motor(ctx: Contexto) -> str:
 
 def configurar_access(ctx: Contexto, cf: Cloudflare, correos: list[str]) -> None:
     paso("Cloudflare Access: quién puede entrar", ctx.escribir)
-    config = cfl.escribir_config(ctx.ej, ctx.env.get("CURSO"), _valores_wrangler(ctx))
+    config = _config(ctx)
     datos = cf.configurar_access(config, correos, ctx.env.get("WEB_URL"))
     if not datos["ACCESO_EQUIPO"] or not datos["ACCESO_AUD"]:
         raise Falla("acceso.mjs terminó sin dejar ACCESO_EQUIPO y ACCESO_AUD.")
@@ -311,7 +324,7 @@ def configurar_access(ctx: Contexto, cf: Cloudflare, correos: list[str]) -> None
 
 def publicar_sitio(ctx: Contexto, cf: Cloudflare) -> None:
     paso("Publicando el sitio", ctx.escribir)
-    config = cfl.escribir_config(ctx.ej, ctx.env.get("CURSO"), _valores_wrangler(ctx))
+    config = _config(ctx)
     cf.publicar(config, {"TOKEN_MOTOR": ctx.env.get("WEB_TOKEN"), "TOKEN_WEB": ctx.env.get("TOKEN_WEB")})
 
 
@@ -427,12 +440,18 @@ def estado(ctx: Contexto, args) -> int:
         ok, mensaje, det = validar.probar_cloudflare(token, cuenta, ctx.ej)
         filas.append(("token de Cloudflare", ok, "" if ok else mensaje))
         if ok is not False:
-            filas.append(("base D1", cf.id_d1(c) is not None, c))
-            filas.append(("bucket R2", cf.bucket_existe(f"{c}-semestres"), f"{c}-semestres"))
-            filas.append(("sitio publicado", cf.worker_existe(c), c))
             web = ctx.env.get("WEB_URL")
-            filas.append(("Access configurado", bool(web) and cf.app_access(cfl.host(web)) is not None,
-                          cfl.host(web) if web else ""))
+            for nombre, consulta, detalle in (
+                    ("base D1", lambda: cf.id_d1(c) is not None, c),
+                    ("bucket R2", lambda: cf.bucket_existe(f"{c}-semestres"), f"{c}-semestres"),
+                    ("sitio publicado", lambda: cf.worker_existe(c), c),
+                    ("Access configurado", lambda: bool(web) and cf.app_access(cfl.host(web)) is not None,
+                     cfl.host(web) if web else "")):
+                try:
+                    filas.append((nombre, consulta(), detalle))
+                except Falla as e:
+                    # Cloudflare no respondió bien: no se sabe, que no es lo mismo que «falta».
+                    filas.append((nombre, None, str(e)))
             config = WEB / cfl.nombre_config(c)
             if config.exists() or ctx.ej.simular:
                 pendientes = cf.migraciones_pendientes(config)

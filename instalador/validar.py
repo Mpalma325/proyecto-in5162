@@ -40,6 +40,15 @@ def error_codigo(codigo: str) -> str | None:
     return None
 
 
+def error_nombre(nombre: str) -> str | None:
+    """Nombre del curso o del profesor: va en los prompts y en la firma de los correos."""
+    if not (nombre or "").strip():
+        return "No puede quedar vacío: va en la firma de los correos."
+    if "{" in nombre or "}" in nombre:
+        return "Sin llaves { }: los correos las usan para sus campos."
+    return None
+
+
 def error_correo(correo: str) -> str | None:
     return None if CORREO.match(correo or "") else "No parece un correo (nombre@dominio.cl)."
 
@@ -168,6 +177,7 @@ def probar_cloudflare(token: str, cuenta: str, ej: Ejecutor) -> tuple[bool | Non
                        "dash.cloudflare.com → My Profile → API Tokens."), detalle
 
     no_alcanza = 0
+    sin_respuesta = []
     for permiso, ruta in PERMISOS_CF:
         estado, cuerpo = ej.pedir("GET", f"{CF_API}/accounts/{cuenta}{ruta}", token=token)
         codigos = _codigos_cf(cuerpo)
@@ -186,6 +196,9 @@ def probar_cloudflare(token: str, cuenta: str, ej: Ejecutor) -> tuple[bool | Non
             detalle["zero_trust"] = False
         elif estado in (401, 403) or 10000 in codigos or 9109 in codigos:
             detalle["faltan"].append(permiso)
+        elif estado == 0 or estado >= 500:
+            # Cloudflare no respondió: no se sabe si el permiso está.
+            sin_respuesta.append(permiso)
         else:
             no_alcanza += 1
     if no_alcanza == len(PERMISOS_CF):
@@ -203,6 +216,9 @@ def probar_cloudflare(token: str, cuenta: str, ej: Ejecutor) -> tuple[bool | Non
                       "Free; sin él nadie podrá entrar al sitio")
     if avisos:
         return False, ". ".join(avisos) + ".", detalle
+    if sin_respuesta:
+        return None, ("Cloudflare no respondió al revisar: " + "; ".join(sin_respuesta) +
+                      ". No pude comprobar esos permisos."), detalle
     return True, "El token de Cloudflare sirve y tiene los permisos que hacen falta.", detalle
 
 

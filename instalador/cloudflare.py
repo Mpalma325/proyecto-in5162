@@ -70,14 +70,49 @@ def leer_vars(texto: str) -> dict[str, str]:
     return dict(re.findall(r'^([A-Za-z_]+) = "([^"]*)"$', texto, re.M))
 
 
-def escribir_config(ej: Ejecutor, curso: str, valores: dict[str, str]) -> Path:
-    destino = WEB / nombre_config(curso)
+# Valores del archivo que apuntan a recursos que ya existen (database_id) o que
+# escribió acceso.mjs (ACCESO_*), con su clave en el .env. Si el .env no los
+# tiene, se conservan; si dice otra cosa, el instalador se detiene: pisarlos
+# dejaría el sitio sin su base o sin Access.
+PROTEGIDOS = {"database_id": "CLOUDFLARE_D1_ID", "ACCESO_EQUIPO": "ACCESO_EQUIPO",
+              "ACCESO_AUD": "ACCESO_AUD"}
+
+
+def fusionar_config(existente: str, valores: dict[str, str],
+                    nombre: str = "wrangler.toml") -> tuple[dict[str, str], dict[str, str]]:
+    """(valores a escribir, valores conservados del archivo, con su clave del .env)."""
+    previos = leer_vars(existente)
+    finales, conservados = dict(valores), {}
+    for clave, clave_env in PROTEGIDOS.items():
+        antes, ahora = previos.get(clave, ""), (valores.get(clave) or "")
+        if not antes or antes == ahora:
+            continue
+        if not ahora:
+            finales[clave] = antes
+            conservados[clave_env] = antes
+            continue
+        raise Falla(f'web/{nombre} tiene {clave} = "{antes}", y en el .env {clave_env} es "{ahora}". '
+                    "No lo piso: el sitio quedaría apuntando a otra cosa. Si el .env está bien, "
+                    f"borra web/{nombre} y corre de nuevo; si el archivo está bien, copia ese "
+                    f"valor a {clave_env} en el .env.")
+    return finales, conservados
+
+
+def escribir_config(ej: Ejecutor, curso: str, valores: dict[str, str],
+                    carpeta: Path = WEB) -> tuple[Path, dict[str, str]]:
+    """Escribe web/wrangler.<curso>.toml. Devuelve la ruta y lo que se conservó del
+    archivo anterior ({clave del .env: valor}), para devolverlo al .env."""
+    destino = carpeta / nombre_config(curso)
+    conservados: dict[str, str] = {}
+    if destino.exists():
+        valores, conservados = fusionar_config(destino.read_text(encoding="utf-8"), valores,
+                                               destino.name)
     texto = generar_wrangler(BASE_WRANGLER.read_text(encoding="utf-8"), valores)
     if ej.simular:
         ej.escribir(f"  [simular] escribiría web/{destino.name}")
     else:
         destino.write_text(texto, encoding="utf-8")
-    return destino
+    return destino, conservados
 
 
 @contextlib.contextmanager
@@ -95,6 +130,10 @@ def archivo_temporal(ej: Ejecutor, contenido: str, sufijo: str = ".json"):
     finally:
         with contextlib.suppress(OSError):
             os.remove(ruta)
+
+
+# Lo que responde en simulación una lista de la API: vacía, como en una cuenta nueva.
+VACIO = (200, {"success": True, "result": []})
 
 
 class Cloudflare:
@@ -145,13 +184,11 @@ class Cloudflare:
         return False, self._texto_error(estado, cuerpo)
 
     def id_d1(self, nombre: str) -> str | None:
-        estado, cuerpo = self._api("GET", f"/d1/database?name={quote(nombre)}")
+        estado, cuerpo = self._api("GET", f"/d1/database?name={quote(nombre)}", simulado=VACIO)
         if self._ok(cuerpo):
             for base in cuerpo.get("result") or []:
                 if base.get("name") == nombre:
                     return base.get("uuid")
-            return None
-        if estado == 404:
             return None
         raise Falla(f"No pude listar las bases D1: {self._texto_error(estado, cuerpo)}")
 
@@ -186,16 +223,19 @@ class Cloudflare:
         resultado = cuerpo.get("result") or [{}]
         return resultado[0].get("results") or []
 
+    # Ausente es solo lo que una respuesta exitosa no trae. Un 5xx o un permiso
+    # que falta es un error: leído como «no existe», llevaría a crear un duplicado.
+
     def worker_existe(self, nombre: str) -> bool:
-        estado, cuerpo = self._api("GET", "/workers/scripts")
+        estado, cuerpo = self._api("GET", "/workers/scripts", simulado=VACIO)
         if not self._ok(cuerpo):
-            return False
+            raise Falla(f"No pude listar los Workers: {self._texto_error(estado, cuerpo)}")
         return any(s.get("id") == nombre for s in cuerpo.get("result") or [])
 
     def app_access(self, dominio: str) -> dict | None:
-        estado, cuerpo = self._api("GET", "/access/apps")
+        estado, cuerpo = self._api("GET", "/access/apps", simulado=VACIO)
         if not self._ok(cuerpo):
-            return None
+            raise Falla(f"No pude listar las aplicaciones de Access: {self._texto_error(estado, cuerpo)}")
         return next((a for a in cuerpo.get("result") or [] if a.get("domain") == dominio), None)
 
     # ------------------------------------------------------------ wrangler

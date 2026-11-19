@@ -5,6 +5,7 @@ Esta lógica estaba escrita tres veces (los dos config.py y app/utils/runner.py)
 las tres con un comentario "mantener sincronizado con...". Ahora vive acá.
 """
 
+import html
 import os
 import re
 import shutil
@@ -74,13 +75,28 @@ MARCAS = ("CURSO", "NOMBRE_CURSO", "PROFESOR")
 _CON_MARCAS = (".md", ".csv", ".txt", ".json")
 
 
+# Los correos de tests_semanales son HTML, y sus prompts piden respuestas en
+# HTML; los de tareas son texto.
+_ES_HTML = re.compile(r"<(?:p|br|div|html|body)\b", re.I)
+
+
 def llenar_marcas(texto: str, valores: dict[str, str]) -> str:
-    """Reemplaza las marcas. Una marca desconocida o sin valor es un error."""
+    """Reemplaza las marcas. Una marca desconocida o sin valor es un error.
+
+    En un archivo HTML el valor va escapado: «Investigación & Desarrollo» se ve
+    tal cual en el correo. Las llaves se rechazan: los correos de tareas se
+    llenan después con str.format, y una llave suelta lo rompería.
+    """
+    es_html = bool(_ES_HTML.search(texto))
+
     def poner(m: re.Match) -> str:
         valor = (valores.get(m.group(1)) or "").strip()
         if m.group(1) not in MARCAS or not valor:
             raise ValueError(f"La plantilla usa «{m.group(1)}» y no tengo ese dato.")
-        return valor
+        if "{" in valor or "}" in valor:
+            raise ValueError(f"{m.group(1)} no puede tener llaves {{ }}: los correos las usan "
+                             "para sus campos.")
+        return html.escape(valor, quote=False) if es_html else valor
     return MARCA.sub(poner, texto)
 
 

@@ -85,12 +85,16 @@ def _archivos_de(semestre_id: str) -> list:
 def _contenido(semestre_id: str, p, valores: dict[str, str] | None) -> bytes:
     """Los bytes que se suben. La plantilla del repositorio tiene marcas
     («CURSO», «PROFESOR»...) donde va el nombre del curso: sube llena, igual que
-    la sube instalar.py, porque el sitio crea los semestres copiándola tal cual."""
+    la sube instalar.py, porque el sitio crea los semestres copiándola tal cual.
+    Un archivo sin marcas sube tal cual: así su MD5 sigue calzando con el de R2."""
     datos = p.read_bytes()
     if valores is None or p.suffix.lower() not in (".md", ".csv", ".txt", ".json"):
         return datos
-    texto = datos.decode("utf-8").replace("\r\n", "\n")
-    return _semestre.llenar_marcas(texto, valores).encode("utf-8")
+    texto = datos.decode("utf-8")
+    lleno = _semestre.llenar_marcas(texto, valores)
+    if lleno == texto:
+        return datos
+    return lleno.replace("\r\n", "\n").encode("utf-8")
 
 
 def _subir_carpeta(semestre_id: str, token: str | None, nube: dict[str, str],
