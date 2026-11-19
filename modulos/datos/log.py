@@ -183,10 +183,13 @@ def conversacion(correo: str, flujo: str, item: str,
     """
     correo = (correo or "").strip().lower()
     de_interes = _esquema.DEL_ALUMNO + _esquema.DEL_AGENTE
+    # Una respuesta duplicada no es parte de la conversación: recibió el correo
+    # de "ya respondiste" y no se corrigió.
     filas = [
         f for f in leer(semestre_id, flujo=flujo, item=str(item))
         if f.get("Correo", "").strip().lower() == correo
         and f.get("Evento") in de_interes
+        and not es_duplicado(f)
     ]
     return sorted(filas, key=lambda f: (int(f.get("Ronda") or 0), _instante(f.get("Timestamp"))))
 
@@ -273,6 +276,10 @@ def _clave_evento(fila: dict) -> tuple:
     `registrar()` al ocurrir, y dos equipos operando en paralelo no coinciden
     al segundo sobre la misma casilla. Verificado contra los tres semestres
     en uso, 3697 filas, cero colisiones.
+
+    La excepción son dos correos del mismo alumno procesados en el mismo
+    segundo (su respuesta y un duplicado): los distingue el MessageId. En las
+    filas que no lo tienen vale vacío en los dos lados y no cambia nada.
     """
     return (
         (fila.get("Timestamp") or "").strip(),
@@ -280,6 +287,7 @@ def _clave_evento(fila: dict) -> tuple:
         str(fila.get("Item") or "").strip(),
         (fila.get("Correo") or "").strip().lower(),
         (fila.get("Evento") or "").strip(),
+        (fila.get("MessageId") or "").strip(),
     )
 
 

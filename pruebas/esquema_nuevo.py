@@ -299,11 +299,31 @@ def sincronizar_y_comparar(tmp, sid):
         shutil.rmtree(alla, ignore_errors=True)
 
 
+def fusion_con_duplicados(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, LOG
+
+    titulo("11. fusionar no pierde un duplicado registrado en el mismo segundo")
+    # Dos correos del mismo alumno en la misma corrida: su respuesta y un
+    # segundo envío, con el mismo Timestamp. Solo el MessageId los distingue.
+    respuesta = _evento(7, "respuesta", CARLA, item="5", MessageId="<r1@correo.test>", Respuesta="primera")
+    duplicado = dict(respuesta, MessageId="<r2@correo.test>", Respuesta="segunda", Detalle="duplicado")
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, [respuesta])
+    ajeno = tmp / "log_del_otro_equipo.csv"
+    _escribir_csv(ajeno, COLUMNAS_LOG, [respuesta, duplicado])
+    r = datos.log.fusionar(ajeno, sid)
+    check("entra el duplicado y no se repite la respuesta", r["Nuevas"] == 1 and r["YaEstaban"] == 1, r)
+    _, filas = _leer_csv(tmp / LOG)
+    check("el log queda con los dos", sorted(f["MessageId"] for f in filas) == ["<r1@correo.test>", "<r2@correo.test>"],
+          filas)
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
     columnas_y_eventos_nuevos(tmp, sid)
     estados_de_una_casilla(tmp, sid)
     estado_desde_el_log(tmp, sid)
     sincronizar_y_comparar(tmp, sid)
+    fusion_con_duplicados(tmp, sid)
 
 sys.exit(resultado())

@@ -35,9 +35,10 @@ def _leer(ruta: Path) -> list[dict]:
 
 
 def _clave_log(f: dict) -> tuple:
+    # La misma que log._clave_evento, MessageId incluido.
     return ((f.get("Timestamp") or "").strip(), (f.get("Flujo") or "").strip(),
             str(f.get("Item") or "").strip(), (f.get("Correo") or "").strip().lower(),
-            (f.get("Evento") or "").strip())
+            (f.get("Evento") or "").strip(), (f.get("MessageId") or "").strip())
 
 
 def _clave_casilla(f: dict) -> tuple:

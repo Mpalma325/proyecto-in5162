@@ -81,7 +81,9 @@ def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: st
         f"=== LA CORRECCIÓN QUE SE LE ENVIÓ ===\n{evaluacion_html}",
     ]
     for turno in historial or []:
-        quien = "ESTUDIANTE" if turno.get("Evento") == "repregunta" else "AYUDANTE"
+        # La respuesta original también es del estudiante: antes salía rotulada
+        # como del ayudante.
+        quien = "ESTUDIANTE" if turno.get("Evento") in ("respuesta", "repregunta") else "AYUDANTE"
         texto = turno.get("Respuesta") or turno.get("EvaluacionIA") or ""
         if texto.strip():
             partes.append(f"=== {quien} (ronda {turno.get('Ronda', '?')}) ===\n{texto}")

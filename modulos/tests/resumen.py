@@ -13,10 +13,11 @@ def main(semana: int) -> None:
     filas = [a for a in datos.alumnos.leer() if a.get("Correo", "").strip()]
 
     # el texto de cada respuesta vive en el log, no en la tabla de estado
+    # sin las que llegaron duplicadas: esas no se corrigieron
     textos = {
         e["Correo"]: e["Respuesta"]
         for e in datos.log.leer(flujo=datos.TESTS, item=semana, evento="respuesta")
-        if e.get("Respuesta", "").strip()
+        if e.get("Respuesta", "").strip() and not datos.log.es_duplicado(e)
     }
     con_nota = {
         e["Correo"] for e in datos.notas.leer(flujo=datos.TESTS, item=semana)

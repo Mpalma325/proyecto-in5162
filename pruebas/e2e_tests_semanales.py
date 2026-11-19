@@ -187,15 +187,90 @@ def fallos_y_recuperacion():
 
         titulo("9. se cae la red al marcar leidos (ya pasó una vez)")
         enviados.clear()
-        with patch("modulos.tests.evaluar.buscar_respuestas_semana",
-                   return_value=respuestas_falsas(curso, SEM, desde=9, cantidad=2)), \
+        entrantes = respuestas_falsas(curso, SEM, desde=9, cantidad=2, message_ids=True)
+        # evaluar importa marcar_leidos desde el paquete modulos.mail: ahí es
+        # donde hay que hacerlo fallar (en lectura no lo intercepta).
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=entrantes), \
              patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("7,0", "Alta")), \
              patch.object(lectura, "marcar_leidos",
-                          side_effect=OSError("[Errno 11001] getaddrinfo failed")):
+                          side_effect=OSError("[Errno 11001] getaddrinfo failed")), \
+             patch("modulos.mail.marcar_leidos",
+                   side_effect=OSError("[Errno 11001] getaddrinfo failed")):
             evaluar.main(SEM, dry_run=False)
         check("no revento pese al fallo de red", True)
         check("las 2 notas nuevas quedaron guardadas",
               sum(1 for f in datos.notas.leer(sid, datos.TESTS, str(SEM)) if f["Nota"]) == 11)
+
+        def respuestas_de(correo):
+            return [e for e in datos.log.leer(sid, evento="respuesta", item=str(SEM))
+                    if e["Correo"] == correo.lower()]
+
+        r9 = respuestas_de(curso[9])
+        check("la respuesta guarda su Message-ID", len(r9) == 1
+              and r9[0]["MessageId"] == entrantes[0]["message_id"] and not r9[0]["Detalle"], r9)
+
+        titulo("9b. al repetir, lo que ya se procesó solo se marca leído: sin correo de duplicado")
+        enviados.clear()
+        llamadas.clear()
+        marcados = []
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=entrantes), \
+             patch("modulos.tests.evaluar.evaluar_respuesta",
+                   side_effect=lambda *a: (llamadas.append(1), nota_ia())[1]), \
+             patch("modulos.mail.marcar_leidos", side_effect=lambda uids: marcados.extend(uids)):
+            evaluar.main(SEM, dry_run=False)
+        check("no le manda el 'ya respondiste' a nadie", enviados == [], enviados)
+        check("ni llama al modelo", llamadas == [], llamadas)
+        check("los dos quedan marcados como leídos",
+              sorted(marcados) == sorted(e["uid"] for e in entrantes), marcados)
+        check("y no se registra nada nuevo en el log",
+              len(respuestas_de(curso[9])) == 1 and len(respuestas_de(curso[10])) == 1)
+
+        titulo("9c. una segunda respuesta de quien ya tiene nota queda como duplicado")
+        segunda = correo_entrante(curso[9], SEM, "Se me olvido agregar esto a mi respuesta.",
+                                  uid="950", message_id="<segunda-9@correo.test>")
+        enviados.clear()
+        marcados.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[segunda]), \
+             patch("modulos.tests.evaluar.evaluar_respuesta",
+                   side_effect=lambda *a: (llamadas.append(1), nota_ia())[1]), \
+             patch("modulos.mail.marcar_leidos", side_effect=lambda uids: marcados.extend(uids)):
+            evaluar.main(SEM, dry_run=False)
+        check("recibe el correo de duplicado, como siempre", enviados == [curso[9]], enviados)
+        dup = [e for e in respuestas_de(curso[9]) if datos.log.es_duplicado(e)]
+        check("queda en el log como respuesta duplicada, con su texto y su Message-ID",
+              len(dup) == 1 and dup[0]["MessageId"] == "<segunda-9@correo.test>"
+              and "Se me olvido" in dup[0]["Respuesta"] and dup[0]["Detalle"] == "duplicado", dup)
+        primera = [e for e in respuestas_de(curso[9]) if not datos.log.es_duplicado(e)][0]
+        estado = datos.log.reconstruir_estado(sid)[(curso[9].lower(), datos.TESTS, str(SEM))]
+        check("Respondio sigue siendo la primera respuesta", estado["Respondio"] == primera["Timestamp"],
+              (estado["Respondio"], primera["Timestamp"]))
+        vista = [f for f in datos.log.como_interacciones(sid)
+                 if f["Correo"] == curso[9].lower() and f["Item"] == str(SEM)]
+        check("la reportería sigue mostrando la respuesta corregida",
+              vista and vista[0]["Respuesta"] == entrantes[0]["texto"], vista[:1])
+        check("la tutoría no la ve como parte de la conversación",
+              not any(datos.log.es_duplicado(f)
+                      for f in datos.log.conversacion(curso[9], datos.TESTS, str(SEM), sid)))
+        respuestas_al_resumen = []
+        with patch("modulos.tests.resumen.evaluar_respuesta",
+                   side_effect=lambda p, pa, r: (respuestas_al_resumen.append(r), nota_ia())[1]), \
+             patch("modulos.tests.resumen.generar_resumen", return_value="resumen"):
+            from modulos.tests import resumen
+            resumen.main(SEM)
+        check("el resumen usa la respuesta corregida, no la duplicada",
+              entrantes[0]["texto"] in respuestas_al_resumen
+              and not any("Se me olvido" in r for r in respuestas_al_resumen), respuestas_al_resumen[:3])
+
+        titulo("9d. si ese duplicado vuelve a aparecer sin leer, no se le escribe otra vez")
+        enviados.clear()
+        marcados.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[segunda]), \
+             patch("modulos.mail.marcar_leidos", side_effect=lambda uids: marcados.extend(uids)):
+            evaluar.main(SEM, dry_run=False)
+        check("sin un segundo correo de duplicado", enviados == [], enviados)
+        check("solo se marca leído", marcados == [segunda["uid"]], marcados)
+        check("y el log no suma otro duplicado",
+              sum(1 for e in respuestas_de(curso[9]) if datos.log.es_duplicado(e)) == 1)
 
 
 def tutoria_sobre_el_feedback():
@@ -250,6 +325,19 @@ def tutoria_sobre_el_feedback():
         check("sin las marcas ``` del modelo en lo que se envió y se guardó",
               [t["EvaluacionIA"] for t in datos.log.leer(sid, evento="tutoria", item="5")]
               == ["<p>Te falto mencionar X.</p>"])
+
+        titulo("12b. en el historial que recibe el modelo, la respuesta original es del estudiante")
+        from modulos.ia.cliente import Respuesta
+        from modulos.tests import ia_prompts
+        mensajes_al_modelo = []
+        with patch.object(ia_prompts.ia, "completar",
+                          side_effect=lambda s, u, **k: (mensajes_al_modelo.append(u), Respuesta("<p>ok</p>"))[1]):
+            ia_prompts.responder_duda(["P1"], ["pauta"], "respuesta", "<p>eval</p>", "una duda", "Ana",
+                                      historial=datos.log.conversacion(alumno, datos.TESTS, "5", sid))
+        texto_alumno = respuestas_falsas(correos, 5)[0]["texto"]
+        check("la respuesta va rotulada ESTUDIANTE",
+              f"=== ESTUDIANTE (ronda 0) ===\n{texto_alumno}" in mensajes_al_modelo[0], mensajes_al_modelo[0][-600:])
+        check("y no AYUDANTE", f"=== AYUDANTE (ronda 0) ===\n{texto_alumno}" not in mensajes_al_modelo[0])
 
         titulo("13. LA NOTA NO CAMBIA")
         check("sigue siendo 6,0",
