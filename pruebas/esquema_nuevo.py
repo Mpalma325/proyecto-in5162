@@ -84,7 +84,59 @@ def escritura_que_conserva(tmp, sid):
           (campos, filas))
 
 
+COLUMNAS_NOTAS_VIEJAS = ["Correo", "Flujo", "Item", "Enviado", "Respondio", "Nota", "Originalidad"]
+COLUMNAS_LOG_VIEJAS = ["Timestamp", "Semestre", "Flujo", "Item", "Correo", "Evento", "MessageId",
+                       "RespondeA", "Ronda", "Modelo", "Versiones", "TokensEntrada", "TokensSalida",
+                       "Nota", "Originalidad", "Respuesta", "EvaluacionIA", "Detalle"]
+
+
+def columnas_y_eventos_nuevos(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, COLUMNAS_NOTAS, DEL_AGENTE, LOG, NOTAS
+
+    titulo("4. el esquema trae las columnas y eventos de la revisión")
+    check("notas.csv: Corregido, Logro y Descartada al final",
+          COLUMNAS_NOTAS == COLUMNAS_NOTAS_VIEJAS + ["Corregido", "Logro", "Descartada"], COLUMNAS_NOTAS)
+    check("log: Puntajes y Logro al final",
+          COLUMNAS_LOG == COLUMNAS_LOG_VIEJAS + ["Puntajes", "Logro"], COLUMNAS_LOG)
+    check("un ajuste avisado cuenta como mensaje del agente", "ajuste" in DEL_AGENTE)
+
+    titulo("5. un notas.csv y un log viejos ganan las columnas nuevas al escribir")
+    _escribir_csv(tmp / NOTAS, COLUMNAS_NOTAS_VIEJAS, [
+        {"Correo": "ana.prueba@correo.test", "Flujo": "test", "Item": "2",
+         "Enviado": "2026-11-02T09:00:00-03:00", "Respondio": "", "Nota": "6,5", "Originalidad": "Media"},
+    ])
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG_VIEJAS, [
+        {"Timestamp": "2026-11-02T09:00:00-03:00", "Semestre": sid, "Flujo": "test", "Item": "2",
+         "Correo": "ana.prueba@correo.test", "Evento": "envio"},
+    ])
+    datos.notas.marcar_enviado("beto.ensayo@correo.test", "test", "2", semestre_id=sid)
+    campos, filas = _leer_csv(tmp / NOTAS)
+    check("notas.csv quedó con el esquema nuevo", campos == COLUMNAS_NOTAS, campos)
+    vieja = next(f for f in filas if f["Correo"] == "ana.prueba@correo.test")
+    check("la fila vieja conserva lo suyo y queda con las nuevas vacías",
+          vieja["Nota"] == "6,5" and vieja["Originalidad"] == "Media"
+          and not (vieja["Corregido"] or vieja["Logro"] or vieja["Descartada"]), vieja)
+
+    for evento in ("correccion", "descarte", "recalculo"):
+        datos.log.registrar(evento, "test", "2", "ana.prueba@correo.test", sid,
+                            Puntajes="3;2", Logro="0.8333", Nota="6,5")
+    campos, filas = _leer_csv(tmp / LOG)
+    check("el log quedó con Puntajes y Logro al final", campos == COLUMNAS_LOG, campos)
+    check("los tres eventos nuevos se registran",
+          [f["Evento"] for f in filas[1:]] == ["correccion", "descarte", "recalculo"], filas)
+    check("con sus puntajes y su logro",
+          all(f["Puntajes"] == "3;2" and f["Logro"] == "0.8333" for f in filas[1:]), filas[1:])
+    check("la fila vieja del log sigue entera", filas[0]["Evento"] == "envio" and not filas[0]["Logro"])
+    try:
+        datos.log.registrar("inventado", "test", "2", "ana.prueba@correo.test", sid)
+        check("un evento desconocido sigue rechazándose", False)
+    except ValueError:
+        check("un evento desconocido sigue rechazándose", True)
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
+    columnas_y_eventos_nuevos(tmp, sid)
 
 sys.exit(resultado())

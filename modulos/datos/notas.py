@@ -25,6 +25,11 @@ def _clave(fila: dict) -> tuple:
             fila.get("Flujo", ""), str(fila.get("Item", "")))
 
 
+def _fila_nueva(correo: str, flujo: str, item: str) -> dict:
+    """Una casilla sin nada registrado, con todas las columnas del esquema."""
+    return {**{c: "" for c in COLUMNAS_NOTAS}, "Correo": correo, "Flujo": flujo, "Item": str(item)}
+
+
 def leer(semestre_id: str | None = None, flujo: str | None = None,
          item: str | None = None) -> list[dict]:
     _migracion.asegurar(semestre_id)
@@ -58,8 +63,7 @@ def _upsert(correo: str, flujo: str, item: str, cambios: dict,
             fila.update(cambios)
             break
     else:
-        nueva = {"Correo": objetivo[0], "Flujo": flujo, "Item": str(item),
-                 "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": ""}
+        nueva = _fila_nueva(objetivo[0], flujo, item)
         nueva.update(cambios)
         filas.append(nueva)
 
@@ -136,8 +140,7 @@ def sincronizar_desde_log(semestre_id: str | None = None,
             continue
         fila = indice.get(clave)
         if fila is None:
-            fila = {"Correo": correo, "Flujo": flujo, "Item": str(item),
-                    "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": ""}
+            fila = _fila_nueva(correo, flujo, item)
             filas.append(fila)
             indice[clave] = fila
             resumen["FilasNuevas"] += 1
