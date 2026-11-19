@@ -21,14 +21,30 @@ def leer(nombre: str, semestre_id: str | None = None) -> list[dict]:
 
 def escribir(nombre: str, filas: list[dict], columnas: list[str],
              semestre_id: str | None = None) -> Path:
-    """Reescribe la tabla completa. No usar para el log."""
+    """Reescribe la tabla completa. No usar para el log.
+
+    Conserva las columnas que el archivo ya tenga y el llamador no conozca: van
+    después de las suyas, como en `log.fusionar`. Sin eso, un código más viejo
+    que el archivo borraría al escribir las columnas que agregó uno más nuevo,
+    y una columna puesta a mano en alumnos.csv se perdía al asignar grupos.
+
+    Escribe a un `.tmp` y lo pone en su lugar al final: si el proceso muere a
+    mitad, queda el archivo anterior entero y no uno truncado.
+    """
     p = ruta(nombre, semestre_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
-        w.writeheader()
-        for fila in filas:
-            w.writerow({c: fila.get(c, "") for c in columnas})
+    campos = list(columnas) + [c for c in cabecera(p) if c and c not in columnas]
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=campos, extrasaction="ignore")
+            w.writeheader()
+            for fila in filas:
+                w.writerow({c: fila.get(c, "") for c in campos})
+        tmp.replace(p)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return p
 
 
