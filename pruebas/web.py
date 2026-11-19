@@ -226,6 +226,16 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-motor.mjs corre", False, r.stderr[-300:])
 
+titulo("7b3b. la tutoría de las 18:00 se apaga con TUTORIA_AUTOMATICA")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-programado.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-programado.mjs corre", False, r.stderr[-300:])
+
 titulo("7b4. cada historial pide solo sus trabajos, con «Ver más»")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-trabajos.mjs")],

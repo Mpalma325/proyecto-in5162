@@ -1,40 +1,60 @@
 // Configura Cloudflare Access para el sitio, con la API de Cloudflare.
 //
 //   node scripts/acceso.mjs correo1@uchile.cl correo2@uchile.cl ...
+//   node scripts/acceso.mjs --config wrangler.in3401.toml correo1@uchile.cl ...
 //
-// Necesita CLOUDFLARE_API_TOKEN en el .env de la raíz, con los permisos
-// "Access: Apps and Policies: Edit" y "Access: Organizations, Identity
-// Providers, and Groups: Edit". Se puede correr de nuevo: actualiza lo que ya
-// existe en vez de duplicarlo. Con otra lista de correos, la reemplaza.
+// Lee CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID y WEB_URL del .env de la raíz;
+// si vienen como variables de entorno, esas ganan (así lo llama instalar.py).
+// El token necesita "Access: Apps and Policies: Edit" y "Access: Organizations,
+// Identity Providers, and Groups: Edit". Se puede correr de nuevo: actualiza lo
+// que ya existe en vez de duplicarlo. Con otra lista de correos, la reemplaza.
+//
+// --config es el wrangler.toml del sitio, relativo a web/ (por defecto
+// wrangler.toml, el de IN5162). De ahí sale CURSO, que da nombre a las
+// aplicaciones: así dos cursos en la misma cuenta no se pisan.
 //
 // Deja tres cosas:
 //   1. La aplicación del sitio: solo entran los correos de la lista, con un
 //      código que llega al correo (no hace falta cuenta en ningún lado).
 //   2. Una excepción (Bypass) para /api/motor y /api/subir: el motor no puede
 //      iniciar sesión en Access, y esas rutas ya exigen TOKEN_MOTOR.
-//   3. ACCESO_EQUIPO y ACCESO_AUD en wrangler.toml, que el Worker usa para
-//      verificar la firma de Access. Después hay que publicar: npm run deploy.
+//   3. ACCESO_EQUIPO y ACCESO_AUD en ese wrangler.toml, que el Worker usa para
+//      verificar la firma de Access. Después hay que publicar el sitio.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const RAIZ = new URL("../../", import.meta.url);
-const WRANGLER = new URL("../wrangler.toml", import.meta.url);
+const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ENV = resolve(WEB, "..", ".env");
 
-const env = Object.fromEntries(readFileSync(new URL(".env", RAIZ), "utf8").split(/\r?\n/)
+const argumentos = process.argv.slice(2);
+const iConfig = argumentos.indexOf("--config");
+const archivoConfig = iConfig >= 0 ? argumentos.splice(iConfig, 2)[1] : "wrangler.toml";
+if (!archivoConfig || archivoConfig.startsWith("-")) throw new Error("--config necesita el nombre del archivo.");
+const WRANGLER = resolve(WEB, archivoConfig);
+if (!existsSync(WRANGLER)) throw new Error(`No existe ${WRANGLER}.`);
+
+const env = existsSync(ENV) ? Object.fromEntries(readFileSync(ENV, "utf8").split(/\r?\n/)
   .map((l) => l.match(/^\s*([A-Z_]+)\s*=\s*(.*)$/)).filter(Boolean)
-  .map(([, k, v]) => [k, v.trim().replace(/^["']|["']$/g, "")]));
+  .map(([, k, v]) => [k, v.trim().replace(/^["']|["']$/g, "")])) : {};
+for (const k of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "WEB_URL"]) {
+  if (process.env[k]) env[k] = process.env[k];
+}
 const TOKEN = env.CLOUDFLARE_API_TOKEN;
 if (!TOKEN) throw new Error("Falta CLOUDFLARE_API_TOKEN en el .env de la raíz.");
+// Sin valor por defecto: con uno, un curso nuevo configuraba Access sobre el sitio de otro.
+if (!env.WEB_URL) throw new Error("Falta WEB_URL (la dirección del sitio) en el .env de la raíz.");
 
-const correos = process.argv.slice(2).map((c) => c.trim().toLowerCase()).filter(Boolean);
+const correos = argumentos.map((c) => c.trim().toLowerCase()).filter(Boolean);
 if (!correos.length || correos.some((c) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c))) {
-  throw new Error("Uso: node scripts/acceso.mjs correo1@uchile.cl correo2@uchile.cl ...");
+  throw new Error("Uso: node scripts/acceso.mjs [--config wrangler.x.toml] correo1@uchile.cl correo2@uchile.cl ...");
 }
 
-const SITIO = new URL(env.WEB_URL || "https://in5162.in5162-web.workers.dev").host;
-// Los nombres de las aplicaciones de Access. Con otro CURSO en el .env, otro
-// curso en la misma cuenta de Cloudflare no pisa las de este.
-const CURSO = (env.CURSO || "IN5162").toUpperCase();
+let toml = readFileSync(WRANGLER, "utf8");
+const CURSO = (toml.match(/^CURSO = "(.+)"$/m) || [])[1]?.toUpperCase();
+if (!CURSO) throw new Error(`${archivoConfig} no tiene CURSO en [vars].`);
+const SITIO = new URL(env.WEB_URL).host;
 const NOMBRE = `${CURSO} sitio`;
 const EXCEPCIONES = [[`${CURSO} motor`, `${SITIO}/api/motor`], [`${CURSO} subir`, `${SITIO}/api/subir`]];
 
@@ -49,9 +69,19 @@ async function cf(metodo, ruta, cuerpo) {
   return j.result;
 }
 
-// La cuenta de Cloudflare (sale en `npx wrangler whoami`). Sin CLOUDFLARE_ACCOUNT_ID
-// en el .env, la de in5162@uchile.cl.
-const cuenta = env.CLOUDFLARE_ACCOUNT_ID || "5b630024b4683ba044bca1ad69f07a3c";
+// La cuenta de Cloudflare (sale en `npx wrangler whoami`). Si el .env no la
+// dice, se usa la única cuenta a la que alcanza el token; nunca una fija.
+async function cuentaDelToken() {
+  if (env.CLOUDFLARE_ACCOUNT_ID) return env.CLOUDFLARE_ACCOUNT_ID;
+  const cuentas = await cf("GET", "/accounts");
+  if (cuentas.length !== 1) {
+    throw new Error(`El token alcanza a ${cuentas.length} cuentas: pon la del curso en el .env, `
+      + "CLOUDFLARE_ACCOUNT_ID=<id> (sale en `npx wrangler whoami`).");
+  }
+  console.log(`Cuenta de Cloudflare: ${cuentas[0].name} (${cuentas[0].id}). Para fijarla: CLOUDFLARE_ACCOUNT_ID en el .env.`);
+  return cuentas[0].id;
+}
+const cuenta = await cuentaDelToken();
 const base = `/accounts/${cuenta}/access`;
 
 // El equipo de Zero Trust tiene que existir: se crea al activar Zero Trust en el panel.
@@ -100,10 +130,9 @@ for (const [nombre, dominio] of EXCEPCIONES) {
 }
 
 // El Worker verifica la firma con estos dos datos.
-let toml = readFileSync(WRANGLER, "utf8");
 toml = toml.replace(/^ACCESO_EQUIPO = ".*"$/m, `ACCESO_EQUIPO = "${equipo}"`)
   .replace(/^ACCESO_AUD = ".*"$/m, `ACCESO_AUD = "${sitio.aud}"`);
 writeFileSync(WRANGLER, toml);
 
 console.log(`\nPueden entrar: ${correos.join(", ")}`);
-console.log("wrangler.toml actualizado. Falta publicar: npm run deploy");
+console.log(`${archivoConfig} actualizado. Falta publicar el sitio.`);

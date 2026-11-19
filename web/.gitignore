@@ -4,3 +4,7 @@ node_modules/
 # Copia generada de modulos/datos/agregaciones.py (npm run preparar).
 # No se edita ni se versiona: la fuente es la del paquete Python.
 public/py/
+
+# La configuración de cada instalación (instalar.py la genera desde
+# wrangler.toml con los datos de ese curso). Es de esa cuenta, no del repo.
+wrangler.*.toml

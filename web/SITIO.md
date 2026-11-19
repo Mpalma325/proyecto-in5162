@@ -45,7 +45,7 @@ TOKEN_WEB=<otro valor>
 ```bash
 # en web/
 npm install
-npm run db:local        # crea las tablas en la base local
+npm run db:local        # crea las tablas en la base local (aplica migrations/)
 npm run dev             # el sitio, en http://127.0.0.1:8787
 
 # en la raíz, con los mismos tokens: el motor local
@@ -59,13 +59,15 @@ Todo queda en `web/.wrangler/`, en el PC. El motor local trabaja sobre copias y 
 
 ## Publicarlo
 
+Así se publicó IN5162, a mano. Un curso nuevo usa `python3 instalar.py` desde Google Cloud Shell, que hace todo esto (ver `docs/instalador.md`).
+
 Son pasos que se hacen una vez. Todos quedan dentro de los planes gratuitos de Cloudflare y de Google Cloud con el uso del curso, pero Google pide una tarjeta: conviene crear una alerta de presupuesto de 1 dólar.
 
 1. **Cloudflare.** En `web/`:
    ```bash
    npx wrangler login
    npx wrangler d1 create in5162                  # copiar el id a wrangler.toml
-   npx wrangler d1 execute in5162 --remote --file schema.sql
+   npx wrangler d1 migrations apply DB --remote  # las tablas: migrations/
    npx wrangler r2 bucket create in5162-semestres
    ```
 2. **El motor.** Con `gcloud` instalado y la sesión iniciada:
@@ -86,6 +88,10 @@ Son pasos que se hacen una vez. Todos quedan dentro de los planes gratuitos de C
    ```
    El script crea la aplicación con esa lista de correos (se entra con un código que llega al correo), deja una excepción para `/api/motor` y `/api/subir` (el motor no puede iniciar sesión en Access, y esas rutas ya exigen `TOKEN_MOTOR`) y anota en `wrangler.toml` los datos con que el Worker verifica la firma. Para cambiar la lista, se corre de nuevo con la lista completa. El script no está probado contra una cuenta real.
 5. **Subir los semestres.** `python -m modulos.web.subir --archivos` con `WEB_URL` apuntando al sitio publicado. Esto sube a Cloudflare los datos de los alumnos: nombres, correos y respuestas. Desde ahí **la nube es la fuente**: `subir` solo agrega lo que allá no existe, y no reemplaza nada distinto salvo con `--forzar` (la versión reemplazada queda en el historial).
+
+## Cambios a la base
+
+Cada cambio es un archivo nuevo en `migrations/` (`0002_algo.sql`); los que ya están no se editan. `npx wrangler d1 migrations apply DB --remote` aplica los que falten y anota cuáles corrió en la tabla `d1_migrations`. `0001_inicial.sql` es lo que antes era `schema.sql`. La base de IN5162 se creó antes de las migraciones: el comando para marcarla como ya migrada está en `docs/instalador.md`.
 
 ## Respaldo
 

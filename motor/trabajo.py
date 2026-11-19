@@ -228,8 +228,11 @@ FLUJOS = {
 # Los parámetros de la página que el motor le pasa al script. config.py los toma
 # de las variables de entorno antes que del .env. Solo estos: si la tabla de
 # parámetros trajera otra cosa, no llega al script.
+# TUTORIA_AUTOMATICA la usa el cron del sitio; acá pasa igual, para que
+# config.py la vea como el resto.
 PARAMETROS = ("MODELO", "TEMPERATURA", "MAX_TOKENS", "NOTA_MIN", "NOTA_MAX",
-              "TAREA_DEFAULT", "GRUPO_CONTROL_TRATAMIENTO", "GRUPO_SEED", "PRECIOS_API")
+              "TAREA_DEFAULT", "GRUPO_CONTROL_TRATAMIENTO", "GRUPO_SEED", "PRECIOS_API",
+              "TUTORIA_AUTOMATICA")
 
 # ---------------------------------------------------------------- qué archivos baja
 

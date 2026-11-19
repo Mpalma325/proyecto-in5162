@@ -5,7 +5,7 @@
   "scripts": {
     "preparar": "node scripts/copiar-py.mjs",
     "dev": "npm run preparar && wrangler dev",
-    "db:local": "wrangler d1 execute in5162 --local --file schema.sql",
+    "db:local": "wrangler d1 migrations apply DB --local",
     "deploy": "npm run preparar && wrangler deploy"
   },
   "devDependencies": {

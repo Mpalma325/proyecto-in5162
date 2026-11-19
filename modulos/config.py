@@ -72,6 +72,9 @@ WEB_URL = _env.get("WEB_URL", "http://127.0.0.1:8787").rstrip("/")
 # --- tests semanales ---
 GRUPO_CONTROL_TRATAMIENTO = _flag("GRUPO_CONTROL_TRATAMIENTO", "true")
 GRUPO_SEED = int(_env.get("GRUPO_SEED", "19"))
+# Si la tutoría responde sola todos los días a las 18:00 (el cron del sitio).
+# Sin valor, sí. Los cursos que instala instalar.py parten con "false".
+TUTORIA_AUTOMATICA = _flag("TUTORIA_AUTOMATICA", "true")
 
 # --- tareas ---
 TAREA_DEFAULT = _env.get("TAREA_DEFAULT", "T1")

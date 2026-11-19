@@ -25,6 +25,9 @@ binding = "DB"
 database_name = "in5162"
 # El id de la base publicada (wrangler d1 create in5162). En local no se usa.
 database_id = "138d1b3d-0024-4193-93ef-0c6b92d92148"
+# Los cambios a la base: `npx wrangler d1 migrations apply DB --remote` aplica
+# los que falten. Ver docs/instalador.md.
+migrations_dir = "migrations"
 
 # Los archivos de cada semestre, con las mismas rutas que en disco:
 # semestres/2026-2/alumnos.csv, .../tests_semanales/prompts/evaluar_respuesta.md
@@ -33,7 +36,8 @@ binding = "ARCHIVOS"
 bucket_name = "in5162-semestres"
 
 [vars]
-# El código del curso: va en el título de las páginas. Lo escribe instalar.ps1.
+# El código del curso: va en el título de las páginas. Otro curso no edita
+# este archivo: instalar.py genera web/wrangler.<curso>.toml a partir de él.
 CURSO = "IN5162"
 # "cloudflare": exige que la petición venga autenticada por Cloudflare Access.
 # "abierto": solo para desarrollo local. Por defecto se exige: si alguien olvida

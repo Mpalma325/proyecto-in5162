@@ -1,5 +1,10 @@
--- Tablas del sitio. Por ahora una copia de lo que calcula el PC: la fuente de
--- verdad sigue siendo semestres/<id>/ en el equipo que opera el curso.
+-- Migración 0001: las tablas del sitio tal como estaban al pasar a migraciones
+-- (era web/schema.sql, con la columna ediciones.detalle ya incluida).
+--
+-- Un cambio a la base es un archivo nuevo en esta carpeta (0002_algo.sql), que
+-- `wrangler d1 migrations apply DB --remote` aplica una sola vez en cada base.
+-- Este archivo no se edita: las bases que ya lo tienen aplicado no lo vuelven a
+-- leer. Ver docs/instalador.md.
 
 CREATE TABLE IF NOT EXISTS semestres (
   id          TEXT PRIMARY KEY,
@@ -75,5 +80,4 @@ CREATE TABLE IF NOT EXISTS ediciones (
   version_anterior TEXT,              -- clave en R2 de la copia; NULL si no había nada
   detalle          TEXT               -- qué cambió; para un trabajo, JSON con flujo y argumentos
 );
--- Base ya creada antes de `detalle`: ALTER TABLE ediciones ADD COLUMN detalle TEXT;
 CREATE INDEX IF NOT EXISTS ediciones_por_semestre ON ediciones (semestre, cuando);

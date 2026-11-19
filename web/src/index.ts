@@ -87,6 +87,9 @@ const PARAMETROS: Record<string, (v: string) => boolean> = {
   GRUPO_CONTROL_TRATAMIENTO: (v) => v === "true" || v === "false",
   GRUPO_SEED: (v) => /^\d{1,5}$/.test(v),
   PRECIOS_API: (v) => preciosValidos(v),
+  // Si el cron responde las dudas todos los días (programado()). Sin valor, sí:
+  // así siguió IN5162. instalar.py lo deja en "false" en los cursos nuevos.
+  TUTORIA_AUTOMATICA: (v) => v === "true" || v === "false",
 };
 
 // Material del curso que el modelo usa como contexto (modulos/tareas/contexto.py).
@@ -494,7 +497,8 @@ async function avisarAlMotor(env: Env, id: string,
 // Lo que corre solo, todos los días: responder las dudas sobre las correcciones,
 // de verdad (manda correos), en el semestre activo. El cron de wrangler.toml va
 // en UTC y Chile cambia de horario, así que se agenda a las dos horas posibles y
-// acá se deja pasar solo la que en Santiago son las 18.
+// acá se deja pasar solo la que en Santiago son las 18. Se apaga con el
+// parámetro TUTORIA_AUTOMATICA = "false"; sin el parámetro, corre.
 const HORA_RESPONDER_DUDAS = 18;
 
 async function programado(env: Env, cuando: number): Promise<void> {
@@ -502,6 +506,9 @@ async function programado(env: Env, cuando: number): Promise<void> {
     timeZone: "America/Santiago", hour: "numeric", hourCycle: "h23",
   }).format(new Date(cuando)));
   if (hora !== HORA_RESPONDER_DUDAS) return;
+  const tutoria = await env.DB.prepare("SELECT valor FROM parametros WHERE clave = 'TUTORIA_AUTOMATICA'")
+    .first<{ valor: string }>();
+  if (tutoria?.valor === "false") return;
   const activo = await env.DB.prepare("SELECT id FROM semestres WHERE activo = 1 LIMIT 1").first<{ id: string }>();
   if (!activo) return;
   await crearTrabajo(env, activo.id, "tests.tutoria", { prueba: false }, `programado (${HORA_RESPONDER_DUDAS}:00)`);

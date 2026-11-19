@@ -35,6 +35,7 @@ const DEFECTO = {
   MODELO: "gpt-5.4-mini", TEMPERATURA: "0.2", MAX_TOKENS: "3000",
   NOTA_MIN: "4.0", NOTA_MAX: "7.0", TAREA_DEFAULT: "T1",
   GRUPO_CONTROL_TRATAMIENTO: "true", GRUPO_SEED: "19", PRECIOS_API: "{}",
+  TUTORIA_AUTOMATICA: "true",
 };
 const MODELOS_CONOCIDOS = ["gpt-5.4-mini", "gpt-5.5", "gpt-5.4", "gpt-5.4-nano", "gpt-5-mini",
   "gpt-4o-mini", "gpt-4o"];
@@ -1091,6 +1092,8 @@ function vistaParametros() {
 
   const grupos = el("input", { type: "checkbox", checked: valor("GRUPO_CONTROL_TRATAMIENTO") === "true" });
   const semilla = numero({ min: "0", max: "99999", step: "1", value: valor("GRUPO_SEED") });
+  // Sin valor guardado está prendida (DEFECTO): solo "false" la apaga, igual que en el Worker.
+  const tutoria = el("input", { type: "checkbox", checked: valor("TUTORIA_AUTOMATICA") !== "false" });
 
   const entre = (input, min, max) => Math.min(max, Math.max(min, Number(input.value)));
 
@@ -1126,6 +1129,10 @@ function vistaParametros() {
         GRUPO_CONTROL_TRATAMIENTO: grupos.checked ? "true" : "false",
         GRUPO_SEED: String(Math.round(entre(semilla, 0, 99999))),
       }), "Guardado."),
+    formulario("Tutoría automática", "Cada día a las 18:00 (hora de Santiago) responde por correo las dudas "
+      + "que los alumnos mandaron sobre su corrección, en el semestre activo. Manda correos reales.", [
+        el("label", { class: "campo interruptor" }, tutoria, "Responder dudas todos los días a las 18:00"),
+      ], () => ({ TUTORIA_AUTOMATICA: tutoria.checked ? "true" : "false" }), "Guardado."),
     formulario("Precios de la API", "US$ por millón de tokens, los de la página de precios de tu proveedor. "
       + "Sirven para mostrar cuánto costó cada trabajo; sin precio se muestran los tokens. "
       + "«En caché» es el precio de la entrada que el proveedor reutiliza (cached input); si la dejas vacía, se cobra como entrada.",
@@ -1136,8 +1143,9 @@ function vistaParametros() {
       el("div", { class: "contenido" },
         el("p", {}, "La clave de OpenAI y el correo con su contraseña de aplicación viven en el motor "
           + "(Secret Manager de Google Cloud). No pasan por esta página ni por el navegador."),
-        el("p", { class: "nota-pie" }, "Para cambiarlas: actualiza el .env de la raíz del proyecto y corre "
-          + "motor/desplegar.ps1, que las vuelve a cargar."))),
+        el("p", { class: "nota-pie" }, "Para cambiarlas, en la carpeta del proyecto (en Cloud Shell): "
+          + "python3 instalar.py credenciales. Pide la clave nueva, la prueba y reinicia el motor. "
+          + "Si el curso se instaló a mano, sin instalar.py: actualiza el .env y corre motor/desplegar.ps1."))),
   ];
 }
 
