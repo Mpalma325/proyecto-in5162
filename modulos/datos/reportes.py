@@ -111,6 +111,15 @@ def panel(semestre_id: str | None = None, flujo: str = TESTS) -> list[dict]:
             "FechaRespuesta": (extra.get("FechaRespuesta") or "").strip(),
             "Respuesta": extra.get("Respuesta", ""),
             "EvaluacionIA": extra.get("EvaluacionIA", ""),
+            # Desde aquí, las del esquema nuevo. Van al final y en este orden
+            # en COLUMNAS (web/src/index.ts) y en la tabla panel (web/schema.sql).
+            # Logro, de 0 a 1; vacío mientras nadie corrija con puntajes.
+            "Logro": nota_a_float(estado.get("Logro")),
+            # La nota que propuso el modelo, antes de la revisión. Queda vacía
+            # hasta que exista el evento `correccion` en el log.
+            "NotaModelo": None,
+            "PorRevisar": _notas.esta_por_revisar(estado),
+            "Descartada": _hay(estado.get("Descartada")),
         })
 
     filas.sort(key=lambda f: (_orden_item(f["Item"]), f["Nombre"].lower()))

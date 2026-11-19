@@ -122,6 +122,21 @@ columnas_ts = re.search(r"const COLUMNAS = \[(.*?)\]", WORKER.read_text(encoding
 orden_ts = re.findall(r'"([A-Za-z]+)"', columnas_ts.group(1)) if columnas_ts else []
 check("mismo orden que reportes.panel()", orden_ts == list(local[0].keys()),
       f"{orden_ts} vs {list(local[0].keys())}")
+booleanas_ts = re.search(r"const BOOLEANAS = new Set\(\[(.*?)\]\)", WORKER.read_text(encoding="utf-8"), re.S)
+booleanas_ts = set(re.findall(r'"([A-Za-z]+)"', booleanas_ts.group(1))) if booleanas_ts else set()
+booleanas_py = {c for c, v in local[0].items() if isinstance(v, bool)}
+check("BOOLEANAS son justo las que en Python son bool", booleanas_ts == booleanas_py,
+      f"{sorted(booleanas_ts)} vs {sorted(booleanas_py)}")
+esquema = (RAIZ / "web" / "schema.sql").read_text(encoding="utf-8")
+tabla = re.search(r"CREATE TABLE IF NOT EXISTS panel \((.*?)\n\);", esquema, re.S)
+en_tabla = re.findall(r"^\s+([A-Za-z]+)\s+(?:TEXT|INTEGER|REAL)", tabla.group(1), re.M) if tabla else []
+check("la tabla panel tiene cada columna, en el mismo orden",
+      [c for c in en_tabla if c not in ("semestre", "Correo", "Item")]
+      == [c for c in orden_ts if c not in ("Correo", "Item")]
+      and {"Correo", "Item"} <= set(en_tabla), en_tabla)
+alter = re.findall(r"^--\s+ALTER TABLE panel ADD COLUMN (\w+) \w+;$", esquema, re.M)
+check("las cuatro columnas nuevas tienen su ALTER TABLE comentado, una por sentencia",
+      alter == ["Logro", "NotaModelo", "PorRevisar", "Descartada"] == orden_ts[-4:], alter)
 
 titulo("6. la página de datos guarda los CSV sin alterarlos")
 # Abrir alumnos.csv o preguntas.csv en la página y guardarlo sin tocar nada

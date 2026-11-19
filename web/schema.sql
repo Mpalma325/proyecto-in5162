@@ -29,8 +29,22 @@ CREATE TABLE IF NOT EXISTS panel (
   FechaRespuesta  TEXT,
   Respuesta       TEXT,
   EvaluacionIA    TEXT,
+  Logro           REAL,     -- de 0 a 1; vacío si no se corrigió con puntajes
+  NotaModelo      REAL,     -- la que propuso el modelo, antes de la revisión
+  PorRevisar      INTEGER,  -- corregida y sin mandar
+  Descartada      INTEGER,
   PRIMARY KEY (semestre, Correo, Item)
 );
+-- ==== A MANO EN UNA BASE YA CREADA (esquema nuevo, fase 1) ====
+-- La base de producción se creó sin las cuatro columnas de arriba. Con el
+-- Worker nuevo y sin ellas fallan subirPanel y leerPanel (Resultados no carga).
+-- Se corren antes de desplegar el motor y el Worker, una por una: SQLite (D1)
+-- acepta una sola columna por ALTER TABLE.
+--   ALTER TABLE panel ADD COLUMN Logro REAL;
+--   ALTER TABLE panel ADD COLUMN NotaModelo REAL;
+--   ALTER TABLE panel ADD COLUMN PorRevisar INTEGER;
+--   ALTER TABLE panel ADD COLUMN Descartada INTEGER;
+-- ==== fin del bloque a mano ====
 
 -- Trabajos pedidos desde la página: evaluar, enviar, tutoría... Los ejecuta el
 -- motor (Cloud Run) y va escribiendo acá la salida, que la página muestra en vivo.

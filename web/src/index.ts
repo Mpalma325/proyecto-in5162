@@ -55,15 +55,19 @@ export interface Env {
 }
 
 // En el mismo orden que las claves de reportes.panel() en Python: es el orden
-// de las columnas del CSV que se descarga, y tiene que coincidir con Streamlit.
+// de las columnas del CSV que se descarga. Las cuatro del final son del esquema
+// nuevo; una base creada antes las necesita (web/schema.sql, ALTER TABLE panel).
 const COLUMNAS = [
   "Correo", "Nombre", "Grupo", "EnRoster", "Item", "Enviado", "EnvioRegistrado",
   "Respondio", "Nota", "NotaTexto", "Originalidad", "Modelo", "FechaEnvio",
   "FechaRespuesta", "Respuesta", "EvaluacionIA",
+  "Logro", "NotaModelo", "PorRevisar", "Descartada",
 ] as const;
 
 // Columnas que en Python son booleanas y en D1 quedan como 0/1.
-const BOOLEANAS = new Set(["EnRoster", "Enviado", "EnvioRegistrado", "Respondio"]);
+const BOOLEANAS = new Set([
+  "EnRoster", "Enviado", "EnvioRegistrado", "Respondio", "PorRevisar", "Descartada",
+]);
 
 // Los flujos que se pueden pedir desde la página. Los argumentos los valida el
 // motor, que es quien arma el comando; acá solo se filtra el nombre.
