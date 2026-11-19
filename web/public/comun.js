@@ -24,6 +24,37 @@ export function caja(tipo, texto) {
   return el("div", { class: tipo }, texto);
 }
 
+/** Sin tildes ni mayúsculas, para buscar: "perez" encuentra a Pérez. */
+export const normalizar = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+let dialogos = 0;
+
+/**
+ * Pide confirmar algo dentro de la página, en lugar del confirm del navegador. El foco
+ * parte en «Cancelar»: un Enter apurado no manda nada, y Esc también cancela.
+ * `tono` pinta el botón de la acción ("real" o "peligro", como los primarios).
+ * Devuelve una promesa: true si se eligió `accion`.
+ */
+export function confirmar(texto, accion = "Aceptar", tono = "") {
+  return new Promise((resolver) => {
+    const id = `texto-confirmar-${++dialogos}`;
+    const cancelar = el("button", { class: "secundario", type: "submit", value: "no" }, "Cancelar");
+    const dialogo = el("dialog", { class: "confirmar", "aria-describedby": id, "aria-label": accion },
+      el("form", { method: "dialog" },
+        el("p", { class: "texto-confirmar", id }, texto),
+        el("div", { class: "acciones" }, cancelar,
+          el("button", { class: `primario ${tono}`.trim(), type: "submit", value: "si" }, accion))));
+    // Esc cierra el diálogo sin valor: cuenta como cancelar.
+    dialogo.addEventListener("close", () => {
+      dialogo.remove();
+      resolver(dialogo.returnValue === "si");
+    });
+    document.body.append(dialogo);
+    dialogo.showModal();
+    cancelar.focus();
+  });
+}
+
 export async function api(ruta, opciones = {}) {
   let r;
   try {
@@ -709,14 +740,16 @@ function botonDetener(t) {
   return el("button", {
     class: "enlace detener", type: "button",
     onclick: async (e) => {
-      if (!confirm(programado ? `¿Cancelar este trabajo programado para ${textoProgramado(programado)}? No va a correr.`
-        : "¿Detener este trabajo? Para antes del alumno siguiente; lo que ya hizo queda guardado.")) return;
-      e.target.disabled = true;
+      const boton = e.currentTarget;
+      if (!await confirmar(programado ? `¿Cancelar este trabajo programado para ${textoProgramado(programado)}? No va a correr.`
+        : "¿Detener este trabajo? Para antes del alumno siguiente; lo que ya hizo queda guardado.",
+      programado ? "Anular el trabajo" : "Detener", "peligro")) return;
+      boton.disabled = true;
       try {
         await api(`/api/trabajos/${t.id}/cancelar`, { method: "POST" });
       } catch (err) {
         alert(`No pude detenerlo: ${err.message}`);
-        e.target.disabled = false;
+        boton.disabled = false;
       }
     },
   }, programado ? "Cancelar" : "Detener");
@@ -805,15 +838,33 @@ function costoCorto(total) {
   return nota ? el("span", { title: nota }, `${formatoUsd(total.usd)}*`) : formatoUsd(total.usd);
 }
 
-export function historialTrabajos({ incluye, columna, alElegir }) {
+// Cuántos trabajos pide el historial de entrada, y cuántos suma cada "Ver más"
+// (el Worker no entrega más de 120).
+const HISTORIAL_INICIAL = 30;
+const HISTORIAL_MAXIMO = 120;
+
+/** La URL de la lista de trabajos: `prefijo` ("tareas.") deja solo los de esa página. */
+export function urlTrabajos(semestre, prefijo = "", limite = HISTORIAL_INICIAL) {
+  const q = new URLSearchParams({ semestre });
+  if (prefijo) q.set("flujo", prefijo);
+  if (limite !== HISTORIAL_INICIAL) q.set("limite", String(limite));
+  return `/api/trabajos?${q}`;
+}
+
+export function historialTrabajos({ incluye, columna, alElegir, prefijo = "" }) {
   const nodo = el("div");
+  let limite = HISTORIAL_INICIAL;
+  let ultimoSemestre = "";
   async function dibujar(semestre) {
     clearTimeout(nodo._refresco);
+    if (semestre !== ultimoSemestre) { limite = HISTORIAL_INICIAL; ultimoSemestre = semestre; }
     let lista = [];
     let costos = new Map();
+    let trabajos = [];
     try {
-      const [trabajos, consumo, precios] = await Promise.all([
-        api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`),
+      let consumo, precios;
+      [trabajos, consumo, precios] = await Promise.all([
+        api(urlTrabajos(semestre, prefijo, limite)),
         api(`/api/consumo/${encodeURIComponent(semestre)}`).catch(() => []),
         preciosApi()]);
       historialVisto = trabajos;
@@ -855,7 +906,13 @@ export function historialTrabajos({ incluye, columna, alElegir }) {
         el("tbody", {}, lista.map(fila)))),
       // replaceChildren (a diferencia de el()) escribe un null como el texto "null".
       ...(lista.some((t) => notaMezcla(costos.get(t.id) || {})) ? [el("p", { class: "nota-pie" },
-        "* Parte del costo se calculó con los precios de hoy.")] : []));
+        "* Parte del costo se calculó con los precios de hoy.")] : []),
+      // Si llegaron tantos como se pidieron, puede haber más atrás.
+      ...(trabajos.length >= limite && limite < HISTORIAL_MAXIMO ? [el("div", { class: "acciones" },
+        el("button", { class: "secundario", type: "button", onclick: () => {
+          limite = Math.min(limite + HISTORIAL_INICIAL * 2, HISTORIAL_MAXIMO);
+          dibujar(semestre);
+        } }, "Ver más"))] : []));
   }
   return { nodo, dibujar };
 }
@@ -927,10 +984,11 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
     boton.addEventListener("click", async () => {
       const elegidos = casillas.filter((x) => x.checked).map((x) => x.value);
       const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
-      if (!confirm(mandaFeedback
+      if (!await confirmar(mandaFeedback
         ? `Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\nLas demás quedan como están. ¿Confirmas?`
         : `Vas a ${verbo.toLowerCase()} a: ${nombres}.\n\nLas notas quedan guardadas y las correcciones esperan tu `
-          + "revisión antes de mandarse. Las demás quedan como están. ¿Confirmas?")) return;
+          + "revisión antes de mandarse. Las demás quedan como están. ¿Confirmas?",
+      mandaFeedback ? `${verbo} y mandar` : verbo, "real")) return;
       boton.disabled = true;
       aviso.replaceChildren();
       try {

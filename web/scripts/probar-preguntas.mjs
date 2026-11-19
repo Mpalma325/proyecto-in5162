@@ -141,4 +141,45 @@ check("cuenta filas agregadas, quitadas y cambiadas por correo",
   resumenCsv(["Nombre", "Correo"], [["Ana", "a@x"], ["Bea", "b@x"]], [["Ana M", "a@x"], ["Caro", "c@x"]])
     === "1 fila agregada, 1 fila quitada, 1 fila cambiada");
 
+// Buscar una pregunta: por enunciado o tema, sin tildes, por semana y por grupo.
+// Preguntas inventadas.
+const cols = ["Semana", "Tema", "Fecha de Entrega", ...["Control", "Tratamiento"].flatMap((g) =>
+  [1, 2, 3].flatMap((i) => [`${g} P${i}`, `${g} Pauta P${i}`]))];
+const filaDe = (semana, tema, control, tratamiento = []) => cols.map((c) => {
+  if (c === "Semana") return semana;
+  if (c === "Tema") return tema;
+  const m = c.match(/^(Control|Tratamiento) (Pauta )?P(\d)$/);
+  if (!m) return "";
+  const p = (m[1] === "Control" ? control : tratamiento)[Number(m[3]) - 1];
+  return p ? (m[2] ? "pauta" : p) : "";
+});
+const comillas = (v) => `"${String(v).replace(/"/g, '""')}"`;
+const buscable = leerCsv([cols, filaDe("1", "Elección discreta", ["¿Qué mide la VEROSIMILITUD?", "Explique, con un ejemplo:\nla lealtad."],
+  ["¿Qué mide la VEROSIMILITUD?", "¿Qué resuelve un logit anidado?"]),
+filaDe("2", "Demanda", ["Una pregunta sobre el precio."]),
+filaDe("10", "Paneles", ["¿Por qué efectos fijos?"])].map((f) => f.map(comillas).join(",")).join("\n"));
+const busca = (q, g) => JSON.stringify(P.buscarPreguntas(buscable, q, g)
+  .map((r) => [r.numero, r.coincidencias.map((c) => [c.pregunta, c.grupos.join("+")])]));
+for (const [q, g, esperado, nombre] of [
+  ["verosimilitud", "", "[[1,[[1,\"control+tratamiento\"]]]]", "sin mayúsculas, y una pregunta igual cuenta para los dos grupos"],
+  ["eleccion", "", "[[1,[]]]", "sin tildes, también en el tema"],
+  ["que resuelve", "", "[[1,[[2,\"tratamiento\"]]]]", "una pregunta distinta dice en qué grupo está"],
+  ["logit", "control", "[]", "con un grupo elegido, no encuentra lo del otro"],
+  ["logit", "tratamiento", "[[1,[[2,\"tratamiento\"]]]]", "y sí lo de ese grupo"],
+  ["ejemplo: la lealtad", "", "[[1,[[2,\"control\"]]]]", "un salto de línea cuenta como espacio"],
+  ["1", "", "[[1,[]]]", "un número va a esa semana, no a la 10"],
+  ["semana 10", "", "[[10,[]]]", "«semana 10» también"],
+  ["  ", "", "[[1,[]],[2,[]],[10,[]]]", "sin texto, están todas"],
+  ["no aparece", "", "[]", "lo que no está no trae nada"],
+]) {
+  check(`buscar «${q}»${g ? ` en ${g}` : ""}: ${nombre}`, busca(q, g) === esperado, busca(q, g));
+}
+const x = P.extracto("Antes de todo: ¿Qué mide la Elección del consumidor cuando cambia el precio relativo?", "eleccion", 12);
+check("el extracto marca lo encontrado con sus tildes, y corta con …",
+  x && x.encontrado === "Elección" && x.antes === "…Qué mide la " && x.despues === " del consumi…", JSON.stringify(x));
+const y = P.extracto("Explique, con un ejemplo:\nla lealtad.", "ejemplo: la");
+check("el extracto junta los saltos de línea", y && y.encontrado === "ejemplo: la" && y.despues === " lealtad.",
+  JSON.stringify(y));
+check("sin coincidencia, el extracto es null", P.extracto("texto", "otra cosa") === null);
+
 process.exit(fallas ? 1 : 0);

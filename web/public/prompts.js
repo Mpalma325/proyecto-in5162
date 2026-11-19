@@ -30,7 +30,7 @@ export const PROMPTS = {
     variables: [] },
   "tareas/prompts/correo_pregunta.md": {
     titulo: "Correo con la pregunta de la tarea", formato: true,
-    variables: ["{nombre}", "{tarea}", "{pregunta_tarea}", "{pregunta}"] },
+    variables: ["{nombre}", "{tarea}", "{pregunta_tarea}", "{pregunta}", "{plazo}", "{minutos}"] },
   "tareas/prompts/corregir_respuesta.md": {
     titulo: "Cómo corrige la IA la respuesta de la tarea",
     uso: "Tiene que pedir la respuesta en JSON, con «nota» y «comentario».",

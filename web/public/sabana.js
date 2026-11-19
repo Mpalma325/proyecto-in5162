@@ -19,6 +19,47 @@ const GRUPOS = [
     "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML", "AjusteManual", "MotivoAjuste"]],
   ["Tutoría", ["Repreguntas", "Tutorias"]],
 ];
+// Qué trae cada columna, al pasar el mouse por su nombre (sale de modulos/sabana.py).
+export const DESCRIPCION = {
+  Semestre: "Semestre de la fila",
+  Flujo: "test (semanal) o tarea",
+  Item: "Número de semana, o la tarea (T1, T2…)",
+  Nombre: "Nombre del alumno",
+  Correo: "Correo del alumno",
+  EnRoster: "Si está en la lista de alumnos actual (sí/no)",
+  Variante: "Grupo del experimento: control o tratamiento (tests)",
+  GrupoTarea: "Archivo de la entrega del grupo (tareas)",
+  ParteTarea: "Parte de la tarea sobre la que se le preguntó (tareas)",
+  Tema: "Tema de la semana (tests)",
+  FechaEntrega: "Fecha de entrega que decía el correo (tests)",
+  NumPreguntas: "Cuántas preguntas recibió",
+  Pregunta: "Enunciado que recibió; si son varias, P1:, P2:…",
+  Pauta: "Pauta con que se corrigió",
+  SegundaOportunidad: "Si se le mandó la pregunta de segunda oportunidad (tareas)",
+  Estado: "evaluada, respondió sin nota, sin responder o sin enviar",
+  Enviado: "Si se le envió la pregunta (sí/no)",
+  FechaEnvio: "Cuándo se le envió",
+  MessageIdEnvio: "Identificador del correo enviado",
+  Respondio: "Si respondió (sí/no)",
+  FechaRespuesta: "Cuándo respondió",
+  Respuesta: "Lo que respondió",
+  LargoRespuesta: "Largo de la respuesta, en caracteres",
+  FechaEvaluacion: "Cuándo se corrigió",
+  Nota: "Nota vigente, con los ajustes a mano",
+  NotaTexto: "La nota tal como quedó escrita",
+  NotaDelModelo: "Nota que puso la IA, antes de cualquier ajuste",
+  Originalidad: "Originalidad que asignó la IA",
+  Modelo: "Modelo de IA que corrigió",
+  Versiones: "Versiones del prompt, la pauta y la plantilla con que se corrigió",
+  TokensEntrada: "Tokens que se le mandaron al modelo",
+  TokensSalida: "Tokens que devolvió el modelo",
+  EvaluacionTexto: "Corrección de la IA, en texto plano",
+  EvaluacionHTML: "Corrección de la IA, en el HTML del correo",
+  AjusteManual: "Si la nota se cambió a mano (sí/no)",
+  MotivoAjuste: "Motivo del cambio a mano",
+  Repreguntas: "Cuántas dudas mandó sobre la corrección",
+  Tutorias: "Cuántas respuestas a dudas recibió",
+};
 // Las técnicas: sirven para depurar el sistema, no para leer ni analizar respuestas.
 const TECNICAS = new Set(["MessageIdEnvio", "EvaluacionHTML", "TokensEntrada", "TokensSalida"]);
 const RESPUESTAS_Y_NOTAS = ["Item", "Tema", "Nombre", "Correo", "Variante", "Estado", "Pregunta", "Respuesta",
@@ -248,7 +289,7 @@ function selector(semestre, columnas, filas, { subido, alDia, actualizando, prev
         el("button", { class: "enlace", type: "button", onclick: () => todas(false) }, "Ninguna")),
       el("div", { class: "lista-casillas" }, cs.map((c) => {
         marcas.get(c).addEventListener("change", () => { reconocer(); actualizar(); });
-        return el("label", {}, marcas.get(c), c);
+        return el("label", { title: DESCRIPCION[c] }, marcas.get(c), c);
       })));
   });
 

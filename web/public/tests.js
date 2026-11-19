@@ -5,8 +5,8 @@
 // la nube, cerrar la pestaña no lo detiene: queda en el historial de abajo.
 
 import {
-  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, enCuanto, fechaCorta, historialTrabajos, navegacion,
-  pedirTrabajo, seguirTrabajo,
+  api, barraPestanas, caja, chipSemestre, confirmar, el, elegirCandidatos, enCuanto, fechaCorta, historialTrabajos,
+  navegacion, pedirTrabajo, seguirTrabajo,
 } from "./comun.js";
 import { diaMes, leerCiclo } from "./ciclo.js";
 import { resumenSemana } from "./preguntas.js";
@@ -314,7 +314,7 @@ function formulario(p, destino) {
     if (p.confirmar && prueba && !prueba.checked) {
       // Desde el celular es fácil tocar sin querer, y el costo del error es
       // mandarle correos a todo el curso. El modo prueba no pide confirmación.
-      if (!confirm(`${p.confirmar(argumentos)}\n\n¿Confirmas?`)) return;
+      if (!await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, p.botonReal, "real")) return;
     }
     boton.disabled = true;
     try {
@@ -349,6 +349,7 @@ function formulario(p, destino) {
 
 const historial = historialTrabajos({
   // Las pruebas de criterio tienen su propio historial, en Configuración.
+  prefijo: "tests.",
   incluye: (t) => t.flujo.startsWith("tests.") && t.flujo !== "tests.experimento",
   columna: ["Semana", (a) => a.semana ?? "todas"],
   alElegir: (t) => {

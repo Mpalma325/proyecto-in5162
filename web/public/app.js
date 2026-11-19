@@ -6,7 +6,10 @@
 // La excepción es la franja de la semana en curso, que es solo contar filas de
 // la última semana enviada y no existe en Streamlit (ver semanaActual()).
 
-import { api, caja, el, esOscuro, navegacion, pedirTrabajo, seguirTrabajo, evaluacionDeTexto, respuestaLegible, vistaCorreo } from "./comun.js";
+import {
+  api, caja, confirmar, el, esOscuro, evaluacionDeTexto, navegacion, normalizar, pedirTrabajo, respuestaLegible,
+  seguirTrabajo, vistaCorreo,
+} from "./comun.js";
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
 import { leerSemana } from "./preguntas.js";
 import { seccionSabana } from "./sabana.js";
@@ -62,7 +65,6 @@ const numero = (v, decimales = 1) => (hay(v)
 const entero = (v) => (hay(v) ? Number(v).toLocaleString("es-CL") : "—");
 const plural = (n, uno, varios) => `${entero(n)} ${n === 1 ? uno : varios}`;
 const posicion = (item) => estado.items.indexOf(item);
-const normalizar = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /**
  * Un indicador. Lo que explica el número va en `sub`, visible siempre: en un
@@ -1100,9 +1102,9 @@ function formularioAjuste(c) {
       destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
       return;
     }
-    if (!confirm(`Cambiar la nota de ${c.Nombre}, semana ${c.Item}: ${c.NotaTexto || "sin nota"} → ${n}.
+    if (!await confirmar(`Cambiar la nota de ${c.Nombre}, semana ${c.Item}: ${c.NotaTexto || "sin nota"} → ${n}.
 `
-      + "No se le envía ningún correo. ¿Confirmas?")) return;
+      + "No se le envía ningún correo. ¿Confirmas?", "Cambiar la nota")) return;
     boton.disabled = true;
     try {
       const id = await pedirTrabajo(estado.semestre, "datos.ajustar",

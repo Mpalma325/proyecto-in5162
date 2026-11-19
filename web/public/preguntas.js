@@ -6,7 +6,7 @@
 // preguntas como las va a recibir el alumno, y al guardar se reescribe solo esa
 // fila: el resto del archivo queda igual, byte a byte (csv.js respeta su formato).
 
-import { api, caja, centrarSeleccion, conDetalle, el } from "./comun.js";
+import { api, caja, centrarSeleccion, conDetalle, confirmar, el, normalizar } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
 export const RUTA = "tests_semanales/data/preguntas.csv";
@@ -132,6 +132,64 @@ export function agregarSemana(datos) {
   return [{ ...datos, filas }, numero];
 }
 
+// Para buscar: sin tildes, sin mayúsculas y con los saltos de línea como un espacio.
+const paraBuscar = (s) => normalizar(s).replace(/\s+/g, " ").trim();
+
+/**
+ * Las semanas que calzan con una búsqueda: [{ numero, coincidencias }], cada
+ * coincidencia { pregunta, grupos, texto }. Se busca en el enunciado y el tema;
+ * "7" o "semana 7" va directo a esa semana, si existe. `grupo` ("control" o
+ * "tratamiento") busca solo en lo que recibe ese grupo; vacío, en los dos.
+ */
+export function buscarPreguntas(datos, consulta, grupo = "") {
+  const q = paraBuscar(consulta);
+  const semanas = semanasDe(datos);
+  if (!q) return semanas.map((s) => ({ numero: s.numero, coincidencias: [] }));
+  const n = q.match(/^(?:semana|sem\.?)?\s*(\d+)$/);
+  if (n && semanas.some((s) => s.numero === Number(n[1]))) return [{ numero: Number(n[1]), coincidencias: [] }];
+  return semanas.flatMap(({ numero }) => {
+    const s = leerSemana(datos, numero);
+    const coincidencias = s.preguntas.flatMap((p, i) => {
+      const grupos = (grupo ? [grupo] : GRUPOS).filter((g) => paraBuscar(p[g].texto).includes(q));
+      return grupos.length ? [{ pregunta: i + 1, grupos, texto: p[grupos[0]].texto }] : [];
+    });
+    return coincidencias.length || paraBuscar(s.tema).includes(q) ? [{ numero, coincidencias }] : [];
+  });
+}
+
+/**
+ * El pedazo de `texto` donde aparece la búsqueda, para mostrarlo bajo la
+ * semana: { antes, encontrado, despues }, o null si no aparece.
+ */
+export function extracto(texto, consulta, alrededor = 30) {
+  const q = paraBuscar(consulta);
+  // El texto normalizado letra a letra, recordando de qué posición del original viene cada una.
+  let plano = "";
+  const origen = [];
+  let pos = 0;
+  for (const c of String(texto ?? "")) {
+    const n = /\s/.test(c) ? " " : normalizar(c);
+    if (!(n === " " && plano.endsWith(" "))) {
+      plano += n;
+      for (let k = 0; k < n.length; k++) origen.push(pos);
+    }
+    pos += c.length;
+  }
+  const i = q ? plano.indexOf(q) : -1;
+  if (i < 0) return null;
+  const desde = origen[i];
+  const hasta = i + q.length < origen.length ? origen[i + q.length] : pos;
+  const t = String(texto);
+  const corto = (s) => s.replace(/\s+/g, " ");
+  const inicio = Math.max(0, desde - alrededor);
+  const fin = Math.min(t.length, hasta + alrededor);
+  return {
+    antes: `${inicio > 0 ? "…" : ""}${corto(t.slice(inicio, desde)).trimStart()}`,
+    encontrado: corto(t.slice(desde, hasta)),
+    despues: `${corto(t.slice(hasta, fin)).trimEnd()}${fin < t.length ? "…" : ""}`,
+  };
+}
+
 /** Lo que conviene revisar antes de enviar. `corto` da las etiquetas de la lista de semanas. */
 export function avisosDe(semana, corto = false) {
   const avisos = [];
@@ -150,7 +208,6 @@ export function avisosDe(semana, corto = false) {
 }
 
 const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-const sinTildes = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /**
  * Si la fecha nombra un día de la semana que no es el suyo ("lunes 13/06",
@@ -160,8 +217,8 @@ const sinTildes = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(
 export function diaQueNoCalza(texto, hoy = new Date()) {
   const fecha = fechaEntrega(texto, hoy);
   if (!fecha) return null;
-  const limpio = sinTildes(String(texto));
-  const nombrado = DIAS.findIndex((d) => new RegExp(`\\b${sinTildes(d)}\\b`).test(limpio));
+  const limpio = normalizar(String(texto));
+  const nombrado = DIAS.findIndex((d) => new RegExp(`\\b${normalizar(d)}\\b`).test(limpio));
   if (nombrado < 0 || nombrado === fecha.getDay()) return null;
   const dma = `${String(fecha.getDate()).padStart(2, "0")}/${String(fecha.getMonth() + 1).padStart(2, "0")}`
     + `/${fecha.getFullYear()}`;
@@ -283,9 +340,11 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   const hayCambios = () => borrador !== null && JSON.stringify(borrador) !== original;
   const avisarCambio = () => alCambiar?.(hayCambios());
 
-  function descartarSiHace() {
+  async function descartarSiHace() {
     if (!hayCambios()) return true;
-    if (!confirm(`La semana ${actual} tiene cambios sin guardar. ¿Descartarlos?`)) return false;
+    if (!await confirmar(`La semana ${actual} tiene cambios sin guardar. ¿Descartarlos?`, "Descartar", "peligro")) {
+      return false;
+    }
     datos = leerCsv(guardado);
     return true;
   }
@@ -299,11 +358,39 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     dibujar();
   }
 
+  // ------------------------------------------------ buscar
+  // Filtra la lista de semanas. Lo escrito se mantiene al elegir una semana.
+  const buscador = el("input", { type: "search", placeholder: "Buscar…",
+    "aria-label": "Buscar por enunciado, tema o número de semana" });
+  const grupoBuscado = usaGrupos ? el("select", { "aria-label": "Buscar en el grupo" },
+    el("option", { value: "" }, "Ambos"), GRUPOS.map((g) => el("option", { value: g }, titulo(g)))) : null;
+  const columna = el("div", { class: "columna-semanas" },
+    el("div", { class: "buscar-preguntas", role: "search" }, buscador, grupoBuscado));
+  // Solo se rehace la lista: el buscador no pierde el foco mientras se escribe.
+  function pintarLista() {
+    const nueva = listaSemanas();
+    const vieja = columna.querySelector(":scope > .lista-semanas");
+    if (vieja) vieja.replaceWith(nueva); else columna.append(nueva);
+  }
+  buscador.addEventListener("input", pintarLista);
+  grupoBuscado?.addEventListener("change", pintarLista);
+
+  /** Dónde apareció lo buscado, bajo el tema: "P2: …texto…". */
+  function lineaHallada(c, consulta) {
+    const x = c && extracto(c.texto, consulta);
+    if (!x) return null;
+    const cual = usaGrupos && !grupoBuscado.value && c.grupos.length === 1 ? ` ${titulo(c.grupos[0])}` : "";
+    return el("span", { class: "extracto" }, `P${c.pregunta}${cual}: `, x.antes, el("mark", {}, x.encontrado), x.despues);
+  }
+
   // ------------------------------------------------ la lista de semanas
   function listaSemanas() {
-    const semanas = semanasDe(datos);
-    const agregar = el("button", { class: "agregar-semana", type: "button", onclick: () => {
-      if (!descartarSiHace()) return;
+    const consulta = buscador.value.trim();
+    const hallados = consulta ? new Map(buscarPreguntas(datos, consulta, usaGrupos ? grupoBuscado.value : "control")
+      .map((r) => [r.numero, r.coincidencias])) : null;
+    const semanas = semanasDe(datos).filter((s) => !hallados || hallados.has(s.numero));
+    const agregar = el("button", { class: "agregar-semana", type: "button", onclick: async () => {
+      if (!await descartarSiHace()) return;
       const [nuevos, numero] = agregarSemana(datos);
       datos = nuevos;
       actual = numero;
@@ -316,12 +403,14 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     } }, "+ Agregar semana");
     // En celular es una tira que se desliza: que se vea la semana elegida, no la 1.
     const lista = el("nav", { class: "lista-semanas", "aria-label": "Semanas" },
+      hallados && !semanas.length ? el("p", { class: "nota-pie sin-resultados" }, "Sin resultados.") : null,
       semanas.map((s) => el("button", {
         type: "button", class: "item-semana", "aria-current": s.numero === actual ? "true" : null,
-        onclick: () => { if (s.numero !== actual && descartarSiHace()) elegir(s.numero); },
+        onclick: async () => { if (s.numero !== actual && await descartarSiHace()) elegir(s.numero); },
       },
       el("span", { class: "num-semana" }, `Semana ${s.numero}`),
       el("span", { class: "tema-semana" }, lleno(s.tema) ? s.tema : "Sin tema"),
+      lineaHallada(hallados?.get(s.numero)?.[0], consulta),
       s.avisos.length ? el("span", { class: "marcas" }, s.avisos.map((a) => el("span", { class: "marca" }, a))) : null)),
       agregar);
     centrarSeleccion(lista);
@@ -343,14 +432,15 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
 
   function tarjetaPregunta(p, i) {
     const distinta = el("input", { type: "checkbox", checked: !p.igual });
-    distinta.addEventListener("change", () => {
+    distinta.addEventListener("change", async () => {
       if (distinta.checked) {
         // Parten iguales y se edita lo que cambia.
         p.tratamiento = { ...p.control };
         p.igual = false;
       } else {
         const iguales = p.tratamiento.texto === p.control.texto && p.tratamiento.pauta === p.control.pauta;
-        if (!iguales && !confirm("Tratamiento va a recibir lo mismo que Control y se pierde su texto. ¿Seguir?")) {
+        if (!iguales && !await confirmar("Tratamiento va a recibir lo mismo que Control y se pierde su texto. ¿Seguir?",
+          "Dejar iguales", "peligro")) {
           distinta.checked = true;
           return;
         }
@@ -360,9 +450,10 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
       cambio();
       dibujar();
     });
-    const quitar = el("button", { class: "enlace", type: "button", onclick: () => {
+    const quitar = el("button", { class: "enlace", type: "button", onclick: async () => {
       const tieneTexto = [p.control.texto, p.control.pauta, p.tratamiento.texto, p.tratamiento.pauta].some(lleno);
-      if (tieneTexto && !confirm(`¿Quitar la pregunta ${i + 1}? Las siguientes se corren un lugar.`)) return;
+      if (tieneTexto && !await confirmar(`¿Quitar la pregunta ${i + 1}? Las siguientes se corren un lugar.`,
+        "Quitar", "peligro")) return;
       borrador.preguntas.splice(i, 1);
       cambio();
       dibujar();
@@ -447,8 +538,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     avisarCambio();
   }
 
-  botonDescartar.addEventListener("click", () => {
-    if (!confirm(`¿Descartar los cambios de la semana ${actual}?`)) return;
+  botonDescartar.addEventListener("click", async () => {
+    if (!await confirmar(`¿Descartar los cambios de la semana ${actual}?`, "Descartar", "peligro")) return;
     datos = leerCsv(guardado);
     const sigue = leerSemana(datos, actual) ? actual : semanasDe(datos)[0]?.numero ?? null;
     if (sigue === null) { borrador = null; dibujar(); return; }
@@ -517,7 +608,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   }
 
   function dibujar() {
-    raiz.replaceChildren(listaSemanas(), panelSemana());
+    pintarLista();
+    raiz.replaceChildren(columna, panelSemana());
   }
 
   (async () => {

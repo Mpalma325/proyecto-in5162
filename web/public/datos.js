@@ -6,7 +6,7 @@
 // escriben los trabajos, y el Worker rechaza cualquier otra ruta.
 
 import {
-  api, barraPestanas, caja, conDetalle, el, fechaCorta, navegacion, resumenCsv, tareasConocidas, textoEdicion,
+  api, barraPestanas, caja, conDetalle, confirmar, el, fechaCorta, navegacion, resumenCsv, tareasConocidas, textoEdicion,
 } from "./comun.js";
 import {
   contarCambios, diffLineas, filasDelLog, huella, ordenarVersiones, textoUsos, usosPorHuella, versionesDe,
@@ -58,9 +58,9 @@ let modoPreguntas = "semana";
 
 addEventListener("beforeunload", (e) => { if (sinGuardar) e.preventDefault(); });
 
-function descartarCambios() {
+async function descartarCambios() {
   if (!sinGuardar) return true;
-  if (!confirm("Hay cambios sin guardar. ¿Descartarlos?")) return false;
+  if (!await confirmar("Hay cambios sin guardar. ¿Descartarlos?", "Descartar", "peligro")) return false;
   sinGuardar = false;
   return true;
 }
@@ -221,8 +221,8 @@ function editorCsv(ruta, { alGuardar } = {}) {
         } }, "+ Agregar fila"),
         el("button", { class: "descarga", type: "button",
           onclick: () => bajarComo(nombre(ruta), escribirCsv(datos)) }, "Descargar CSV"),
-        botonSubir("Reemplazar con un CSV…", ".csv,text/csv", (texto) => {
-          if (!descartarCambios()) return;
+        botonSubir("Reemplazar con un CSV…", ".csv,text/csv", async (texto) => {
+          if (!await descartarCambios()) return;
           montar(leerCsv(texto), true);
           sinGuardar = true;
         })),
@@ -562,7 +562,7 @@ function filaVersion(v, { uso, conUsos, esVigente, guardado, cargar }) {
         }
       });
       const usar = el("button", { class: "secundario", type: "button" }, "Cargar en el editor");
-      usar.addEventListener("click", () => { if (descartarCambios()) cargar(texto, v.huella); });
+      usar.addEventListener("click", async () => { if (await descartarCambios()) cargar(texto, v.huella); });
       const fecha = (t) => fechaCorta(new Date(t));
       const cuando = !uso?.primero ? "" : uso.primero === uso.ultimo ? `, el ${fecha(uso.primero)}`
         : `, del ${fecha(uso.primero)} al ${fecha(uso.ultimo)}`;
@@ -638,7 +638,7 @@ function editorPrompt(ruta) {
     });
     guardar.addEventListener("click", async () => {
       const problemas = problemasDePrompt(info, area.value);
-      if (problemas.length && !confirm(`${problemas.join("\n\n")}\n\n¿Guardar igual?`)) return;
+      if (problemas.length && !await confirmar(`${problemas.join("\n\n")}\n\n¿Guardar igual?`, "Guardar igual")) return;
       guardar.disabled = true;
       try {
         await guardarArchivo(ruta, area.value, "text/markdown; charset=utf-8",
@@ -720,8 +720,8 @@ function vistaContexto() {
       return;
     }
     const reemplazos = elegidos.filter((f) => existe(CARPETA_CONTEXTO + nombreContexto(f.name)));
-    if (reemplazos.length && !confirm(`Ya existen y se van a reemplazar: ${reemplazos.map((f) => f.name).join(", ")}.`
-      + "\nLa versión anterior queda en el historial. ¿Seguir?")) return;
+    if (reemplazos.length && !await confirmar(`Ya existen y se van a reemplazar: ${reemplazos.map((f) => f.name).join(", ")}.`
+      + "\nLa versión anterior queda en el historial. ¿Seguir?", "Reemplazar")) return;
     subir.disabled = true;
     const listos = [];
     try {
@@ -741,7 +741,7 @@ function vistaContexto() {
   });
 
   const borrar = async (ruta) => {
-    if (!confirm(`¿Borrar ${nombre(ruta)} del contexto? Queda una copia en el historial.`)) return;
+    if (!await confirmar(`¿Borrar ${nombre(ruta)} del contexto? Queda una copia en el historial.`, "Borrar", "peligro")) return;
     try {
       await api(urlArchivo(ruta), { method: "DELETE", headers: conDetalle(`Borró material del curso: ${nombre(ruta)}`) });
       archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`);
@@ -829,8 +829,8 @@ function vistaPrompts() {
   const sel = el("select", { class: "selector-prompt" }, grupos.map(([proyecto, mds]) => el("optgroup", { label: proyecto },
     mds.map((r) => el("option", { value: r, selected: r === promptElegido },
       PROMPTS[r] ? `${PROMPTS[r].titulo} (${nombre(r)})` : nombre(r))))));
-  sel.addEventListener("change", () => {
-    if (!descartarCambios()) { sel.value = promptElegido; return; }
+  sel.addEventListener("change", async () => {
+    if (!await descartarCambios()) { sel.value = promptElegido; return; }
     promptElegido = sel.value;
     destino.replaceChildren(editorPrompt(sel.value));
   });
@@ -1155,20 +1155,20 @@ async function cambiarSemestre(cuerpo, mensaje) {
 }
 
 /** Ir a una pestaña, sin perder en silencio lo que no se guardó. */
-function irA(id) {
-  if (id === sub || !descartarCambios()) return;
+async function irA(id) {
+  if (id === sub || !await descartarCambios()) return;
   sub = id;
   dibujar();
 }
 
 // Cambiar solo el # (un marcador, la barra de direcciones) también cambia de
 // pestaña. Si se queda donde estaba por cambios sin guardar, el # vuelve.
-addEventListener("hashchange", () => {
+addEventListener("hashchange", async () => {
   const [p, s, sem] = location.hash.slice(1).split("/");
   const id = pestanaDeHash(p, s);
   const semana = id === "preguntas" && Number(sem) ? Number(sem) : semanaPreguntas;
   if (id === sub && semana === semanaPreguntas) return;
-  if (!PESTANAS.some(([x]) => x === id) || !descartarCambios()) {
+  if (!PESTANAS.some(([x]) => x === id) || !await descartarCambios()) {
     history.replaceState(null, "", `#datos/${sub}`);
     return;
   }
@@ -1181,24 +1181,24 @@ addEventListener("hashchange", () => {
 function cabecera() {
   const mensaje = el("div");
   const sel = el("select", {}, semestres.map((s) => el("option", { value: s.id, selected: s.id === semestre }, s.id)));
-  sel.addEventListener("change", () => {
-    if (!descartarCambios()) { sel.value = semestre; return; }
+  sel.addEventListener("change", async () => {
+    if (!await descartarCambios()) { sel.value = semestre; return; }
     // El semestre activo es uno para todos, también para las tareas programadas.
-    if (!confirm(`Desde ahora el sitio y las tareas programadas (como las respuestas a dudas) usan ${sel.value} `
-      + "para todos los docentes. ¿Activarlo?")) { sel.value = semestre; return; }
+    if (!await confirmar(`Desde ahora el sitio y las tareas programadas (como las respuestas a dudas) usan ${sel.value} `
+      + "para todos los docentes. ¿Activarlo?", "Activar")) { sel.value = semestre; return; }
     cambiarSemestre({ id: sel.value, activo: true }, mensaje);
   });
   const nuevo = el("input", { type: "text", placeholder: "2027-1", size: 12 });
   const crear = el("button", { class: "secundario", type: "button" }, "Crear y activar");
-  crear.addEventListener("click", () => {
+  crear.addEventListener("click", async () => {
     const id = nuevo.value.trim();
     if (!/^[A-Za-z0-9._-]{1,32}$/.test(id) || id.startsWith("_")) {
       mensaje.replaceChildren(caja("aviso", "Usa un identificador como 2027-1: letras, números, punto o guion."));
       return;
     }
-    if (!descartarCambios()) return;
-    if (semestre && !confirm(`Se crea ${id} desde la plantilla y queda activo para todos, en lugar de ${semestre}, `
-      + "también para las tareas programadas. ¿Crear y activar?")) return;
+    if (!await descartarCambios()) return;
+    if (semestre && !await confirmar(`Se crea ${id} desde la plantilla y queda activo para todos, en lugar de ${semestre}, `
+      + "también para las tareas programadas. ¿Crear y activar?", "Crear y activar")) return;
     // Mientras copia la plantilla, el botón no se puede volver a apretar.
     crear.disabled = true;
     crear.textContent = "Creando…";
@@ -1245,7 +1245,7 @@ function vistaPreguntas() {
   const modos = el("div", { class: "chips modos" }, [["semana", "Por semana"], ["tabla", "Tabla completa"]]
     .map(([id, texto]) => el("button", {
       type: "button", class: "chip", "aria-pressed": String(id === modoPreguntas),
-      onclick: () => { if (id !== modoPreguntas && descartarCambios()) { modoPreguntas = id; dibujar(); } },
+      onclick: async () => { if (id !== modoPreguntas && await descartarCambios()) { modoPreguntas = id; dibujar(); } },
     }, texto)));
   if (modoPreguntas === "tabla") {
     return [modos,

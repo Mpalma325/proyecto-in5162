@@ -2,8 +2,8 @@
 // la API. Los gráficos y las tablas del semestre están en Resultados.
 
 import {
-  api, caja, chipSemestre, el, fallidosSinResolver, fechaCorta, historialTrabajos, navegacion, nombreFlujo, preciosApi,
-  seguirTrabajo,
+  api, caja, chipSemestre, el, fallidosSinResolver, fechaCorta, historialTrabajos, navegacion, nombreFlujo, normalizar,
+  preciosApi, seguirTrabajo,
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
 import { leerCsv } from "./csv.js";
@@ -152,12 +152,11 @@ function buscadorAlumno(semestre) {
     })
     .catch(() => {});
   // Sin tildes ni mayúsculas: "perez" encuentra a Pérez.
-  const norm = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const ir = () => {
-    const q = norm(campo.value.trim());
+    const q = normalizar(campo.value.trim());
     if (!q) return;
     const a = alumnos.find((x) => q.endsWith(x.correo) || x.correo.includes(q))
-      || alumnos.find((x) => norm(x.nombre).includes(q));
+      || alumnos.find((x) => normalizar(x.nombre).includes(q));
     if (a) {
       location.href = `/resultados#Alumnos/${encodeURIComponent(a.correo)}`;
       return;

@@ -226,7 +226,17 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-motor.mjs corre", False, r.stderr[-300:])
 
-titulo("7c. el editor de preguntas por semana escribe solo esa fila y muestra el correo real")
+titulo("7b4. cada historial pide solo sus trabajos, con «Ver más»")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-trabajos.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-trabajos.mjs corre", False, r.stderr[-300:])
+
+titulo("7c. el editor de preguntas por semana escribe solo esa fila, muestra el correo real y busca")
 # Preguntas inventadas: el repo es público. Casos que rompen un CSV a mano:
 # comas, comillas y saltos de línea dentro de una celda, una semana sin
 # Tratamiento (se le manda lo de Control) y una fila en blanco al final.
@@ -296,6 +306,29 @@ if shutil.which("node"):
         check(nombre, estado == "OK", linea)
     if r.returncode and not r.stdout:
         check("probar-sabana.mjs corre", False, r.stderr[-300:])
+    # Cada columna que arma modulos/sabana.py dice qué trae al pasar el mouse.
+    from modulos import sabana as _sabana
+    r = subprocess.run(["node", "--input-type=module", "-e",
+                        "const m = await import(process.argv[1]); console.log(JSON.stringify(m.DESCRIPCION))",
+                        (RAIZ / "web" / "public" / "sabana.js").resolve().as_uri()],
+                       capture_output=True, text=True, encoding="utf-8")
+    descripciones = json.loads(r.stdout) if r.returncode == 0 else {}
+    sin_descripcion = [c for c in _sabana.COLUMNAS if not (descripciones.get(c) or "").strip()]
+    check(f"las {len(_sabana.COLUMNAS)} columnas de la sábana tienen su descripción", r.returncode == 0 and not sin_descripcion,
+          sin_descripcion or r.stderr[-300:])
+    sobran = sorted(set(descripciones) - set(_sabana.COLUMNAS))
+    check("y no se describen columnas que la sábana no tiene", not sobran, sobran)
+
+titulo("7d1. confirmar antes de algo real: un diálogo en la página, no el confirm del navegador")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-confirmar.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        if nombre:
+            check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-confirmar.mjs corre", False, r.stderr[-300:])
 
 titulo("7d2. probar criterio: costo estimado, versiones por semana y comparación")
 if shutil.which("node"):

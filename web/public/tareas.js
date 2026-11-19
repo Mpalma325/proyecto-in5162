@@ -11,7 +11,7 @@
 // y editar las correcciones antes de mandarlas (paso 4).
 
 import {
-  api, barraPestanas, caja, chipSemestre, el, elegirCandidatos, fechaCorta, historialTrabajos, horaCorta,
+  api, barraPestanas, caja, chipSemestre, confirmar, el, elegirCandidatos, fechaCorta, historialTrabajos, horaCorta,
   navegacion, pedirTrabajo, respuestaLegible, seguirTrabajo, tareasConocidas, textoProgramado, conDetalle,
 } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
@@ -286,6 +286,7 @@ function faltaPasoAnterior(d) {
 // ---------------------------------------------------------------- historial
 
 const historial = historialTrabajos({
+  prefijo: "tareas.",
   // Los chequeos se piden solos al abrir la pestaña 1: listarlos taparía los
   // trabajos que sí importan.
   incluye: (t) => t.flujo.startsWith("tareas.") && t.flujo !== "tareas.chequeo",
@@ -767,9 +768,10 @@ function vistaSegunda(destino) {
       : `Enviar la pregunta nueva de ${tarea}`;
   };
   prueba.addEventListener("change", actualizar);
-  enviar.addEventListener("click", () => {
-    if (!prueba.checked && !confirm(`Vas a mandar la pregunta nueva de ${tarea} a quienes no respondieron la `
-      + "primera. Son correos reales. Quien ya la recibió no la recibe de nuevo.\n\n¿Confirmas?")) return;
+  enviar.addEventListener("click", async () => {
+    if (!prueba.checked && !await confirmar(`Vas a mandar la pregunta nueva de ${tarea} a quienes no respondieron la `
+      + "primera. Son correos reales. Quien ya la recibió no la recibe de nuevo.\n\n¿Confirmas?", enviar.textContent,
+    "real")) return;
     pedir({ paso: "enviar", prueba: prueba.checked }, enviar);
   });
   actualizar();
@@ -811,7 +813,8 @@ function vistaPaso(p, destino) {
   boton.addEventListener("click", async () => {
     const argumentos = { tarea, prueba: prueba ? prueba.checked : true };
     if (noEnviar) argumentos.no_enviar = noEnviar.checked;
-    if (p.confirmar && prueba && !prueba.checked && !confirm(`${p.confirmar(argumentos)}\n\n¿Confirmas?`)) return;
+    if (p.confirmar && prueba && !prueba.checked
+      && !await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, boton.textContent, "real")) return;
     boton.disabled = true;
     try {
       const id = await pedirTrabajo(semestre, p.flujo, argumentos);
@@ -1031,11 +1034,12 @@ function vistaEnviar(p, destino) {
     if (hora) {
       pl = plan(hora, m);
       if (pl.inicio.getTime() < Date.now() - 60_000) { alert("Esa hora ya pasó. Elige otra."); return; }
-      if (!confirm(`Vas a programar las preguntas de ${tarea}: salen ${textoProgramado(pl.inicio)}, con ${m} minutos `
+      if (!await confirmar(`Vas a programar las preguntas de ${tarea}: salen ${textoProgramado(pl.inicio)}, con ${m} minutos `
         + `para responder (hasta las ${horaCorta(pl.plazo)}). Después se recolectan y se corrigen solas, sin mandar el `
-        + "feedback.\n\nSon correos reales. Hasta esa hora se puede cancelar en Últimos trabajos. ¿Confirmas?")) return;
-    } else if (real && !confirm(`Vas a mandar las preguntas de ${tarea} a los alumnos, con ${m} minutos para `
-      + "responder. Son correos reales.\n\n¿Confirmas?")) return;
+        + "feedback.\n\nSon correos reales. Hasta esa hora se puede cancelar en Últimos trabajos. ¿Confirmas?",
+      boton.textContent, "real")) return;
+    } else if (real && !await confirmar(`Vas a mandar las preguntas de ${tarea} a los alumnos, con ${m} minutos para `
+      + "responder. Son correos reales.\n\n¿Confirmas?", boton.textContent, "real")) return;
     boton.disabled = true;
     hecho.replaceChildren();
     const pedidos = [];
@@ -1238,8 +1242,9 @@ async function cargarRevision(nodo, destino, t) {
       alert(`El comentario quedó vacío para: ${vacias.map((f) => f[iN]).join(", ")}. Escríbelo o desmárcalas.`);
       return;
     }
-    if (!prueba.checked && !confirm(`Vas a mandarle su corrección por correo a ${elegidos.length} `
-      + `alumno${elegidos.length === 1 ? "" : "s"} de ${t}. Son correos reales.\n\n¿Confirmas?`)) return;
+    if (!prueba.checked && !await confirmar(`Vas a mandarle su corrección por correo a ${elegidos.length} `
+      + `alumno${elegidos.length === 1 ? "" : "s"} de ${t}. Son correos reales.\n\n¿Confirmas?`, mandar.textContent,
+    "real")) return;
     mandar.disabled = true;
     try {
       await guardar();

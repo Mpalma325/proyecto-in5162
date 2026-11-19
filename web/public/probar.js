@@ -7,7 +7,7 @@
 // semestre: lo único que gasta es API, y antes de correr dice cuánto.
 
 import {
-  api, caja, el, evaluacionDeTexto, fechaCorta, historialTrabajos, pedirTrabajo, preciosApi, respuestaLegible,
+  api, caja, confirmar, el, evaluacionDeTexto, fechaCorta, historialTrabajos, pedirTrabajo, preciosApi, respuestaLegible,
   seguirTrabajo, vistaCorreo,
 } from "./comun.js";
 import { leerConsumo, textoConsumo } from "./consumo.js";
@@ -181,7 +181,7 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
   if (grupoVersiones) { origen.append(grupoVersiones); pintarVersiones(); }
   let elegidaAntes = origen.value;
   origen.addEventListener("change", async () => {
-    if (editado && !confirm("Vas a reemplazar el prompt que estás editando. ¿Seguir?")) {
+    if (editado && !await confirmar("Vas a reemplazar el prompt que estás editando. ¿Seguir?", "Reemplazar")) {
       origen.value = elegidaAntes;
       return;
     }
@@ -243,8 +243,8 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
   function despues(t) {
     if (t.flujo !== "tests.experimento") return null;
     const usar = typeof t.argumentos?.prompt === "string" ? el("button", { class: "secundario", type: "button",
-      onclick: () => {
-        if (editado && !confirm("Vas a reemplazar el prompt que estás editando. ¿Seguir?")) return;
+      onclick: async () => {
+        if (editado && !await confirmar("Vas a reemplazar el prompt que estás editando. ¿Seguir?", "Reemplazar")) return;
         cargar(t.argumentos.prompt, { propio: true });
         deUnaPrueba.textContent = `El prompt de la prueba del ${fechaCorta(new Date(t.creado))}`;
         deUnaPrueba.hidden = false;
@@ -267,8 +267,8 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
       const total = estimarCosto({ n: argumentos.n, porRespuesta, largoCandidato: area.value.length,
         largoVigente: vigente.length, precios });
       const cuanto = total ? `Costo estimado: ≈ ${textoConsumo(total)}.` : `Hasta ${argumentos.n} llamadas a la API.`;
-      if (!confirm(`Vas a reevaluar hasta ${argumentos.n} respuestas con este prompt. ${cuanto}\n\n`
-        + "No se manda ningún correo ni cambia ninguna nota. ¿Seguir?")) return;
+      if (!await confirmar(`Vas a reevaluar hasta ${argumentos.n} respuestas con este prompt. ${cuanto}\n\n`
+        + "No se manda ningún correo ni cambia ninguna nota. ¿Seguir?", botonProbar.textContent)) return;
     }
     for (const b of [botonMuestra, botonProbar]) b.disabled = true;
     try {
@@ -285,6 +285,7 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
   botonProbar.addEventListener("click", () => pedir(false));
 
   const historial = historialTrabajos({
+    prefijo: "tests.experimento",
     incluye: (t) => t.flujo === "tests.experimento",
     columna: ["Respuestas", (a) => `${a.n ?? "?"}${a.semana ? ` · sem. ${a.semana}` : ""}`],
     alElegir: (t) => { seguir(t.id); resultado.scrollIntoView({ behavior: "smooth", block: "start" }); },

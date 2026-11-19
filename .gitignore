@@ -60,3 +60,6 @@ README_IN5162.docx
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Salida de depuración de playwright-cli (capturas y consola locales).
+.playwright-cli/

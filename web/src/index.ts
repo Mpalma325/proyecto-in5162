@@ -550,11 +550,19 @@ async function consumoDelSemestre(env: Env, semestre: string): Promise<Response>
   })));
 }
 
-async function listarTrabajos(env: Env, semestre: string): Promise<Response> {
+// Cada página pide solo sus trabajos (prefijo del flujo, "tareas." o "tests."):
+// con los 30 más recientes de todo el semestre, la actividad de una página dejaba
+// a la otra casi sin historial. "Ver más" sube el límite hasta LIMITE_TRABAJOS_MAX.
+const LIMITE_TRABAJOS = 30;
+const LIMITE_TRABAJOS_MAX = 120;
+const PREFIJO_FLUJO = /^[a-z]+(\.[a-z_]*)?$/;
+
+async function listarTrabajos(env: Env, semestre: string, prefijo = "",
+                              limite = LIMITE_TRABAJOS): Promise<Response> {
   const { results } = await env.DB.prepare(
     `SELECT id, flujo, argumentos, prueba, estado, codigo, pedido_por, creado, actualizado, salida
-     FROM trabajos WHERE semestre = ? ORDER BY creado DESC LIMIT 30`,
-  ).bind(semestre).all();
+     FROM trabajos WHERE semestre = ? AND flujo LIKE ? ORDER BY creado DESC LIMIT ?`,
+  ).bind(semestre, `${prefijo}%`, limite).all();
   // De la salida solo va el último avance ("@@progreso 3/24 respuestas", de
   // modulos/progreso.py), para la barra de cada fila; la salida entera es por trabajo.
   return json(results.map(({ salida, ...t }) => {
@@ -814,7 +822,11 @@ export default {
         if (req.method === "GET") {
           const sem = url.searchParams.get("semestre") || "";
           if (!ID_VALIDO.test(sem)) return error(400, "Semestre inválido.");
-          return await listarTrabajos(env, sem);
+          const prefijo = url.searchParams.get("flujo") || "";
+          if (prefijo && !PREFIJO_FLUJO.test(prefijo)) return error(400, "Flujo inválido.");
+          const pedido = Number(url.searchParams.get("limite") || LIMITE_TRABAJOS);
+          const limite = Number.isInteger(pedido) && pedido > 0 ? Math.min(pedido, LIMITE_TRABAJOS_MAX) : LIMITE_TRABAJOS;
+          return await listarTrabajos(env, sem, prefijo, limite);
         }
       }
       return error(404, "No existe esa ruta.");
