@@ -436,6 +436,28 @@ check("un flujo sin correos se corta en seco", time.monotonic() - inicio < 20
       and sitio.trabajos["t11c"]["estado"] == "cancelado", sitio.trabajos["t11c"].get("estado"))
 trabajo.VIGILANCIA_SEGUNDOS = vigilancia
 
+titulo("13c. cerca del límite: para entre alumnos antes del corte, guarda y queda fallido")
+limite, aviso = trabajo.LIMITE_SEGUNDOS, trabajo.AVISO_ANTES_SEGUNDOS
+# El aviso llega a los 2 s; el corte en seco sería a los 8 y los diez alumnos tardan 5.
+trabajo.LIMITE_SEGUNDOS, trabajo.AVISO_ANTES_SEGUNDOS = 8, 6
+sitio.archivos.pop("tests_semanales/data/registro.txt", None)  # el que dejó 13b
+t = correr("t11d", "prueba.limite", DIEZ)
+trabajo.LIMITE_SEGUNDOS, trabajo.AVISO_ANTES_SEGUNDOS = limite, aviso
+registro = sitio.subidos.get("tests_semanales/data/registro.txt", b"").decode()
+check("queda fallido, para que Inicio lo muestre", t["estado"] == "fallido", t.get("estado"))
+check("avisa que se acerca el límite", "Se acerca el límite de 0 minutos" in t["salida"], t["salida"][-500:])
+check("y dice que hay que volver a correrlo", "vuelve a correrlo para seguir con lo que falta" in t["salida"],
+      t["salida"][-300:])
+check("no llegó al corte en seco", "pasó de" not in t["salida"], t["salida"][-300:])
+check("paró antes de terminar", 0 < registro.count("\n") < 10, registro)
+check("cada correo que salió quedó registrado y subido",
+      len(re.findall(r"✓ correo \d", t["salida"])) == registro.count("\n"), (t["salida"][-400:], registro))
+
+sitio.archivos.pop("tests_semanales/data/registro.txt", None)
+t = correr("t11e", "prueba.limite_holgado", DIEZ)
+check("con tiempo de sobra, el mismo recorrido termina bien",
+      t["estado"] == "terminado" and "Se acerca el límite" not in t["salida"], t.get("estado"))
+
 titulo("14. si el aviso de inicio llegó pero se cortó la respuesta, el trabajo corre igual")
 real_informar = sitio.informar
 

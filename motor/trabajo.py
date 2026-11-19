@@ -31,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from modulos.progreso import DETENIDO
+
 from . import sitio
 
 REPO = Path(__file__).resolve().parent.parent
@@ -320,6 +322,9 @@ class _Salida:
         self._ultimo = 0.0
         # Se prende si alguien pidió detener el trabajo desde la página.
         self.cancelado = threading.Event()
+        # Se prende si el script paró solo porque se acercaba el límite de
+        # tiempo: lo hecho se guarda, pero el trabajo no terminó.
+        self.por_limite = threading.Event()
 
     def agregar(self, texto: str) -> None:
         with self._candado:
@@ -360,6 +365,11 @@ class _Salida:
 # trabajo siguiente, que correría a la vez que este y pisaría sus archivos. Se
 # corta antes, para alcanzar a guardar lo hecho y responder a tiempo.
 LIMITE_SEGUNDOS = 25 * 60
+# Cuánto antes del límite se le pide al script que pare. Los que recorren
+# alumnos (modulos/progreso.py) paran antes del siguiente, con lo hecho ya
+# registrado; el corte en seco de los 25 minutos queda como último recurso, y
+# podía caer entre el envío de un correo y su registro.
+AVISO_ANTES_SEGUNDOS = 3 * 60
 
 # Cada cuánto se mira si alguien pidió detener el trabajo desde la página.
 VIGILANCIA_SEGUNDOS = 5
@@ -392,10 +402,18 @@ def _correr(cmd: list[str], base: Path, semestre: str, salida: _Salida,
     )
     vencido = threading.Event()
     termino = threading.Event()
+    cerca_del_limite = threading.Event()
 
     def cortar() -> None:
         vencido.set()
         proc.kill()
+
+    def avisar_limite() -> None:
+        """El mismo archivo de "Detener", sin marcar el trabajo como cancelado."""
+        cerca_del_limite.set()
+        aviso_cancelar.write_text("", encoding="utf-8")
+        salida.agregar(f"\n⚠ Se acerca el límite de {LIMITE_SEGUNDOS // 60} minutos: el trabajo para "
+                       "antes del alumno siguiente; vuelve a correrlo para seguir.\n")
 
     def vigilar() -> None:
         """Mira cada tanto si en la página pidieron detenerlo ("cancelando")."""
@@ -413,15 +431,26 @@ def _correr(cmd: list[str], base: Path, semestre: str, salida: _Salida,
 
     reloj = threading.Timer(LIMITE_SEGUNDOS, cortar)
     reloj.start()
+    # Los cortables no recorren con `avanzar`: el aviso no los haría parar, y
+    # uno que termine bien después del aviso no tiene por qué quedar fallido.
+    aviso_en = LIMITE_SEGUNDOS - AVISO_ANTES_SEGUNDOS
+    aviso = threading.Timer(aviso_en, avisar_limite) if not cortable and aviso_en > 0 else None
+    if aviso:
+        aviso.start()
     if id_trabajo:
         threading.Thread(target=vigilar, daemon=True).start()
+    paro = False
     try:
         assert proc.stdout is not None
         for linea in proc.stdout:
             salida.agregar(linea)
+            if linea.startswith(DETENIDO):
+                paro = True
     finally:
         termino.set()
         reloj.cancel()
+        if aviso:
+            aviso.cancel()
         if proc.poll() is None:
             proc.kill()
         codigo = proc.wait()
@@ -431,6 +460,12 @@ def _correr(cmd: list[str], base: Path, semestre: str, salida: _Salida,
         return -9
     if salida.cancelado.is_set():
         salida.agregar("\n⊘ Se detuvo a pedido. Lo que alcanzó a hacer se guarda.\n")
+    elif cerca_del_limite.is_set() and paro:
+        # Paró por el límite y no por un pedido: queda fallido para que Inicio
+        # lo muestre hasta que se repita.
+        salida.por_limite.set()
+        salida.agregar(f"\n✗ El trabajo paró antes del límite de {LIMITE_SEGUNDOS // 60} minutos sin "
+                       "terminar. Lo hecho quedó guardado; vuelve a correrlo para seguir con lo que falta.\n")
     return codigo
 
 
@@ -559,8 +594,9 @@ def ejecutar(id_trabajo: str) -> None:
                 sitio.subir_panel(semestre, filas)
                 if flujo == "datos.panel":
                     salida.agregar(f"✓ reportería al día: {len(filas)} casillas\n")
-        ok = codigo == 0 and not fallidos
+        ok = codigo == 0 and not fallidos and not salida.por_limite.is_set()
         # Detenido a pedido queda "cancelado", salvo que no haya podido guardar lo hecho.
+        # Detenido por el límite de tiempo queda "fallido", aunque el script saliera bien.
         estado = "cancelado" if salida.cancelado.is_set() and not fallidos else "terminado" if ok else "fallido"
         salida.cerrar(estado=estado, codigo=codigo if codigo else (0 if ok else -1))
     except Exception as e:  # noqa: BLE001
