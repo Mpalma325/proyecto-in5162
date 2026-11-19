@@ -82,10 +82,23 @@ def _archivos_de(semestre_id: str) -> list:
                   and not p.name.endswith((".tmp", ".pyc")))
 
 
+def _contenido(semestre_id: str, p, valores: dict[str, str] | None) -> bytes:
+    """Los bytes que se suben. La plantilla del repositorio tiene marcas
+    («CURSO», «PROFESOR»...) donde va el nombre del curso: sube llena, igual que
+    la sube instalar.py, porque el sitio crea los semestres copiándola tal cual."""
+    datos = p.read_bytes()
+    if valores is None or p.suffix.lower() not in (".md", ".csv", ".txt", ".json"):
+        return datos
+    texto = datos.decode("utf-8").replace("\r\n", "\n")
+    return _semestre.llenar_marcas(texto, valores).encode("utf-8")
+
+
 def _subir_carpeta(semestre_id: str, token: str | None, nube: dict[str, str],
-                   forzar: bool, simular: bool) -> dict[str, list[str]]:
+                   forzar: bool, simular: bool,
+                   valores: dict[str, str] | None = None) -> dict[str, list[str]]:
     """Clasifica cada archivo de acá y sube lo que corresponde.
 
+    Con `valores`, llena las marcas de la plantilla antes de comparar y subir.
     Devuelve {"nuevos", "iguales", "distintos", "reemplazados", "fallidos"}.
     """
     raiz = _semestre.raiz(semestre_id)
@@ -93,7 +106,7 @@ def _subir_carpeta(semestre_id: str, token: str | None, nube: dict[str, str],
     lista = _archivos_de(semestre_id)
     for i, p in enumerate(lista, 1):
         ruta = p.relative_to(raiz).as_posix()
-        datos = p.read_bytes()
+        datos = _contenido(semestre_id, p, valores)
         etag = nube.get(ruta)
         if etag == hashlib.md5(datos).hexdigest():
             r["iguales"].append(ruta)
@@ -144,9 +157,14 @@ def main(filtro: str | None = None, simular: bool = False, archivos: bool = Fals
     try:
         if archivos and not filtro:
             # La plantilla también: el sitio crea los semestres nuevos copiándola.
-            r = _subir_carpeta("_template", token, _en_la_nube("_template", token), forzar, simular)
-            _informar("_template", r, simular)
-            fallidos += len(r["fallidos"])
+            try:
+                r = _subir_carpeta("_template", token, _en_la_nube("_template", token), forzar,
+                                   simular, _semestre.datos_del_curso())
+                _informar("_template", r, simular)
+                fallidos += len(r["fallidos"])
+            except ValueError as e:
+                print(f"  ✗ _template no se subió: {e}")
+                fallidos += 1
         for sid in semestres:
             nube = _en_la_nube(sid, token)
             nuevo_en_la_nube = not nube

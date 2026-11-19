@@ -9,5 +9,5 @@
     Si tu respuesta fue enviada nuevamente por alguna complicación específica, escríbele al equipo docente vía correo y lo revisamos manualmente.
   </p>
 
-  <p>Saludos,<br>Equipo IN5162</p>
+  <p>Saludos,<br>«PROFESOR» y el equipo docente de «CURSO»</p>
 </div>

@@ -27,7 +27,7 @@ from modulos import semestre
 semestre.activo()            # "2026-2", o None si no hay ninguno
 semestre.activo_o_error()    # igual, pero falla con mensaje claro si no hay
 semestre.listar()            # ["2025-2", "2026-1", "2026-2"]
-semestre.crear("2027-1")     # copia la plantilla; NO lo activa
+semestre.crear("2027-1")     # copia la plantilla con los datos del curso; NO lo activa
 semestre.activar("2027-1")
 
 semestre.datos("tests_semanales")    # .../semestres/2026-2/tests_semanales/data
@@ -63,3 +63,9 @@ IN5162_SEMESTRE=2026-1 python -m modulos.tests.resumen 3
 `crear()` copia desde `semestres/_template/`, **nunca** desde el semestre
 activo. Es a propósito: un semestre nuevo tiene que empezar sin datos de
 alumnos del anterior.
+
+Los prompts y correos de la plantilla tienen marcas donde va el curso: «CURSO»,
+«NOMBRE_CURSO» y «PROFESOR». `crear()` las llena con esas claves del `.env`
+(CURSO, si falta, es IN5162) y, si falta alguna, no crea el semestre: el error
+dice cuál agregar. `modulos.web.subir` e `instalar.py` las llenan igual al
+subir la plantilla al sitio.

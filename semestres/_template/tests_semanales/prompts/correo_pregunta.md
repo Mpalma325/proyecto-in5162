@@ -2,7 +2,7 @@
   <p>Hola {NOMBRE},</p>
 
   <p>
-    A continuación encontrarás la pregunta correspondiente a los videos de "{TEMA}". Debes responder con tus propias palabras. La fecha de entrega es: <b>{FECHA_ENTREGA}</b>.
+    A continuación encontrarás la pregunta de esta semana, sobre "{TEMA}". Debes responder con tus propias palabras. La fecha de entrega es: <b>{FECHA_ENTREGA}</b>.
   </p>
 
   <p>
@@ -15,5 +15,5 @@
     Recuerda ser cuidadoso con el envío de tu respuesta, ya que se evaluará solamente tu primer envío. Para que podamos asociar tu respuesta correctamente, responde directamente a este correo.
   </p>
 
-  <p>Saludos,<br>Equipo IN5162</p>
+  <p>Saludos,<br>«PROFESOR» y el equipo docente de «CURSO»</p>
 </div>

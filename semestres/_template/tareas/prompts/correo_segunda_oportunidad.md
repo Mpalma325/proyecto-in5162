@@ -11,4 +11,4 @@ Responde directamente a este correo. Así podemos asociar tu respuesta automáti
 Plazo de respuesta: [escribe aquí el día y la hora antes de enviar].
 
 Saludos,
-Equipo del curso
+«PROFESOR» y el equipo docente de «CURSO»

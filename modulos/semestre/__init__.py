@@ -10,13 +10,15 @@ from .gestion import (
     activo_o_error,
     crear,
     datos,
+    datos_del_curso,
     listar,
+    llenar_marcas,
     prompts,
     raiz,
 )
 
 __all__ = [
     "activo", "activo_o_error", "listar", "activar", "crear",
-    "raiz", "datos", "prompts",
+    "raiz", "datos", "prompts", "datos_del_curso", "llenar_marcas",
     "PROJECT_ROOT", "SEMESTRES_DIR", "TEMPLATE_DIR", "ACTIVO_FILE",
 ]

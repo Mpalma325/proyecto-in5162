@@ -11,10 +11,10 @@ Tu respuesta:
 Comentario:
 {comentario}
 
-Tu nota (referencial) es:
+Tu nota es:
 {nota}
 
-Te recordamos que para los que asistieron a la sesión presencial de discusión de la tarea, la nota asignada es solo referencial. Aún así, la invitación está abierta para que puedan discutirla con todo el equipo docente. 
+Si quieres conversar la revisión, responde este correo.
 
 Saludos,
-Equipo IN5162
+«PROFESOR» y el equipo docente de «CURSO»

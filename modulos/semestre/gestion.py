@@ -66,8 +66,41 @@ def activar(semestre_id: str) -> None:
     ACTIVO_FILE.write_text(semestre_id, encoding="utf-8")
 
 
+# Los prompts y correos de la plantilla no nombran a ningún curso: donde va el
+# nombre tienen una de estas marcas. Se llenan al copiar la plantilla, acá y en
+# instalar.py (que la sube al sitio), con los datos del .env.
+MARCA = re.compile(r"«([A-Z_]+)»")
+MARCAS = ("CURSO", "NOMBRE_CURSO", "PROFESOR")
+_CON_MARCAS = (".md", ".csv", ".txt", ".json")
+
+
+def llenar_marcas(texto: str, valores: dict[str, str]) -> str:
+    """Reemplaza las marcas. Una marca desconocida o sin valor es un error."""
+    def poner(m: re.Match) -> str:
+        valor = (valores.get(m.group(1)) or "").strip()
+        if m.group(1) not in MARCAS or not valor:
+            raise ValueError(f"La plantilla usa «{m.group(1)}» y no tengo ese dato.")
+        return valor
+    return MARCA.sub(poner, texto)
+
+
+def datos_del_curso() -> dict[str, str]:
+    """CURSO, NOMBRE_CURSO y PROFESOR, del entorno o del .env de la raíz."""
+    valores: dict[str, str] = {}
+    env = PROJECT_ROOT / ".env"
+    if env.exists():
+        for linea in env.read_text(encoding="utf-8").splitlines():
+            clave, igual, valor = linea.partition("=")
+            if igual and clave.strip() in MARCAS:
+                valores[clave.strip()] = valor.strip().strip('"').strip("'")
+    valores.update({k: os.environ[k] for k in MARCAS if os.environ.get(k, "").strip()})
+    # Como en config.py: sin CURSO, el curso es IN5162.
+    valores["CURSO"] = valores.get("CURSO", "").strip() or "IN5162"
+    return valores
+
+
 def crear(semestre_id: str) -> None:
-    """Crea un semestre nuevo copiando la plantilla. No lo activa."""
+    """Crea un semestre nuevo copiando la plantilla, con los datos del curso. No lo activa."""
     semestre_id = semestre_id.strip()
     if not semestre_id or not _ID_VALIDO.match(semestre_id):
         raise ValueError(
@@ -79,7 +112,24 @@ def crear(semestre_id: str) -> None:
         raise ValueError(f"El semestre '{semestre_id}' ya existe.")
     if not TEMPLATE_DIR.exists():
         raise RuntimeError(f"No encontré la plantilla en {TEMPLATE_DIR}.")
+    valores = datos_del_curso()
+    llenos = {}
+    for p in TEMPLATE_DIR.rglob("*"):
+        if p.is_file() and p.suffix.lower() in _CON_MARCAS:
+            texto = p.read_text(encoding="utf-8")
+            if MARCA.search(texto):
+                faltan = sorted({m for m in MARCA.findall(texto) if not valores.get(m, "").strip()})
+                if faltan:
+                    # Antes de copiar: un semestre a medio llenar mandaría
+                    # «PROFESOR» en la firma de los correos.
+                    raise ValueError(
+                        f"Falta {', '.join(faltan)} en el .env: la plantilla lo usa en "
+                        f"{p.relative_to(TEMPLATE_DIR).as_posix()} (prompts y firma de los correos)."
+                    )
+                llenos[p.relative_to(TEMPLATE_DIR)] = llenar_marcas(texto, valores)
     shutil.copytree(TEMPLATE_DIR, destino)
+    for ruta, texto in llenos.items():
+        (destino / ruta).write_text(texto, encoding="utf-8")
 
 
 def raiz(semestre_id: str | None = None) -> Path:

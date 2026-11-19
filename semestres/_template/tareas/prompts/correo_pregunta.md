@@ -1,6 +1,6 @@
 Hola {nombre},
 
-Te escribimos desde el curso IN5162 (Ingeniería de Marketing). Como parte del proceso de revisión de la {tarea}, queremos hacerte una pregunta breve sobre el código que declaraste haber trabajado en la tabla de roles. Por favor provee una respuesta corta, de uno o dos párrafos escrita por ti, sin usar IA, que nos permita ver que entendiste lo que hiciste.
+Te escribimos desde el curso «CURSO» («NOMBRE_CURSO»). Como parte del proceso de revisión de la {tarea}, queremos hacerte una pregunta breve sobre el código que declaraste haber trabajado en la tabla de roles. Por favor provee una respuesta corta, de uno o dos párrafos escrita por ti, sin usar IA, que nos permita ver que entendiste lo que hiciste.
 
 Las preguntas son generadas automáticamente por un agente de inteligencia artificial, que reconoce cuál es tu contribución declarada en el trabajo y genera una pregunta técnica a partir de tus cálculos. Si no declaraste nada, entonces se generará una pregunta de cualquier parte de la entrega. 
 
@@ -14,4 +14,4 @@ Plazo de respuesta: {plazo} hrs. Tienes {minutos} minutos para responder a este 
 
 
 Saludos,
-Equipo IN5162
+«PROFESOR» y el equipo docente de «CURSO»
