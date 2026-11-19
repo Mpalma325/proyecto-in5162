@@ -13,7 +13,9 @@ Uso:
     python -m modulos.tareas.generar T1 archivo.html   # tarea específica + archivo específico
 """
 
+import html as htmlmod
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -23,7 +25,8 @@ from . import config, storage
 from .alumnos import cargar_alumnos, resolver_interactivo
 from .limpieza_html import (limpiar_html, extraer_secciones, extraer_autores,
                             secciones_desde_rmd, revisar_entrega,
-                            es_nombre_placeholder)
+                            es_nombre_placeholder, extraer_tabla_roles,
+                            nombres_de_tabla)
 from .ia_prompts import generar_preguntas
 
 
@@ -62,6 +65,99 @@ def _rescatar_sin_pregunta(integrantes: list[dict], secciones: dict,
         else:
             salida.append(integrante)
     return salida
+
+
+_RE_CITA = re.compile(r"`([^`\n]+)`")
+_RE_IDENTIFICADOR = re.compile(r"(?<![\w.$@])[A-Za-z_.][\w.]*")
+
+
+def _texto_entrega(path_html: Path) -> str:
+    """El HTML de la entrega como texto, más su .Rmd si lo trae."""
+    html = path_html.read_text(encoding="utf-8", errors="replace")
+    texto = htmlmod.unescape(re.sub(r"<[^>]+>", "", html))
+    path_rmd = path_html.with_suffix(".Rmd")
+    if path_rmd.exists():
+        texto += "\n" + path_rmd.read_text(encoding="utf-8", errors="replace")
+    return texto
+
+
+def codigo_ajeno(pregunta: str, texto: str) -> list[str]:
+    """
+    Los nombres que la pregunta cita como código y no están en la entrega.
+
+    En T2 de 2026-2 una pregunta citó `ll.sg2s` y `myparam[3]`, que venían del
+    material del curso y no del código del alumno. Se miran solo las citas entre
+    comillas invertidas, que es como el modelo marca el código. Las llamadas a
+    función (`floor()`) no se revisan: una pregunta puede nombrar una función que
+    el grupo no usó para contrastarla con la que sí usó.
+    """
+    ajenos = []
+    for cita in _RE_CITA.findall(pregunta or ""):
+        for m in _RE_IDENTIFICADOR.finditer(cita):
+            nombre = m.group().rstrip(".")
+            if cita[m.end():].lstrip().startswith("("):
+                continue
+            if len(nombre.lstrip(".")) < 2 or nombre in ajenos:
+                continue
+            antes = r"(?<!\w)" if nombre.startswith(".") else r"(?<![\w.])"
+            if not re.search(rf"{antes}{re.escape(nombre)}(?![\w.])", texto):
+                ajenos.append(nombre)
+    return ajenos
+
+
+def _revisar_citas(integrantes: list[dict], secciones: dict, path_html: Path) -> list[dict]:
+    """
+    Rehace una vez la pregunta que cita código que no es del grupo.
+
+    Si la segunda tampoco calza, se queda con el aviso en la columna `aviso`,
+    que la revisión de la página muestra antes de enviar.
+    """
+    texto = _texto_entrega(path_html)
+    salida = []
+    for integrante in integrantes:
+        ajenos = codigo_ajeno(integrante.get("pregunta") or "", texto)
+        if not ajenos:
+            salida.append(integrante)
+            continue
+        nombre = (integrante.get("nombre") or "").strip()
+        parte = (integrante.get("pregunta_tarea") or "").strip()
+        if parte:
+            # Sobre la misma parte que ya tenía: así vale también para un grupo
+            # con roles, sin volver a repartir.
+            print(f"    ⚠  La pregunta de {nombre} cita {', '.join(ajenos)}, que no está en la entrega; se rehace.")
+            nueva = generar_preguntas(
+                secciones, "", {nombre: parte}, rehacer=True,
+                nota=(f"Una pregunta anterior citó {', '.join(ajenos)}, que no aparece en el código "
+                      "del grupo. Pregunta solo sobre código que el grupo escribió."))
+            candidata = next((i for i in nueva.get("integrantes", [])
+                              if (i.get("pregunta") or "").strip()), None)
+            if candidata:
+                integrante = {**integrante, "pregunta": candidata["pregunta"],
+                              "pauta": candidata.get("pauta") or integrante.get("pauta")}
+        siguen = codigo_ajeno(integrante.get("pregunta") or "", texto)
+        if siguen:
+            aviso = f"cita código que no está en la entrega: {', '.join(siguen)}"
+            print(f"    ⚠  Sigue igual: {aviso}. Revísala antes de enviar.")
+            integrante = {**integrante, "aviso": aviso}
+        salida.append(integrante)
+    return salida
+
+
+def _uno_por_nombre(integrantes: list[dict]) -> list[dict]:
+    """
+    Una entrada por nombre, prefiriendo la que trae pregunta.
+
+    Con la tabla de roles de T2 de 2026-2 (un nombre repetido tres veces) el
+    modelo devolvió tres entradas para la misma persona.
+    """
+    elegido: dict[str, dict] = {}
+    for i in integrantes:
+        clave = " ".join((i.get("nombre") or "").lower().split())
+        actual = elegido.get(clave)
+        if actual is None or (not (actual.get("pregunta") or "").strip()
+                              and (i.get("pregunta") or "").strip()):
+            elegido[clave] = i
+    return list(elegido.values())
 
 
 def _contenido(secciones: dict) -> int:
@@ -126,7 +222,9 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
     # Que no declaren roles no impide preguntarles: se les asigna una pregunta
     # cada uno. Lo que sí impide es no saber quiénes son.
     sin_roles = [m for m in motivos if "roles" in m]
-    if sin_roles and not autores:
+    # Si la tabla trae nombres pero ningún rol, los integrantes salen de ella.
+    nombres = nombres_de_tabla(extraer_tabla_roles(secciones.get("roles_html", ""))) or autores
+    if sin_roles and not nombres:
         motivos.append("tampoco se pudo saber quiénes son los integrantes")
     elif sin_roles:
         motivos = [m for m in motivos if m not in sin_roles]
@@ -141,9 +239,9 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
     asignacion = None
     if sin_roles:
         asignacion = _asignacion.aplicar(
-            _asignar_preguntas(autores, path_html.name), elegido, path_html.name)
+            _asignar_preguntas(nombres, path_html.name), elegido, path_html.name)
         a_mano = [n for n in asignacion if (path_html.name, n) in elegido]
-        print(f"    → Sin tabla de roles; se asigna una pregunta a cada integrante: "
+        print(f"    → Sin roles declarados; se asigna una pregunta a cada integrante: "
               + ", ".join(f"{n} ({p})" for n, p in asignacion.items()))
         if a_mano:
             print(f"      (elegidas a mano: {', '.join(a_mano)})")
@@ -155,14 +253,21 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
 
     integrantes = resultado.get("integrantes", [])
     integrantes = _rescatar_sin_pregunta(integrantes, secciones, path_html, elegido)
+    integrantes = _revisar_citas(_uno_por_nombre(integrantes), secciones, path_html)
 
     print(f"  → Resolviendo correos...")
     filas = []
+    ya_vistos = set()
     for integrante in integrantes:
         nombre = integrante.get("nombre", "").strip()
         if es_nombre_placeholder(nombre):
             print(f"    ⚠  Fila ignorada: '{nombre}' no es el nombre de una persona")
             continue
+        clave = " ".join(nombre.lower().split())
+        if clave in ya_vistos:
+            print(f"    ⚠  Fila ignorada: '{nombre}' ya tiene pregunta en esta entrega")
+            continue
+        ya_vistos.add(clave)
 
         correo = (_asignacion.correo_elegido(correos or {}, path_html.name, nombre)
                   or resolver_interactivo(nombre, alumnos, interactivo=interactivo) or "")
@@ -176,6 +281,7 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
             "pregunta": integrante.get("pregunta") or "",
             "pauta": integrante.get("pauta") or "",
             "motivo_sin_pregunta": integrante.get("motivo_sin_pregunta") or "",
+            "aviso": integrante.get("aviso") or "",
         }
         filas.append(fila)
 

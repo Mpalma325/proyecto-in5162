@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 sys.path.insert(0, "pruebas")
-from comun import check, enviados, resultado, semestre_desechable, sin_red, titulo
+from comun import check, enviados, mensajes, resultado, semestre_desechable, sin_red, titulo
 
 CAMPOS = ["tarea", "grupo_archivo", "alumno_nombre", "alumno_correo", "pregunta_tarea",
           "pregunta", "pauta", "motivo_sin_pregunta", "message_id"]
@@ -150,6 +150,11 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
     storage.actualizar_fila("T2", "g1.html", "Dario Rojas", {"nota": "5.5", "comentario": "Revisado a mano."})
     texto = salida_de(feedback.main, "T2", solo={"dario@x.cl"})
     check("--solo manda solo a los elegidos", enviados == ["dario@x.cl"], enviados)
+    m = mensajes[-1]
+    mid = next(f["message_id"] for f in storage.leer_csv("T2") if f["alumno_nombre"] == "Dario Rojas")
+    check("el feedback va en el hilo de la pregunta (In-Reply-To y asunto Re:)",
+          mid and m["In-Reply-To"] == mid and m["References"] == mid and m["Subject"].startswith("Re: Pregunta de comprensión"),
+          (m["In-Reply-To"], m["Subject"], mid))
     check("la nota editada se registra en datos",
           datos.notas.estado("dario@x.cl", datos.TAREAS, "T2", sid)["Nota"] == "5.5")
     ajustes = datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="ajuste")
@@ -182,5 +187,44 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
     check("sin hora programada, desde ahora y sin aviso", enviar.inicio_del_plazo(None, ahora) == (ahora, ""))
     check("una hora que no se entiende no detiene el envío",
           enviar.inicio_del_plazo("mañana", ahora)[0] == ahora)
+
+    titulo("9. T3: un envío a un grupo chico no toma respuestas de otro envío")
+    # En la mañana salió a Fabio y Gina; en la tarde se recupera a Hugo. La
+    # respuesta tardía de Gina no debe entrar en la recolección ni en la
+    # corrección programadas de Hugo (TRASPASO_TAREAS.md, brecha 4).
+    sembrar_preguntas(tmp, "T3", (("Fabio Nuñez", "fabio@x.cl"), ("Gina Toro", "gina@x.cl")))
+    enviar.main("T3", dry_run=False)
+    filas_t3 = storage.leer_csv("T3")
+    filas_t3.append({**{k: "" for k in filas_t3[0]}, "tarea": "T3", "grupo_archivo": "g2.html",
+                     "alumno_nombre": "Hugo Vera", "alumno_correo": "hugo@x.cl", "pregunta_tarea": "P1",
+                     "pregunta": "¿Por qué escalaste?", "pauta": "Debe explicar."})
+    with (tmp / "tareas" / "data" / "salidas" / "feedback_T3.csv").open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(filas_t3[0]))
+        w.writeheader()
+        w.writerows(filas_t3)
+    enviados.clear()
+    enviar.main("T3", dry_run=False)
+    check("el segundo envío sale solo a Hugo", enviados == ["hugo@x.cl"], enviados)
+    filas = {f["alumno_correo"]: f for f in storage.leer_csv("T3")}
+    plazo_gina = datetime.fromisoformat(filas["gina@x.cl"]["plazo"])
+    entrantes = {filas["gina@x.cl"]["message_id"]: {"remitente": "gina@x.cl", "texto": "Tarde.",
+                                                    "fecha": (plazo_gina + timedelta(minutes=30)).isoformat()},
+                 filas["hugo@x.cl"]["message_id"]: {"remitente": "hugo@x.cl", "texto": "Para comparar.",
+                                                    "fecha": datetime.now().astimezone().isoformat()}}
+    with patch("modulos.tareas.recolectar.buscar_respuestas", return_value=entrantes) as buscar:
+        recolectar.main("T3", solo={"hugo@x.cl"})
+    check("recolectar con 'solo' busca solo el correo de ese grupo",
+          buscar.call_args.args[0] == [filas["hugo@x.cl"]["message_id"]], buscar.call_args)
+    check("la respuesta tardía del otro envío no se registra",
+          not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Respondio"]
+          and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Respondio"])
+    with patch("modulos.tareas.recolectar.buscar_respuestas", return_value=entrantes):
+        recolectar.main("T3")
+    with patch("modulos.tareas.corregir._corregir_una", return_value=resultado_modelo) as corregir_una:
+        texto = salida_de(corregir.main, "T3", dry_run=False, enviar=False,
+                          solo={"hugo@x.cl", "gina@x.cl"}, sin_tarde=True)
+    check("corregir con 'solo' y sin_tarde deja fuera lo que llegó tarde",
+          corregir_una.call_count == 1 and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Nota"]
+          and not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Nota"], texto)
 
 sys.exit(resultado())

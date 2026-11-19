@@ -137,6 +137,27 @@ def main() -> int:
         check("la carpeta .git y .DS_Store no llenan la lista de omitidos",
               not any(".git" in o or ".DS_Store" in o for o in omitidos), omitidos)
 
+    # Para recuperar a un alumno se sube el zip individual que da U-Cursos: la
+    # entrega tiene que quedar con su nombre, igual que en el zip general.
+    individual = _Subido("Lagos_Pino__Eva_33333333.zip",
+                         _zip_de_grupo(b"<html>lagos</html>", b"rmd de lagos", "t1-Lagos"))
+    with tempfile.TemporaryDirectory() as tmp:
+        destino = Path(tmp) / "T1"
+        agregados, omitidos = runner.extraer_entregas([individual], destino)
+        check("el zip individual deja el HTML y el .Rmd con el nombre de U-Cursos",
+              sorted(agregados) == ["Lagos_Pino__Eva_33333333.Rmd", "Lagos_Pino__Eva_33333333.html"],
+              agregados)
+        check("del zip individual sale la entrega y no otra cosa",
+              (destino / "Lagos_Pino__Eva_33333333.html").read_bytes() == b"<html>lagos</html>")
+
+    # Un zip subido con varios HTML sueltos conserva sus nombres.
+    sueltos = _Subido("Varios.zip", _zip_de_ucursos({"Grupo1.html": b"<html>1</html>",
+                                                     "Grupo2.html": b"<html>2</html>"}))
+    with tempfile.TemporaryDirectory() as tmp:
+        agregados, _ = runner.extraer_entregas([sueltos], Path(tmp) / "T1")
+        check("varios HTML sueltos en el zip subido no toman el nombre del zip",
+              sorted(agregados) == ["Grupo1.html", "Grupo2.html"], agregados)
+
     # El .rar depende de una herramienta del sistema; se comprueba que la
     # decisión sea explícita y no un descarte en silencio.
     lector = runner._hay_lector_rar()

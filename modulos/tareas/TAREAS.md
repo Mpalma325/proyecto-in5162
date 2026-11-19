@@ -48,7 +48,9 @@ python -m modulos.tareas.feedback T1
 programado) y lo escribe en el correo a través de `{plazo}` y `{minutos}` en
 `correo_pregunta.md`. También lo guarda por alumno en `feedback_<T>.csv`, y con
 eso `recolectar` avisa quién respondió tarde y `corregir` lo deja fuera salvo
-que se lo elija con `--solo`. "Hasta las 10:25" incluye todo ese minuto.
+que se lo elija con `--solo` (con `--sin-tarde` queda fuera igual). `recolectar`
+también acepta `--solo`, para buscar solo las respuestas de un envío a un grupo
+chico. "Hasta las 10:25" incluye todo ese minuto.
 
 `corregir --no-enviar` guarda la nota en datos y deja en `feedback_<T>.csv` el
 comentario, la marca de IA y la justificación del modelo, con

@@ -206,6 +206,26 @@ if shutil.which("node"):
     if r.returncode and not r.stdout:
         check("probar-rutas.mjs corre", False, r.stderr[-300:])
 
+titulo("7b2. el zip individual de U-Cursos deja la entrega con su nombre (datos.js)")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-zip.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-zip.mjs corre", False, r.stderr[-300:])
+
+titulo("7b3. el Worker reintenta avisarle al motor")
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-motor.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("	")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-motor.mjs corre", False, r.stderr[-300:])
+
 titulo("7c. el editor de preguntas por semana escribe solo esa fila y muestra el correo real")
 # Preguntas inventadas: el repo es público. Casos que rompen un CSV a mano:
 # comas, comillas y saltos de línea dentro de una celda, una semana sin

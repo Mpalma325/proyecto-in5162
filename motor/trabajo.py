@@ -209,13 +209,16 @@ FLUJOS = {
                                             *_entregas(a)]),
     "tareas.enviar": ("tareas", lambda a: ["-m", "modulos.tareas.enviar", _tarea(a), *_prueba(a), *_minutos(a),
                                            *_desde(a)]),
-    # Solo lee el buzón y actualiza el CSV.
-    "tareas.recolectar": ("tareas", lambda a: ["-m", "modulos.tareas.recolectar", _tarea(a)]),
+    # Solo lee el buzón y actualiza el CSV. Con "solo", busca solo a esos correos
+    # (el envío programado a un grupo chico).
+    "tareas.recolectar": ("tareas", lambda a: ["-m", "modulos.tareas.recolectar", _tarea(a), *_solo(a)]),
     # Segunda oportunidad: "preparar" genera las preguntas nuevas (llama al
     # modelo, no manda correos); "enviar" en modo prueba solo escribe los
     # borradores, y en real los manda.
     "tareas.segunda": ("tareas", lambda a: ["-m", "modulos.tareas.segunda_oportunidad", *_paso_segunda(a)]),
+    # "sin_tarde" deja fuera las respuestas fuera de plazo aunque vengan en "solo".
     "tareas.corregir": ("tareas", lambda a: ["-m", "modulos.tareas.corregir", _tarea(a), *_prueba(a), *_solo(a),
+                                             *(["--sin-tarde"] if a.get("sin_tarde") is True else []),
                                              *(["--no-enviar"] if a.get("no_enviar") is True
                                                and a.get("prueba") is False else [])]),
     # Manda las correcciones que se guardaron para revisarlas (corregir sin enviar).

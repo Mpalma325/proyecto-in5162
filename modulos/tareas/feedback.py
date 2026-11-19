@@ -25,7 +25,7 @@ from modulos.mail.vista import mostrar_correo
 from modulos.progreso import avanzar
 
 from . import config, storage
-from .corregir import _cargar_template_feedback, _construir_cuerpo_feedback
+from .corregir import _cargar_template_feedback, _construir_cuerpo_feedback, encabezado_feedback
 from .escala import validar_nota
 
 
@@ -73,13 +73,13 @@ def main(tarea: str, dry_run: bool = False, solo: set[str] | None = None) -> Non
 
         cuerpo = _construir_cuerpo_feedback(template, {
             **fila, "respuesta": respuestas.get(correo, ""), "nota": nota, "comentario": comentario})
-        asunto = f"Revisión de tu respuesta — {config.CURSO} {fila['tarea']}"
+        asunto, en_hilo = encabezado_feedback(fila)
         if dry_run:
             mostrar_correo(correo, asunto, cuerpo, nombre=nombre)
             continue
 
         try:
-            enviar_correo(correo, asunto, cuerpo)
+            enviar_correo(correo, asunto, cuerpo, in_reply_to=en_hilo)
         except Exception as e:  # noqa: BLE001
             print(f"  ✗ {nombre:30s}: no se pudo enviar ({e}). Sigue pendiente.")
             continue

@@ -449,19 +449,46 @@ async function crearTrabajo(env: Env, semestre: string, flujo: string,
   // Se le avisa al motor, que lo pone en su cola y responde enseguida. Si no
   // contesta, el trabajo queda marcado como fallido con el motivo, en vez de
   // quedar "pendiente" para siempre.
-  try {
-    const r = await fetch(`${env.MOTOR_URL.replace(/\/$/, "")}/trabajos`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${env.TOKEN_WEB || ""}` },
-      body: JSON.stringify({ id }),
-    });
-    if (!r.ok) throw new Error(`el motor respondió ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  } catch (e) {
+  const motivo = await avisarAlMotor(env, id);
+  if (motivo) {
     await env.DB.prepare(
       "UPDATE trabajos SET estado = 'fallido', salida = ?, actualizado = ? WHERE id = ?",
-    ).bind(`No pude avisarle al motor: ${(e as Error).message}\n`, ahora(), id).run();
+    ).bind(`No pude avisarle al motor: ${motivo}\n`, ahora(), id).run();
   }
   return id;
+}
+
+// Esperas antes de cada reintento. El 17/11/2026 la tutoría de las 18:00 no
+// corrió porque el motor respondió 500 una sola vez (al despertar, parece) y no
+// se volvió a intentar. Avisar dos veces no lo corre dos veces: el motor solo
+// toma trabajos que siguen "pendiente".
+const REINTENTOS_MOTOR_MS = [3_000, 10_000];
+// El motor responde enseguida (solo encola); al despertar tarda unos segundos.
+const MOTOR_ESPERA_MS = 15_000;
+
+/** Avisa al motor; devuelve el motivo si no se pudo, o "" si quedó encolado. */
+async function avisarAlMotor(env: Env, id: string,
+                             esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<string> {
+  let motivo = "";
+  for (let intento = 0; intento <= REINTENTOS_MOTOR_MS.length; intento++) {
+    if (intento > 0) await esperar(REINTENTOS_MOTOR_MS[intento - 1]);
+    try {
+      const r = await fetch(`${env.MOTOR_URL.replace(/\/$/, "")}/trabajos`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${env.TOKEN_WEB || ""}` },
+        body: JSON.stringify({ id }),
+        // Para que un motor colgado no deje esperando a la página indefinidamente.
+        signal: AbortSignal.timeout(MOTOR_ESPERA_MS),
+      });
+      if (r.ok) return "";
+      motivo = `el motor respondió ${r.status}: ${(await r.text()).slice(0, 200)}`;
+      // Un 4xx (token, id inválido) no se arregla reintentando.
+      if (r.status < 500) return motivo;
+    } catch (e) {
+      motivo = (e as Error).message;
+    }
+  }
+  return `${motivo} (después de ${REINTENTOS_MOTOR_MS.length + 1} intentos)`;
 }
 
 // Lo que corre solo, todos los días: responder las dudas sobre las correcciones,

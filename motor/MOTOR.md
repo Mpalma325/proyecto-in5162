@@ -68,7 +68,10 @@ lo usa para programar el envío de una tarea: `tareas.enviar` a esa hora (el
 plazo se cuenta desde ella, con `--desde`), `tareas.recolectar` dos minutos
 después del plazo y `tareas.corregir` sin mandar el feedback un minuto más
 tarde. Los tres van a la cola de los reales, que corre de a uno, para que
-recolectar y corregir no escriban `notas.csv` a la vez.
+recolectar y corregir no escriban `notas.csv` a la vez. Si a algunos alumnos ya les
+llegó la pregunta, el envío es para un grupo chico y la página les pasa `solo`
+con los correos de ese grupo a recolectar y a corregir (este último con
+`sin_tarde`), para que no tomen respuestas de otro envío.
 
 ## Parámetros
 

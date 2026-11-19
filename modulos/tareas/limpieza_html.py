@@ -257,8 +257,38 @@ def revisar_entrega(secciones: dict) -> list[str]:
         motivos.append("no se encontró la tabla de roles")
     elif all(es_nombre_placeholder(list(f.values())[0]) for f in filas):
         motivos.append("la tabla de roles quedó con los nombres del template")
+    elif not any(not es_rol_vacio(v) for f in filas for v in list(f.values())[1:]):
+        motivos.append("la tabla de roles no declara ningún rol")
 
     return motivos
+
+
+# Lo que deja en una celda de rol quien no asumió esa parte.
+_ROLES_VACIOS = ("", "-", "--", "—", "–", "na", "n/a", "null", "ninguno", "no")
+
+
+def es_rol_vacio(celda: str) -> bool:
+    """¿La celda de rol dice que esa persona no hizo esa parte?"""
+    return (celda or "").strip().lower() in _ROLES_VACIOS
+
+
+def nombres_de_tabla(filas: list[dict]) -> list[str]:
+    """
+    Los integrantes de la tabla de roles, sin placeholders ni repetidos.
+
+    Un alumno que entregó solo dejó su nombre una vez y columnas de largo 3;
+    R lo recicló y la tabla salió con tres filas iguales (T2 de 2026-2).
+    """
+    nombres, vistos = [], set()
+    for f in filas:
+        valores = list(f.values())
+        if not valores or es_nombre_placeholder(valores[0]):
+            continue
+        clave = " ".join(valores[0].lower().split())
+        if clave not in vistos:
+            vistos.add(clave)
+            nombres.append(valores[0])
+    return nombres
 
 def extraer_autores(html: str) -> list[str]:
     """

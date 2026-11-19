@@ -88,4 +88,52 @@ with semestre_desechable(base="_template", sid="_tmp_chequeo_correos") as (sid, 
     correos = [f["alumno_correo"] for f in filas if f["alumno_correo"]]
     check("nadie queda con dos preguntas", len(correos) == len(set(correos)), sorted(correos))
 
+    titulo("3. tabla de roles con un solo nombre repetido y todo en «-»")
+    # Quien entrega solo deja su nombre una vez y columnas de largo 3: R
+    # recicla el nombre y la tabla sale con tres filas iguales (T2 de 2026-2).
+    fila_roles = "<tr><td>Elena Vidal Araya</td><td>-</td><td>—</td><td></td><td>-</td></tr>"
+    tabla = ("<p><strong>Tabla 5:</strong> Roles de los Participantes</p><table>"
+             "<thead><tr><th>Integrante</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th></tr></thead>"
+             f"<tbody>{fila_roles * 3}</tbody></table>")
+    sola = entrega("Elena Vidal Araya").replace(b"</body>", tabla.encode() + b"</body>")
+    for v in carpeta.iterdir():
+        v.unlink()
+    (carpeta / "T9-Elena.html").write_bytes(sola)
+    with (tmp / "alumnos.csv").open("a", encoding="utf-8", newline="") as f:
+        csv.writer(f).writerow(["Elena Vidal Araya", "elena@x.cl", ""])
+
+    informe = chequeo.revisar("T9")
+    g = informe["grupos"][0]
+    check("el chequeo la ve una sola vez", [i["nombre"] for i in g["integrantes"]] == ["Elena Vidal Araya"], g["integrantes"])
+    check("y la trata como entrega sin roles", g["sin_roles"] and len(g["asignacion"]) == 1, g)
+    check("no se avisa como duplicada", informe["duplicados"] == [], informe["duplicados"])
+
+    def _tres(secciones, roles_html, asignacion):
+        """El modelo como lo vio en T2: una fila por cada fila de la tabla."""
+        return {"integrantes": [{"nombre": "Elena Vidal Araya", "pregunta_tarea": f"P{n}",
+                                 "pregunta": f"¿Qué hace modelo_{n}?", "pauta": "-", "motivo_sin_pregunta": None}
+                                for n in (1, 2, 3)]}
+
+    with patch.object(generar, "generar_preguntas", side_effect=_tres) as modelo:
+        generar.main("T9", [carpeta / "T9-Elena.html"], interactivo=False)
+    llamada = modelo.call_args_list[0]
+    check("generar le pasa una sola pregunta asignada al modelo",
+          llamada.args[2] is not None and list(llamada.args[2]) == ["Elena Vidal Araya"], llamada)
+    filas = [f for f in storage.leer_csv("T9") if f["grupo_archivo"] == "T9-Elena.html"]
+    check("queda una sola fila suya en feedback", len(filas) == 1, filas)
+
+    titulo("5. el correo que ya está en feedback_<T>.csv cuenta en el chequeo")
+    # En T2 de 2026-2 uno se emparejó a mano en feedback_T2.csv antes de que
+    # existiera correos_T2.csv, y el chequeo lo seguía marcando sin correo.
+    (carpeta / "T9-Zoe.html").write_bytes(entrega("Zoe Quiroz"))
+    storage.agregar_filas("T9", [{"tarea": "T9", "grupo_archivo": "T9-Zoe.html",
+                                  "alumno_nombre": "Zoe  Quiroz", "alumno_correo": "zoe@x.cl"}])
+    g = next(g for g in chequeo.revisar("T9")["grupos"] if g["archivo"] == "T9-Zoe.html")
+    check("no aparece sin correo", g["integrantes"][0]["correo"] == "zoe@x.cl", g["integrantes"])
+
+    titulo("4. agregar_filas no duplica dentro del mismo lote")
+    fila = {"tarea": "T8", "grupo_archivo": "a.html", "alumno_nombre": "Elena Vidal Araya"}
+    storage.agregar_filas("T8", [dict(fila), dict(fila), dict(fila)])
+    check("entra una sola vez", len(storage.leer_csv("T8")) == 1, storage.leer_csv("T8"))
+
 sys.exit(resultado())

@@ -10,7 +10,9 @@ Reglas, las mismas que sigue la página en web/public/datos.js:
     de los grupos que suben su repositorio.
   - El enunciado que algunos grupos incluyen no es una entrega: se reporta y se omite.
   - Un comprimido con un solo HTML le da su nombre (Grupo1.zip -> Grupo1.html);
-    con varios, cada uno queda como Grupo1__archivo.html.
+    con varios, cada uno queda como Grupo1__archivo.html. Vale también para el
+    zip subido si trae una sola entrega y nada anidado: es el zip individual de
+    U-Cursos, y la entrega queda con su nombre como si viniera en el general.
   - El .Rmd viaja con el nombre base de su HTML.
   - Lo que no se pudo abrir se reporta en `omitidos`, no se descarta en silencio.
 """
@@ -157,9 +159,13 @@ def _recoger_de_directorio(raiz: Path, destino: Path, agregados: list[str],
 
 
 def _extraer_zip(zf, destino: Path, agregados: list[str], omitidos: list[str],
-                  prefijo: str | None = None, profundidad: int = 0) -> None:
+                  prefijo: str | None = None, profundidad: int = 0,
+                  nombre_subido: str | None = None) -> None:
     """Extrae *.html de un zip, entrando recursivamente a zips anidados
     (ej. un zip por grupo dentro del zip general de la tarea).
+
+    `nombre_subido`: el nombre del zip subido, sin .zip. Si trae una sola
+    entrega, la entrega toma ese nombre.
     """
     if profundidad > 3:
         return
@@ -180,6 +186,8 @@ def _extraer_zip(zf, destino: Path, agregados: list[str], omitidos: list[str],
         if m not in reconocidos and not m.endswith("/") and Path(m).name
     ]
     multiple = len(htmls) > 1
+    if not prefijo and nombre_subido and len(htmls) == 1 and not zips_anidados and not rars:
+        prefijo = nombre_subido
 
     for member in htmls:
         if not _miembro_valido(member):
@@ -258,7 +266,8 @@ def extraer_entregas(archivos: list, destino: Path) -> tuple[list[str], list[str
         elif nombre.lower().endswith(".zip"):
             try:
                 with zipfile.ZipFile(BytesIO(archivo.getvalue())) as zf:
-                    _extraer_zip(zf, destino, agregados, omitidos)
+                    _extraer_zip(zf, destino, agregados, omitidos,
+                                 nombre_subido=Path(nombre).stem)
             except zipfile.BadZipFile:
                 omitidos.append(nombre)
         elif nombre.lower().endswith(".rar"):

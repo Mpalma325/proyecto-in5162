@@ -18,19 +18,16 @@ from modulos import datos
 
 from . import asignacion as _asignacion
 from . import contexto as _contexto
-from . import config
+from . import config, storage
 from .desempacar import desempacar_rars
 from .alumnos import cargar_alumnos, buscar_correo
 from .generar import _leer_entrega, _asignar_preguntas
-from .limpieza_html import (revisar_entrega, extraer_tabla_roles,
-                            es_nombre_placeholder)
+from .limpieza_html import revisar_entrega, extraer_tabla_roles, nombres_de_tabla
 
 
 def _integrantes_de(secciones: dict, autores: list[str]) -> tuple[list[str], str]:
     """Los nombres del grupo y de dónde salieron."""
-    filas = extraer_tabla_roles(secciones.get("roles_html", ""))
-    nombres = [list(f.values())[0] for f in filas if list(f.values())]
-    nombres = [n for n in nombres if not es_nombre_placeholder(n)]
+    nombres = nombres_de_tabla(extraer_tabla_roles(secciones.get("roles_html", "")))
     if nombres:
         return nombres, "tabla de roles"
     return autores, "campo author del documento"
@@ -46,6 +43,8 @@ def revisar(tarea: str) -> dict:
     # una entrega más (el motor los guarda en la nube).
     desempacados, rar_omitidos = desempacar_rars(entregas_dir)
     archivos = sorted(entregas_dir.glob("*.html"))
+    ya_guardados = {(f["grupo_archivo"], " ".join(f["alumno_nombre"].lower().split())): f["alumno_correo"].strip()
+                    for f in storage.leer_csv(tarea) if f.get("alumno_correo", "").strip()}
 
     grupos = []
     for path in archivos:
@@ -60,7 +59,11 @@ def revisar(tarea: str) -> dict:
 
         integrantes = []
         for nombre in nombres:
-            a_mano = _asignacion.correo_elegido(correos, path.name, nombre)
+            # También vale el correo que ya quedó en feedback_<T>.csv: en T2 de
+            # 2026-2 uno se emparejó a mano ahí antes de que existiera
+            # correos_<T>.csv, y el chequeo lo seguía marcando sin correo.
+            a_mano = (_asignacion.correo_elegido(correos, path.name, nombre)
+                      or ya_guardados.get((path.name, " ".join(nombre.lower().split()))))
             correo, candidatos = (a_mano, []) if a_mano else buscar_correo(nombre, alumnos)
             integrantes.append({
                 "nombre": nombre,

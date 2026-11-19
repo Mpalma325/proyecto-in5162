@@ -37,8 +37,21 @@ def _bloque_sin_roles(asignacion: dict) -> str:
     )
 
 
+def _bloque_rehacer(asignacion: dict) -> str:
+    """Instrucciones para rehacer la pregunta de algunos integrantes, sobre la parte que ya tenían."""
+    lineas = "\n".join(f"- {nombre}: {pregunta}" for nombre, pregunta in asignacion.items())
+    return (
+        "=== REHACER UNA PREGUNTA ===\n"
+        "Formula una pregunta nueva solo para estos integrantes, sobre la pregunta de la "
+        "tarea indicada, con los mismos criterios de siempre. No marques a nadie con "
+        "\"pregunta\": null.\n\n"
+        "Integrantes y pregunta de la tarea:\n" + lineas
+    )
+
+
 def generar_preguntas(secciones: dict, roles_html: str,
-                      asignacion: dict | None = None) -> dict:
+                      asignacion: dict | None = None, nota: str = "",
+                      rehacer: bool = False) -> dict:
     """
     Llama a la API de OpenAI con el system prompt + los insumos del grupo.
     Devuelve el dict parseado con las preguntas por integrante.
@@ -54,12 +67,16 @@ def generar_preguntas(secciones: dict, roles_html: str,
     if contexto_curso:
         partes_user.append(
             "=== CONTEXTO DEL CURSO (material de clases) ===\n"
-            "(Úsalo solo como referencia del estilo, los métodos y las librerías esperadas. "
-            "Si el grupo usa algo muy fuera de esto, puede ser señal de copia externa.)\n\n"
+            "(Úsalo solo para entender la entrega: el estilo, los métodos y las librerías "
+            "esperadas. Si el grupo usa algo muy fuera de esto, puede ser señal de copia "
+            "externa. Nunca saques de aquí la pregunta: todo nombre de variable, función u "
+            "objeto que cites tiene que aparecer en el código del grupo.)\n\n"
             + contexto_curso
         )
 
-    if asignacion:
+    if asignacion and rehacer:
+        partes_user.append(_bloque_rehacer(asignacion))
+    elif asignacion:
         partes_user.append(_bloque_sin_roles(asignacion))
     else:
         partes_user.append(f"=== TABLA DE ROLES (HTML) ===\n{roles_html}")
@@ -67,6 +84,8 @@ def generar_preguntas(secciones: dict, roles_html: str,
     partes_user.append(f"=== PREGUNTA 2 ===\n{secciones['p2']}")
     partes_user.append(f"=== PREGUNTA 3 ===\n{secciones['p3']}")
     partes_user.append(f"=== PREGUNTA 4 ===\n{secciones['p4']}")
+    if nota:
+        partes_user.append(f"=== IMPORTANTE ===\n{nota}")
 
     user_msg = "\n\n".join(partes_user)
 

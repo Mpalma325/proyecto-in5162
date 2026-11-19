@@ -293,7 +293,10 @@ const esEnunciado = (m) => /enunciado/i.test(m);
 // (modulos/tareas/desempacar.py).
 const esRar = (n) => /\.rar$/i.test(n);
 
-async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
+// `nombreZip`: el nombre del zip subido, sin .zip. Si trae una sola entrega (un
+// HTML y nada anidado), es el zip individual de U-Cursos y su nombre pasa a ser
+// el de la entrega, igual que cuando viene dentro del zip general.
+async function extraerZip(zip, lote, prefijo = "", profundidad = 0, nombreZip = "") {
   if (profundidad > 3) return;
   const JSZip = await cargarJsZip();
   const nombres = Object.keys(zip.files).filter((m) => !esBasuraMac(m));
@@ -303,6 +306,7 @@ async function extraerZip(zip, lote, prefijo = "", profundidad = 0) {
     .map((l) => l.filter((m) => !esEnunciado(m)));
   const reconocidos = new Set([...htmls, ...rmds, ...zips, ...rars, ...enunciados]);
   const multiple = htmls.length > 1;
+  if (!prefijo && nombreZip && htmls.length === 1 && !zips.length && !rars.length) prefijo = nombreZip;
   for (const m of enunciados) lote.omitidos.push(`${prefijo ? `${prefijo}/` : ""}${m} (es el enunciado)`);
 
   for (const m of htmls) {
@@ -357,7 +361,7 @@ async function procesarEntregas(tarea, ficheros, destino) {
     else if (n.endsWith(".zip")) {
       try {
         const JSZip = await cargarJsZip();
-        await extraerZip(await JSZip.loadAsync(await f.arrayBuffer()), lote);
+        await extraerZip(await JSZip.loadAsync(await f.arrayBuffer()), lote, "", 0, sinExtension(nombre(f.name)));
       } catch (e) {
         lote.omitidos.push(`${f.name} (${e.message.includes("lector") ? e.message : "no se pudo abrir el zip"})`);
       }

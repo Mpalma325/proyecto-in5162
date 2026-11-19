@@ -46,6 +46,9 @@ COLUMNAS = [
     "pregunta",
     "pauta",
     "motivo_sin_pregunta",
+    # Algo que revisar antes de enviar la pregunta, p. ej. que cite código que
+    # no está en la entrega (generar._revisar_citas).
+    "aviso",
     "message_id",
     # Hasta cuándo podía responder: lo deja enviar y lo usan recolectar y corregir.
     "plazo",
@@ -99,8 +102,11 @@ def agregar_filas(tarea: str, filas_nuevas: list[dict]) -> Path:
     filas = leer_csv(tarea)
     existentes = {_clave(f) for f in filas}
     for nueva in filas_nuevas:
+        # La clave se suma al agregar: si no, un lote con la misma fila
+        # repetida entraba entero (T2 de 2026-2).
         if _clave(nueva) not in existentes:
             filas.append(nueva)
+            existentes.add(_clave(nueva))
     return escribir_csv(tarea, filas)
 
 

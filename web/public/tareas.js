@@ -875,6 +875,11 @@ function editorPreguntas() {
       "message_id"].map(col);
     const porEnviar = csv.filas.filter((f) => enCsv(f[iQ]) && !enCsv(f[iM]));
     if (!porEnviar.length) { nodo.replaceChildren(); return; }
+    // generar deja un aviso cuando la pregunta cita código que no está en la
+    // entrega (venía del material del curso en T2 de 2026-2).
+    const iA = col("aviso");
+    const avisoDe = (f) => (iA >= 0 ? enCsv(f[iA]).trim() : "");
+    const conAviso = porEnviar.filter(avisoDe).length;
     const editadas = new Set();
     const boton = el("button", { class: "secundario", type: "button", disabled: true }, "Guardar cambios");
     const mensaje = el("div");
@@ -900,6 +905,8 @@ function editorPreguntas() {
       const area = el("textarea", { rows: filas }, f[i] || "");
       area.addEventListener("input", () => {
         f[i] = area.value;
+        // Quien la corrigió a mano ya la revisó: el aviso de generar se borra.
+        if (i === iQ && iA >= 0) f[iA] = "";
         editadas.add(f);
         boton.disabled = false;
         mensaje.replaceChildren();
@@ -910,13 +917,50 @@ function editorPreguntas() {
       el("summary", {}, `Leer o corregir las preguntas antes de enviarlas (${porEnviar.length})`),
       el("div", { class: "contenido" },
         el("p", { class: "nota-pie" }, "El alumno recibe la pregunta. La pauta no la ve: es lo que usa el modelo al corregir."),
-        ...porEnviar.map((f) => el("details", { class: "candidato" },
+        conAviso ? caja("aviso", `${conAviso} pregunta(s) citan código que no está en la entrega. Revísalas antes de enviar.`) : "",
+        ...porEnviar.map((f) => el("details", { class: "candidato", ...(avisoDe(f) ? { open: "" } : {}) },
           el("summary", {}, el("strong", {}, f[iN]), " ",
-            el("span", { class: "tenue" }, [f[iP], f[iG]].filter(Boolean).join(" · "))),
-          el("div", { class: "contenido" }, campo(f, iQ, "Pregunta", 5), campo(f, iPa, "Pauta", 7)))),
+            el("span", { class: "tenue" }, [f[iP], f[iG]].filter(Boolean).join(" · ")),
+            avisoDe(f) ? el("span", { class: "tenue" }, " · revisar") : ""),
+          el("div", { class: "contenido" }, avisoDe(f) ? caja("aviso", `La pregunta ${avisoDe(f)}.`) : "",
+            campo(f, iQ, "Pregunta", 5), campo(f, iPa, "Pauta", 7)))),
         el("div", { class: "acciones" }, boton), mensaje)));
   })().catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer las preguntas generadas (${e.message}).`)));
   return { nodo, guardar: () => guardar() };
+}
+
+/**
+ * A quién le va a llegar la pregunta en este envío, o null si es a todos.
+ * Igual que modulos/tareas/enviar.py: las filas con pregunta que no han salido,
+ * con el correo de la fila o el elegido a mano en correos_<T>.csv. Si ya salió
+ * alguna, el envío es para un grupo chico (un alumno recuperado, por ejemplo) y
+ * la recolección y la corrección programadas tienen que quedarse en ese grupo.
+ */
+async function correosDelEnvio(t) {
+  const { columnas, filas } = leerCsv(await leerTexto(rutaFeedbackDe(t)));
+  const [iN, iG, iQ, iC, iM] = ["alumno_nombre", "grupo_archivo", "pregunta", "alumno_correo", "message_id"]
+    .map((c) => columnas.indexOf(c));
+  const conPregunta = filas.filter((f) => enCsv(f[iQ]));
+  if (!conPregunta.some((f) => enCsv(f[iM]))) return null;
+  const elegidos = new Map();
+  const texto = await leerTexto(`tareas/data/entregas/${t}/correos_${t}.csv`);
+  if (texto.trim()) {
+    const c = leerCsv(texto);
+    const [ig, ia, ic] = COLUMNAS_CORREOS.map((n) => c.columnas.indexOf(n));
+    for (const f of c.filas) {
+      const nombre = enCsv(f[ia]).split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+      if (enCsv(f[ig]) && nombre && enCsv(f[ic]).includes("@")) {
+        elegidos.set(JSON.stringify([enCsv(f[ig]).trim(), nombre]), enCsv(f[ic]).trim().toLowerCase());
+      }
+    }
+  }
+  const correos = new Set();
+  for (const f of conPregunta.filter((x) => !enCsv(x[iM]))) {
+    const nombre = enCsv(f[iN]).split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+    const correo = enCsv(f[iC]).trim().toLowerCase() || elegidos.get(JSON.stringify([enCsv(f[iG]).trim(), nombre])) || "";
+    if (correo.includes("@")) correos.add(correo);
+  }
+  return [...correos];
 }
 
 /**
@@ -1001,14 +1045,21 @@ function vistaEnviar(p, destino) {
         const id = await pedirTrabajo(semestre, p.flujo, { tarea, prueba: !real, minutos: m });
         await seguir(id, destino);
       } else {
+        // Si a algunos ya les llegó, el envío es para un grupo chico: recolectar
+        // y corregir se quedan en él, para no tomar una respuesta tardía de otro
+        // envío. Corregir sigue dejando fuera lo que llegue fuera de plazo.
+        const solo = await correosDelEnvio(tarea);
+        if (solo && !solo.length) throw new Error("no hay preguntas sin enviar con correo");
+        const grupo = solo ? { solo } : {};
         pedidos.push(await pedirTrabajo(semestre, "tareas.enviar",
           { tarea, prueba: false, minutos: m, a_las: pl.inicio.toISOString() }));
         // Recolectar va a la cola de los reales (de a uno): así corregir no
         // corre a la vez y los dos no se pisan notas.csv.
         pedidos.push(await pedirTrabajo(semestre, "tareas.recolectar",
-          { tarea, prueba: false, a_las: pl.recolectar.toISOString() }));
+          { tarea, prueba: false, a_las: pl.recolectar.toISOString(), ...grupo }));
         pedidos.push(await pedirTrabajo(semestre, "tareas.corregir",
-          { tarea, prueba: false, no_enviar: true, a_las: pl.corregir.toISOString() }));
+          { tarea, prueba: false, no_enviar: true, a_las: pl.corregir.toISOString(),
+            ...(solo ? { solo, sin_tarde: true } : {}) }));
         hecho.replaceChildren(caja("exito", `Quedó programado. Las preguntas salen ${textoProgramado(pl.inicio)}, con `
           + `plazo hasta las ${horaCorta(pl.plazo)}; a las ${horaCorta(pl.recolectar)} se recolecta y a las `
           + `${horaCorta(pl.corregir)} se corrige, para revisar en el paso 4. Si alguien responde tarde, recolecta de `

@@ -204,6 +204,15 @@ check("pasa la lista en minúscula", cmd[-2:] == ["--solo", "ana.mora@x.cl"], cm
 check("sin 'solo' se procesa todo, como siempre", "--solo" not in evaluar_({"semana": 7}))
 check("corregir tareas también acepta 'solo'",
       "--solo" in trabajo.FLUJOS["tareas.corregir"][1]({"tarea": "T1", "solo": ["a@b.cl"]}))
+cmd = trabajo.FLUJOS["tareas.recolectar"][1]({"tarea": "T1", "prueba": False, "solo": ["Hugo.Vera@x.cl"]})
+check("recolectar también acepta 'solo' (envío programado a un grupo)",
+      cmd[-2:] == ["--solo", "hugo.vera@x.cl"], cmd)
+check("recolectar sin 'solo' busca a todos, como siempre",
+      "--solo" not in trabajo.FLUJOS["tareas.recolectar"][1]({"tarea": "T1"}))
+cmd = trabajo.FLUJOS["tareas.corregir"][1]({"tarea": "T1", "prueba": False, "solo": ["a@b.cl"], "sin_tarde": True})
+check("corregir con 'sin_tarde' sigue dejando fuera lo que llegó tarde", "--sin-tarde" in cmd, cmd)
+check("sin 'sin_tarde' no se agrega",
+      "--sin-tarde" not in trabajo.FLUJOS["tareas.corregir"][1]({"tarea": "T1", "solo": ["a@b.cl"]}))
 for malo in ([], "a@b.cl", ["no-es-correo"], ["a@b.cl,c@d.cl"], ["a@b.cl --dry-run"]):
     try:
         evaluar_({"semana": 7, "solo": malo})

@@ -21,6 +21,8 @@ _fail = 0
 # Direcciones a las que se "envió" durante la prueba. Los flujos escriben acá
 # en lugar de tocar SMTP, así que basta mirar la lista para saber qué salió.
 enviados: list[str] = []
+# Los mensajes completos, para mirar asunto y cabeceras (In-Reply-To, From).
+mensajes: list = []
 
 
 def check(nombre: str, condicion, extra="") -> None:
@@ -95,7 +97,7 @@ def semestre_desechable(base: str = "2026-2", sid: str = "_tmp_prueba", vaciar=(
 
 def _smtp_falso(*a, **k):
     m = MagicMock()
-    m.__enter__.return_value.send_message.side_effect = lambda msg: enviados.append(msg["To"])
+    m.__enter__.return_value.send_message.side_effect = lambda msg: (enviados.append(msg["To"]), mensajes.append(msg))
     return m
 
 

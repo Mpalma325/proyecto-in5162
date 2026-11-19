@@ -11,7 +11,9 @@ Con --no-enviar la corrección queda esperando revisión (feedback_pendiente):
 se puede leer y editar en la página, y feedback.py la manda después.
 
 Quien respondió después del plazo (la columna plazo, que deja enviar) queda
-fuera, salvo que se lo elija a mano con --solo.
+fuera, salvo que se lo elija a mano con --solo. Con --sin-tarde queda fuera
+igual: es lo que pide el envío programado a un grupo, que usa --solo para no
+tocar a los de otro envío y no para elegir a mano.
 
 Uso:
     python -m modulos.tareas.corregir                # tarea = config.TAREA_DEFAULT
@@ -92,6 +94,21 @@ def _corregir_una(client: OpenAI, system_prompt: str, fila: dict) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 
+def encabezado_feedback(fila: dict) -> tuple[str, str | None]:
+    """
+    Asunto e In-Reply-To del correo con la corrección.
+
+    Va como respuesta al correo de la pregunta, para que quede en el mismo hilo
+    que la pregunta y la respuesta del alumno. Como correo aparte, con otro
+    asunto, en T2 de 2026-2 se creyó que no había salido. Sin message_id (la
+    pregunta nunca salió por correo) queda como antes.
+    """
+    message_id = (fila.get("message_id") or "").strip()
+    if not message_id:
+        return f"Revisión de tu respuesta — {config.CURSO} {fila['tarea']}", None
+    return f"Re: Pregunta de comprensión — {config.CURSO} {fila['tarea']}", message_id
+
+
 def _cargar_template_feedback() -> str:
     return (config.PROMPTS / "correo_feedback.md").read_text(encoding="utf-8")
 
@@ -109,8 +126,9 @@ def _construir_cuerpo_feedback(template: str, fila: dict) -> str:
 
 
 def main(tarea: str, dry_run: bool = False, enviar: bool = True,
-         solo: set[str] | None = None) -> None:
-    """`solo`: si se pasa, corrige solo a esos correos; el resto sigue pendiente."""
+         solo: set[str] | None = None, sin_tarde: bool = False) -> None:
+    """`solo`: si se pasa, corrige solo a esos correos; el resto sigue pendiente.
+    `sin_tarde`: deja fuera a quien respondió fuera de plazo aunque venga en `solo`."""
     filas = storage.leer_csv(tarea)
     if not filas:
         print(f"No hay CSV para tarea {tarea}.")
@@ -141,7 +159,7 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
             "fuera_de_plazo": f["alumno_correo"].strip().lower() in tarde,
             "respuesta": respuestas[f["alumno_correo"].strip().lower()][:3000],
         } for f in pendientes])
-    if tarde and solo is None:
+    if tarde and (solo is None or sin_tarde):
         for f in pendientes:
             if f["alumno_correo"].strip().lower() in tarde:
                 print(f"  ⏰ {f['alumno_nombre']:30s}: respondió fuera de plazo "
@@ -212,9 +230,9 @@ def main(tarea: str, dry_run: bool = False, enviar: bool = True,
 
         fila_actualizada = {**fila_con_respuesta, "nota": nota, "comentario": comentario}
         try:
-            asunto = f"Revisión de tu respuesta — {config.CURSO} {fila['tarea']}"
+            asunto, en_hilo = encabezado_feedback(fila)
             cuerpo = _construir_cuerpo_feedback(template_feedback, fila_actualizada)
-            enviar_correo(fila["alumno_correo"], asunto, cuerpo)
+            enviar_correo(fila["alumno_correo"], asunto, cuerpo, in_reply_to=en_hilo)
             storage.actualizar_fila(tarea, fila["grupo_archivo"], fila["alumno_nombre"],
                                     {"feedback_pendiente": ""})
             print(f"     ✉ feedback enviado a {fila['alumno_correo']}")
@@ -227,6 +245,7 @@ if __name__ == "__main__":
     tarea = config.TAREA_DEFAULT
     dry_run = False
     enviar = True
+    sin_tarde = False
 
     for a in args:
         al = a.lower()
@@ -234,7 +253,9 @@ if __name__ == "__main__":
             dry_run = True
         elif al == "--no-enviar":
             enviar = False
+        elif al == "--sin-tarde":
+            sin_tarde = True
         elif a.upper().startswith('T') and a[1:].isdigit():
             tarea = a.upper()
 
-    main(tarea, dry_run=dry_run, enviar=enviar, solo=_candidatos.solo_de_argv())
+    main(tarea, dry_run=dry_run, enviar=enviar, solo=_candidatos.solo_de_argv(), sin_tarde=sin_tarde)
