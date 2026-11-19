@@ -5,8 +5,8 @@ repositorio; ver `web/SITIO.md`).
 
 ## Qué hace y qué no
 
-**Sí:** subir al sitio el panel de cada semestre, la misma tabla que dibuja la
-reportería de Streamlit. Con `--archivos`, además, copiar a R2 las carpetas
+**Sí:** subir al sitio el panel de cada semestre, la tabla que arma
+`datos.reportes.panel()`. Con `--archivos`, además, copiar a R2 las carpetas
 completas de cada semestre y la plantilla de semestres nuevos: es la migración
 inicial, y desde ahí el motor las mantiene al día.
 
@@ -17,7 +17,7 @@ sus copias en `respaldos/`, nunca en `semestres/`.
 
 `modulos.datos`, `modulos.semestre` y `modulos.config`. No importa `mail` ni `ia`.
 
-## Por qué el sitio calcula igual que Streamlit
+## Por qué el sitio calcula igual que los scripts
 
 La página no reimplementa las métricas. Carga `modulos/datos/agregaciones.py` y
 lo corre en el navegador con Pyodide. Por eso ese archivo no puede importar nada

@@ -68,8 +68,8 @@ una sola pregunta.
 La descarga es un zip con un comprimido por alumno adentro. Cada uno trae el
 HTML renderizado, el `.Rmd`, los datos y a veces basura de macOS, y varios
 grupos entregan su HTML con el mismo nombre. De eso se encarga
-`desempacar.py` (lo usa Streamlit; la página repite las mismas reglas en
-`web/public/datos.js`): entra a los comprimidos anidados, prefija cada archivo
+`web/public/datos.js` al subir el zip, con las mismas reglas que
+`desempacar.py`: entra a los comprimidos anidados, prefija cada archivo
 con el nombre del grupo para que no se pisen, guarda el `.Rmd` con el mismo
 nombre base que su HTML y omite el enunciado que algunos grupos incluyen. Lo
 que no reconoce lo informa en pantalla.

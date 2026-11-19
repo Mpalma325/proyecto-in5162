@@ -19,7 +19,7 @@ dejaba al sistema apuntando a una carpeta borrada.
 |---|---|
 | `e2e_tests_semanales.py` | el ciclo de tests, y qué pasa cuando algo se cae |
 | `e2e_tareas.py` | el ciclo de tareas, y que no pise los datos de los tests |
-| `app_paginas.py` | que cada página de la app ejecute sin reventar |
+| `simulaciones.py` | que ningún flujo en modo prueba escriba `notas.csv` ni el log |
 | `comun.py` | el andamiaje compartido; no es una prueba |
 
 `e2e_tests_semanales.py` tiene dos partes. La primera es el curso funcionando
@@ -28,10 +28,6 @@ si el comando se corre dos veces. La segunda reproduce los tres problemas que ya
 ocurrieron de verdad — los envíos hechos desde otro equipo, el proceso muerto a
 mitad de la evaluación, y la red cortada justo al marcar los correos como
 leídos— y comprueba que en ninguno se pierda una nota ya pagada a la API.
-
-`app_paginas.py` existe porque compilar no alcanza. Encontró una página que
-compilaba sin problema y reventaba al abrirla, porque leía una clave de
-configuración que había cambiado de nombre.
 
 ## Al agregar una prueba
 

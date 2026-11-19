@@ -1,5 +1,5 @@
 """
-El sitio web calcula exactamente lo mismo que Streamlit.
+El sitio web calcula exactamente lo mismo que reportes.py.
 
 La página no reimplementa las métricas: corre modulos/datos/agregaciones.py con
 Pyodide, a través de un puente escrito en app.js. Acá se ejecuta ese mismo
@@ -7,7 +7,7 @@ puente con Python normal, sobre los semestres reales, y se compara carácter por
 carácter contra lo que calcula reportes.py. No usa red ni navegador.
 
 Los tres problemas que motivaron esto aparecieron al construir el sitio:
-- JavaScript serializa 7.0 como 7, y la página mostraba "7" donde Streamlit
+- JavaScript serializa 7.0 como 7, y la página mostraba "7" donde Python
   muestra "7.0".
 - El orden de los alumnos empatados en nota dependía del orden de las filas de
   entrada, y la base de datos las devuelve en otro orden que los CSV.

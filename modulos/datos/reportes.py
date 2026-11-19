@@ -7,9 +7,9 @@ métrica se calcula en un solo lugar y no puede discrepar entre dos vistas.
 
 Sin pandas a propósito. El resto de `modulos/` usa el `csv` de la stdlib, y la
 reportería no es razón para meterle una dependencia pesada a la capa de datos:
-quien quiera un DataFrame hace `pd.DataFrame(reportes.panel())` en la app, que
-es donde pandas ya vive. Así estas agregaciones sirven igual desde la app, desde
-un script o desde un servidor, sin arrastrar nada.
+quien quiera un DataFrame hace `pd.DataFrame(reportes.panel())` por su cuenta.
+Así estas agregaciones sirven igual desde un script, el motor o el navegador,
+sin arrastrar nada.
 
 Acá solo queda `panel()`, que lee los CSV. Los cálculos viven en
 `agregaciones.py`, que no depende de nada del proyecto y corre también en el

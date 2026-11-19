@@ -4,7 +4,7 @@ Herramientas de automatización docente para el curso IN5162. El curso usa dos m
 
 Sobre esa base se monta además un estudio de impacto: en varias semanas, la mitad del curso (grupo "Control") recibe una pregunta, y la otra mitad (grupo "Tratamiento") recibe otra distinta sobre el mismo tema, para después evaluar el aprendizaje que los alumnos sacan de los tests semanales. El sistema separa a los alumnos en dos grupos y guarda esa asignación; se configura una vez y el resto del pipeline funciona igual.
 
-Todo se puede correr desde la línea de comandos o desde la interfaz gráfica (`streamlit run app/main.py`). No hay lógica distinta entre una vía y otra: la app lanza exactamente los mismos comandos.
+El curso se opera desde el sitio web (`web/`), y todo se puede correr también desde la línea de comandos. No hay lógica distinta entre una vía y otra: el motor del sitio lanza los mismos comandos de `modulos/`.
 
 ## Setup
 
@@ -26,9 +26,9 @@ El app password se genera en `myaccount.google.com/apppasswords` y **requiere 2F
 
 ### Al clonar por primera vez
 
-El repo no trae ningún semestre: las carpetas de `semestres/` llevan nombres, correos y respuestas de alumnos reales, así que están fuera de git. Hasta que haya uno, la app abre pidiendo que se cree y los comandos de terminal cortan con ese mismo mensaje.
+El repo no trae ningún semestre: las carpetas de `semestres/` llevan nombres, correos y respuestas de alumnos reales, así que están fuera de git. Hasta que haya uno, los comandos de terminal cortan pidiendo que se cree.
 
-Hay dos formas de tener uno. Crear uno vacío desde **Datos y Configuración** en la app, que lo copia de `semestres/_template/` y deja listos los prompts y los CSV de ejemplo; sirve para operar un curso nuevo, pero la reportería sale en blanco porque no hay nada que reportar. O recibir la carpeta de un semestre ya corrido y dejarla tal cual en `semestres/`; eso llega aparte del repo, por su contenido. Con eso funcionan la reportería, el ensayo de prompts y las pruebas.
+Hay dos formas de tener uno. Crear uno vacío con `python -c "from modulos import semestre; semestre.crear('2027-1'); semestre.activar('2027-1')"`, que lo copia de `semestres/_template/` y deja listos los prompts y los CSV de ejemplo (en el sitio, lo mismo se hace desde **Configuración**); sirve para operar un curso nuevo, pero la reportería sale en blanco porque no hay nada que reportar. O recibir la carpeta de un semestre ya corrido y dejarla tal cual en `semestres/`; eso llega aparte del repo, por su contenido. Con eso funcionan la reportería, el ensayo de prompts y las pruebas.
 
 ```bash
 python -m modulos.semestre     # sobre cuál se está trabajando
@@ -49,7 +49,8 @@ modulos/
   tests/      flujo de tests semanales
   tareas/     flujo de tareas
 pruebas/       pruebas de punta a punta, sin red ni API
-app/           interfaz Streamlit
+motor/         el servicio de Cloud Run que corre los flujos pedidos desde el sitio
+web/           el sitio del curso: páginas, Worker de Cloudflare y esquema de D1
 semestres/     los datos de cada semestre (fuera de git)
 ```
 
@@ -82,7 +83,7 @@ Agrega los eventos que faltan, ignora los que ya están y deja `notas.csv` al d�
 
 Los prompts y `alumnos.csv` no se fusionan: si los dos los editan, hay que decidir a mano cuál queda.
 
-Cada semestre es una carpeta aparte, así que abrir uno nuevo no pisa los datos del anterior. Solo uno está activo a la vez, y se cambia desde **Datos y Configuración** en la app. Estas carpetas nunca se suben a git: tienen nombres y correos reales.
+Cada semestre es una carpeta aparte, así que abrir uno nuevo no pisa los datos del anterior. Solo uno está activo a la vez, y se cambia desde **Configuración** en el sitio (en este equipo, con `semestre.activar`). Estas carpetas nunca se suben a git: tienen nombres y correos reales.
 
 Antes de un envío conviene confirmar sobre cuál se está trabajando, porque los comandos toman el activo sin preguntar:
 
@@ -92,11 +93,11 @@ python -m modulos.semestre
 
 ## El sitio web
 
-Las cuatro páginas de la app también existen como sitio web, para operar el curso desde cualquier equipo sin depender de un PC encendido. La página y los archivos viven en Cloudflare; los scripts de `modulos/` corren tal cual en un servicio de Google Cloud Run, el motor. Cómo funciona, cómo probarlo en local y cómo publicarlo: `web/SITIO.md` y `motor/MOTOR.md`. Para montarlo en otro curso: `INSTALAR.md` y `instalar.ps1`.
+El sitio opera el curso desde cualquier equipo sin depender de un PC encendido. La página y los archivos viven en Cloudflare; los scripts de `modulos/` corren tal cual en un servicio de Google Cloud Run, el motor. Cómo funciona, cómo probarlo en local y cómo publicarlo: `web/SITIO.md` y `motor/MOTOR.md`. Para montarlo en otro curso: `INSTALAR.md` y `instalar.ps1`.
 
 ## La reportería
 
-La pantalla de inicio de la app es la reportería del curso. Muestra, para el semestre que se elija: los indicadores generales, la evolución semana a semana de la nota media y la tasa de respuesta, la distribución de notas y de originalidad, la comparación entre Control y Tratamiento con la diferencia entre ambos brazos, el listado de alumnos ordenado por nota, la ficha de cada uno con sus textos y las evaluaciones que recibió, y las dos listas accionables: quién no ha respondido y quién respondió sin que se le pusiera nota.
+La página **Resultados** del sitio es la reportería del curso. Muestra, para el semestre que se elija: los indicadores generales, la evolución semana a semana de la nota media y la tasa de respuesta, la distribución de notas y de originalidad, la comparación entre Control y Tratamiento con la diferencia entre ambos brazos, el listado de alumnos ordenado por nota, la ficha de cada uno con sus textos y las evaluaciones que recibió, y las dos listas accionables: quién no ha respondido y quién respondió sin que se le pusiera nota.
 
 Todo se filtra por semana y por grupo, y el panel completo se descarga en CSV.
 
@@ -104,9 +105,9 @@ La pestaña **Originalidad** mira aparte lo que el modelo califica como tal. El 
 
 Las cinco categorías van de "Muy Baja" a "Muy Alta" y se pintan con un solo tono de claro a oscuro, porque están ordenadas. Lo que el modelo escribió y no calza con ninguna aparece en las tablas con el nivel vacío y queda fuera de los promedios.
 
-Un semestre se mira a la vez y **nunca se mezcla con otro**: los alumnos, los grupos y las preguntas son distintos, así que un promedio entre semestres no significa nada. El selector de arriba cambia solo lo que se ve; el semestre sobre el que corren los envíos se cambia en Datos y Configuración, y la reportería avisa cuando no coinciden.
+Un semestre se mira a la vez y **nunca se mezcla con otro**: los alumnos, los grupos y las preguntas son distintos, así que un promedio entre semestres no significa nada. El selector de arriba cambia solo lo que se ve; el semestre sobre el que corren los envíos se cambia en Configuración, y la reportería avisa cuando no coinciden.
 
-Las agregaciones viven en `modulos/datos/reportes.py`, no en la app. Todo sale de `panel()`, que arma una fila por alumno e ítem; lo demás son cortes de esa misma tabla, así que una métrica se calcula en un solo lugar y dos vistas no pueden discrepar. La app solo dibuja.
+Las agregaciones viven en `modulos/datos/agregaciones.py`, no en la página: el sitio corre ese mismo archivo en el navegador con Pyodide. Todo sale de `panel()` (`modulos/datos/reportes.py`), que arma una fila por alumno e ítem; lo demás son cortes de esa misma tabla, así que una métrica se calcula en un solo lugar y dos vistas no pueden discrepar. La página solo dibuja.
 
 ## Tests Semanales
 
@@ -165,11 +166,11 @@ python -m modulos.tareas.recolectar T1
 python -m modulos.tareas.corregir T1
 ```
 
-Las entregas se suben desde **Datos y Configuración → Datos del curso → Entregas (Tareas)**, con el zip de U-Cursos tal como se descarga. Adentro viene un comprimido por alumno, y la app entra a cada uno, se queda con el HTML y con el `.Rmd` que lo acompaña, y les pone el nombre del grupo para que dos entregas con el mismo nombre de archivo no se pisen. Los `.rar` también se abren. Lo que no reconoce lo lista en pantalla en vez de descartarlo callado.
+Las entregas se suben desde **Configuración → Entregas** en el sitio, con el zip de U-Cursos tal como se descarga. Adentro viene un comprimido por alumno, y la página entra a cada uno, se queda con el HTML y con el `.Rmd` que lo acompaña, y les pone el nombre del grupo para que dos entregas con el mismo nombre de archivo no se pisen. Los `.rar` también se abren. Lo que no reconoce lo lista en pantalla en vez de descartarlo callado.
 
 El paso de generar empareja el nombre de cada integrante con la planilla de alumnos para obtener su correo. Cuando no encuentra una coincidencia clara lo deja en blanco, y hay que resolverlo a mano antes de enviar: es preferible eso a mandarle la pregunta al alumno equivocado.
 
-Antes de gastar la API conviene mirar el chequeo, que lee las entregas y dice lo que haría `generar` sin llamar al modelo: cuánto se recortó de cada pregunta, de dónde salieron los integrantes, quién no resuelve a un correo y con qué candidatos, y quién del roster queda sin pregunta. Es lo primero que muestra la pestaña 1 de la app, así que se ve sin pedirlo. Cuando un grupo no declaró roles, ahí mismo se puede cambiar qué pregunta le toca a cada integrante; lo elegido queda en un CSV junto a las entregas y `generar` lo respeta.
+Antes de gastar la API conviene mirar el chequeo, que lee las entregas y dice lo que haría `generar` sin llamar al modelo: cuánto se recortó de cada pregunta, de dónde salieron los integrantes, quién no resuelve a un correo y con qué candidatos, y quién del roster queda sin pregunta. Es lo primero que muestra la pestaña 1 de Tareas en el sitio, así que se ve sin pedirlo. Cuando un grupo no declaró roles, ahí mismo se puede cambiar qué pregunta le toca a cada integrante; lo elegido queda en un CSV junto a las entregas y `generar` lo respeta.
 
 Los entregables no siempre siguen el template: cambian los títulos de las secciones, dejan la tabla de roles sin llenar, o suben un HTML renderizado antes de escribir el código. El paso 1 reconoce esos casos, saca los integrantes del campo `author` cuando la tabla no sirve, y lee el `.Rmd` cuando el HTML viene vacío. Si un grupo no declaró roles, reparte las cuatro preguntas entre sus integrantes con semilla fija en vez de dejarlos sin nada. Lo que no puede resolver lo salta antes de gastar la API y dice por qué. `modulos/tareas/TAREAS.md` tiene el detalle.
 

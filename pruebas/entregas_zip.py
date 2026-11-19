@@ -21,10 +21,6 @@ from pathlib import Path
 sys.path.insert(0, ".")
 
 from pruebas.comun import check, resultado  # noqa: E402
-# "app" solo, sin importarlo como paquete: si hay otro paquete "app" instalado
-# en el Python (pasa con proyectos en modo editable), le ganaría a esta carpeta.
-sys.path.insert(0, "app")
-from utils import runner  # noqa: E402
 from modulos.tareas import desempacar  # noqa: E402
 
 
@@ -45,7 +41,7 @@ def _rar(archivos: dict[str, bytes]) -> bytes:
 
 
 class _Subido:
-    """Un archivo como lo entrega el file_uploader de Streamlit."""
+    """Un archivo subido, con lo que lee extraer_entregas: .name y .getvalue()."""
 
     def __init__(self, nombre: str, contenido: bytes):
         self.name = nombre
@@ -85,7 +81,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         destino = Path(tmp) / "T1"
-        agregados, omitidos = runner.extraer_entregas([subido], destino)
+        agregados, omitidos = desempacar.extraer_entregas([subido], destino)
 
         htmls = sorted(p.name for p in destino.glob("*.html"))
         rmds = sorted(p.name for p in destino.glob("*.Rmd"))
@@ -110,7 +106,7 @@ def main() -> int:
 
         # Un zip que no se puede abrir no debe voltear la subida completa.
         roto = _Subido("Roto.zip", b"esto no es un zip")
-        agregados2, omitidos2 = runner.extraer_entregas([roto], destino)
+        agregados2, omitidos2 = desempacar.extraer_entregas([roto], destino)
         check("un comprimido ilegible se reporta sin cortar la subida",
               agregados2 == [] and "Roto.zip" in omitidos2, (agregados2, omitidos2))
 
@@ -127,7 +123,7 @@ def main() -> int:
     subido = _Subido("Tarea 2.zip", _zip_de_ucursos({"Lagos_Pino__Eva_33333333.zip": buf.getvalue()}))
     with tempfile.TemporaryDirectory() as tmp:
         destino = Path(tmp) / "T2"
-        agregados, omitidos = runner.extraer_entregas([subido], destino)
+        agregados, omitidos = desempacar.extraer_entregas([subido], destino)
         check("el enunciado no se toma como una entrega más",
               sorted(agregados) == ["Lagos_Pino__Eva_33333333.Rmd", "Lagos_Pino__Eva_33333333.html"],
               agregados)
@@ -143,7 +139,7 @@ def main() -> int:
                          _zip_de_grupo(b"<html>lagos</html>", b"rmd de lagos", "t1-Lagos"))
     with tempfile.TemporaryDirectory() as tmp:
         destino = Path(tmp) / "T1"
-        agregados, omitidos = runner.extraer_entregas([individual], destino)
+        agregados, omitidos = desempacar.extraer_entregas([individual], destino)
         check("el zip individual deja el HTML y el .Rmd con el nombre de U-Cursos",
               sorted(agregados) == ["Lagos_Pino__Eva_33333333.Rmd", "Lagos_Pino__Eva_33333333.html"],
               agregados)
@@ -154,13 +150,13 @@ def main() -> int:
     sueltos = _Subido("Varios.zip", _zip_de_ucursos({"Grupo1.html": b"<html>1</html>",
                                                      "Grupo2.html": b"<html>2</html>"}))
     with tempfile.TemporaryDirectory() as tmp:
-        agregados, _ = runner.extraer_entregas([sueltos], Path(tmp) / "T1")
+        agregados, _ = desempacar.extraer_entregas([sueltos], Path(tmp) / "T1")
         check("varios HTML sueltos en el zip subido no toman el nombre del zip",
               sorted(agregados) == ["Grupo1.html", "Grupo2.html"], agregados)
 
     # El .rar depende de una herramienta del sistema; se comprueba que la
     # decisión sea explícita y no un descarte en silencio.
-    lector = runner._hay_lector_rar()
+    lector = desempacar._hay_lector_rar()
     if lector:
         check("hay con qué abrir .rar en este equipo", True)
         # La página sube el .rar sin abrir, con el nombre que tendrá su HTML; el
@@ -193,7 +189,7 @@ def main() -> int:
         agregados3: list[str] = []
         omitidos3: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
-            runner._extraer_rar(b"Rar!\x1a\x07\x00", Path(tmp), agregados3,
+            desempacar._extraer_rar(b"Rar!\x1a\x07\x00", Path(tmp), agregados3,
                                 omitidos3, "Grupo.rar")
         check("sin lector de .rar se avisa en vez de perder la entrega",
               any(".rar" in o for o in omitidos3), omitidos3)

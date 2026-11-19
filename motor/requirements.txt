@@ -1,4 +1,3 @@
-# Solo lo que usan los flujos del curso. Streamlit, pandas y altair son de la
-# app de escritorio y no hacen falta en el motor.
+# Lo que usan los flujos del curso; hoy es lo mismo que el requirements.txt de la raíz.
 openai>=1.50.0
 beautifulsoup4>=4.12.0

@@ -5,7 +5,7 @@ Todo lo de acá es cálculo puro: recibe las filas del panel y devuelve cortes,
 promedios y distribuciones. No lee archivos ni importa nada fuera de la
 biblioteca estándar, y eso es a propósito: este mismo archivo corre en el
 navegador, con Pyodide, para que la página web calcule exactamente lo mismo que
-la app de Streamlit sin reescribir la lógica en otro lenguaje.
+los scripts sin reescribir la lógica en otro lenguaje.
 
 `reportes.py` arma las filas desde los CSV del semestre (`panel()`) y reexporta
 todo lo de acá, así que el resto del sistema sigue usando `datos.reportes.X`.
@@ -188,7 +188,7 @@ def por_alumno(filas: list[dict]) -> list[dict]:
         })
     # A igual nota media se ordena por nombre. Sin eso el orden de los empates
     # dependía del orden de las filas de entrada, y la misma tabla salía distinta
-    # en Streamlit y en la página web.
+    # desde los CSV y desde la base del sitio.
     salida.sort(key=lambda f: (f["NotaMedia"] is not None, f["NotaMedia"] or 0,
                                f["Nombre"].lower(), f["Correo"]))
     return salida

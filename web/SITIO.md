@@ -1,10 +1,10 @@
 # Sitio del curso
 
-Las páginas de Streamlit en una página web a la que se entra desde cualquier equipo o teléfono: Inicio (en qué va la semana, lo que requiere atención y el gasto en la API), Tests semanales, Tareas, Resultados (la reportería) y Configuración. Los botones hacen lo mismo que en Streamlit y corren los mismos scripts de `modulos/`; lo que cambia es dónde corren.
+Una página web a la que se entra desde cualquier equipo o teléfono: Inicio (en qué va la semana, lo que requiere atención y el gasto en la API), Tests semanales, Tareas, Resultados (la reportería) y Configuración. Los botones corren los mismos scripts de `modulos/` que la línea de comandos; lo que cambia es dónde corren.
 
 ## Piezas
 
-- **La página** (`public/`): HTML y JavaScript sin framework. La reportería corre `modulos/datos/agregaciones.py` en el navegador con Pyodide, así que calcula exactamente lo mismo que Streamlit.
+- **La página** (`public/`): HTML y JavaScript sin framework. La reportería corre `modulos/datos/agregaciones.py` en el navegador con Pyodide, así que calcula exactamente lo mismo que `modulos/datos/reportes.py`.
 - **El Worker** (`src/index.ts`): la API. Guarda los trabajos y la reportería en D1, y los archivos de cada semestre en R2.
 - **El motor** (`../motor/`): un servicio en Google Cloud Run que ejecuta los trabajos. Ver `motor/MOTOR.md`.
 
@@ -26,7 +26,7 @@ Cuando alguien aprieta "Evaluar", el Worker anota el trabajo y le avisa al motor
 - **Nadie entra sin Cloudflare Access.** El Worker verifica la firma del token que agrega Access (`src/acceso.ts`) contra las claves del equipo y la aplicación (`ACCESO_EQUIPO`, `ACCESO_AUD`). Si Access no está configurado, o esos dos datos faltan, no entrega datos: la página queda vacía, no abierta. `ACCESO=abierto` existe solo para desarrollo local.
 - **Todo trabajo es de prueba salvo pedido explícito.** El Worker guarda `prueba: true` a menos que llegue `false` como booleano, y el motor agrega `--dry-run` en ese caso. Todo lo que manda correos reales pide confirmación antes de salir.
 - **Los comandos los arma el motor.** La página elige un flujo de una lista cerrada (`FLUJOS`, igual en el Worker y en `motor/trabajo.py`) y el motor valida semana, tarea y nombres de archivo.
-- **Desde la página solo se escribe lo que se editaba en Streamlit**: las listas de alumnos, las preguntas, los prompts, las entregas y la asignación de preguntas de tareas (`EDITABLES` en el Worker). Una entrega ya subida no se reemplaza. Los demás archivos solo los escriben los trabajos.
+- **Desde la página solo se escriben los archivos que se editan a mano**: las listas de alumnos, las preguntas, los prompts, las entregas y la asignación de preguntas de tareas (`EDITABLES` en el Worker). Una entrega ya subida no se reemplaza. Los demás archivos solo los escriben los trabajos.
 - **Toda escritura desde la página tiene que venir de la página.** El Worker rechaza cualquier pedido que no sea de lectura si su `Origin` no es el sitio: así una página ajena, abierta por alguien con sesión, no puede pedir un trabajo a su nombre. La cookie de Access va además con `SameSite=Lax`.
 - **Nada se pisa sin saberlo.** Cada escritura lleva la versión que se leyó (`If-Match`); si en la nube cambió mientras tanto, el Worker responde 409 en vez de reemplazarla. Vale para el motor, la página y `subir`.
 - **Historial.** Antes de reemplazar un archivo, el Worker guarda la versión anterior en R2 (`historial/`) y anota quién la cambió en la tabla `ediciones`. Se ve en Datos y Configuración → Historial.
