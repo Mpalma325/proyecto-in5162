@@ -82,21 +82,68 @@ def marcar_respondio(correo: str, flujo: str, item: str,
 
 
 def registrar_nota(correo: str, flujo: str, item: str, nota: str,
-                   originalidad: str = "", semestre_id: str | None = None) -> None:
+                   originalidad: str = "", semestre_id: str | None = None,
+                   *, logro: str = "") -> None:
+    """La nota que se le comunicó al alumno.
+
+    `logro` (de 0 a 1) se escribe siempre: una nota registrada sin logro, como
+    un ajuste fuera de la escala, queda fija aunque la escala cambie.
+    """
     _upsert(correo, flujo, item,
-            {"Nota": nota, "Originalidad": originalidad}, semestre_id)
+            {"Nota": nota, "Originalidad": originalidad, "Logro": logro}, semestre_id)
+
+
+def marcar_corregido(correo: str, flujo: str, item: str, cuando: str | None = None,
+                     logro: str = "", semestre_id: str | None = None) -> None:
+    """Quedó la corrección (del modelo o del docente), todavía sin mandar."""
+    _upsert(correo, flujo, item, {"Corregido": cuando or _ahora(), "Logro": logro}, semestre_id)
+
+
+def marcar_descartada(correo: str, flujo: str, item: str, cuando: str | None = None,
+                      semestre_id: str | None = None) -> None:
+    """El docente decidió no mandar feedback: la casilla se cierra sin nota."""
+    _upsert(correo, flujo, item, {"Descartada": cuando or _ahora()}, semestre_id)
+
+
+def _hay(fila: dict | None, campo: str) -> bool:
+    return bool(fila and (fila.get(campo) or "").strip())
 
 
 def ya_enviado(correo: str, flujo: str, item: str,
                semestre_id: str | None = None) -> bool:
-    e = estado(correo, flujo, item, semestre_id)
-    return bool(e and e.get("Enviado", "").strip())
+    return _hay(estado(correo, flujo, item, semestre_id), "Enviado")
 
 
 def ya_evaluado(correo: str, flujo: str, item: str,
                 semestre_id: str | None = None) -> bool:
-    e = estado(correo, flujo, item, semestre_id)
-    return bool(e and e.get("Nota", "").strip())
+    """Si tiene nota, es decir, si se le mandó el feedback con esa nota."""
+    return _hay(estado(correo, flujo, item, semestre_id), "Nota")
+
+
+def esta_corregida(fila: dict | None) -> bool:
+    """Si a esa casilla ya no hay que corregirla: tiene corrección, nota o descarte."""
+    return any(_hay(fila, c) for c in ("Corregido", "Nota", "Descartada"))
+
+
+def esta_por_revisar(fila: dict | None) -> bool:
+    """Corregida y sin mandar: con Corregido, sin Nota ni Descartada."""
+    return _hay(fila, "Corregido") and not _hay(fila, "Nota") and not _hay(fila, "Descartada")
+
+
+def ya_corregido(correo: str, flujo: str, item: str,
+                 semestre_id: str | None = None) -> bool:
+    """Si hay que dejar de corregir a ese alumno en ese ítem.
+
+    Es la pregunta de quien decide a quién llamar al modelo (y a quién mandarle
+    el correo de duplicado). Distinta de `ya_evaluado`, que dice si hay nota.
+    """
+    return esta_corregida(estado(correo, flujo, item, semestre_id))
+
+
+def por_revisar(correo: str, flujo: str, item: str,
+                semestre_id: str | None = None) -> bool:
+    """Si la corrección espera que el docente la revise (o que se reintente su envío)."""
+    return esta_por_revisar(estado(correo, flujo, item, semestre_id))
 
 
 def pendientes_de_envio(correos: list[str], flujo: str, item: str,

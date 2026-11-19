@@ -135,8 +135,48 @@ def columnas_y_eventos_nuevos(tmp, sid):
         check("un evento desconocido sigue rechazándose", True)
 
 
+def estados_de_una_casilla(tmp, sid):
+    from modulos import datos
+    n = datos.notas
+
+    titulo("6. corregida, por revisar, descartada y con nota")
+    ana, beto = "ana.prueba@correo.test", "beto.ensayo@correo.test"
+    n.marcar_enviado(ana, "test", "3", semestre_id=sid)
+    n.marcar_respondio(ana, "test", "3", semestre_id=sid)
+    check("respondió y sin corregir: hay que corregirla",
+          not n.ya_corregido(ana, "test", "3", sid) and not n.por_revisar(ana, "test", "3", sid))
+    check("una casilla que no existe tampoco está corregida", not n.ya_corregido("nadie@correo.test", "test", "3", sid))
+
+    n.marcar_corregido(ana, "test", "3", "2026-11-02T09:41:07-03:00", logro="0.8333", semestre_id=sid)
+    fila = n.estado(ana, "test", "3", sid)
+    check("corregida: ya no se corrige de nuevo", n.ya_corregido(ana, "test", "3", sid))
+    check("y queda por revisar, sin nota", n.por_revisar(ana, "test", "3", sid)
+          and not n.ya_evaluado(ana, "test", "3", sid))
+    check("guarda cuándo y el logro", fila["Corregido"] == "2026-11-02T09:41:07-03:00"
+          and fila["Logro"] == "0.8333", fila)
+
+    n.registrar_nota(ana, "test", "3", "6,5", "Media", sid, logro="0.8333")
+    fila = n.estado(ana, "test", "3", sid)
+    check("con nota: deja de estar por revisar", not n.por_revisar(ana, "test", "3", sid)
+          and n.ya_evaluado(ana, "test", "3", sid) and n.ya_corregido(ana, "test", "3", sid))
+    check("la nota se guarda con su logro", fila["Nota"] == "6,5" and fila["Logro"] == "0.8333", fila)
+    n.registrar_nota(ana, "test", "3", "3,0", "Media", sid)
+    check("una nota registrada sin logro lo deja vacío (queda fija ante la escala)",
+          n.estado(ana, "test", "3", sid)["Logro"] == "")
+
+    n.marcar_corregido(beto, "test", "3", semestre_id=sid)
+    n.marcar_descartada(beto, "test", "3", semestre_id=sid)
+    check("descartada: cerrada, sin nota y fuera de por revisar",
+          n.ya_corregido(beto, "test", "3", sid) and not n.por_revisar(beto, "test", "3", sid)
+          and not n.ya_evaluado(beto, "test", "3", sid))
+    check("con fecha en Descartada", bool(n.estado(beto, "test", "3", sid)["Descartada"]))
+    check("una nota sola (legado, sin Corregido) también cuenta como corregida",
+          n.esta_corregida({"Nota": "6,0"}) and not n.esta_por_revisar({"Nota": "6,0"}))
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
     columnas_y_eventos_nuevos(tmp, sid)
+    estados_de_una_casilla(tmp, sid)
 
 sys.exit(resultado())
