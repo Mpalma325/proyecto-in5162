@@ -141,7 +141,7 @@ def _es_repregunta(corr: dict) -> bool:
     irt = (corr.get("in_reply_to") or "").strip()
     if not irt:
         return False
-    origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE)
+    origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE, flujo=_datos.TESTS)
     return origen is not None
 
 

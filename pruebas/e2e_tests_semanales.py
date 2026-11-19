@@ -288,6 +288,34 @@ def tutoria_sobre_el_feedback():
         check("y la nota nunca se movio",
               datos.notas.estado(alumno, datos.TESTS, "5", sid)["Nota"] == "6,0")
 
+        titulo("15b. una respuesta al feedback de una TAREA no la atiende la tutoria de tests")
+        datos.log.registrar("evaluacion", datos.TAREAS, "T1", alumno, sid,
+                            MessageId="<feedback-tarea-T1@correo.test>", Nota="6.0")
+        duda_tarea = correo_entrante(alumno, 5, "Por que me bajaron en la tarea?",
+                                     in_reply_to="<feedback-tarea-T1@correo.test>", uid="990")
+        errores_antes = len(datos.log.leer(sid, evento="error"))
+        tutorias_antes = len(datos.log.leer(sid, evento="tutoria"))
+        enviados.clear()
+        llamadas = []
+        import io
+        from contextlib import redirect_stdout
+        salida = io.StringIO()
+        with patch("modulos.tests.tutoria.buscar_no_leidos", return_value=[duda_tarea]), \
+             patch("modulos.tests.tutoria.responder_duda",
+                   side_effect=lambda *a, **k: (llamadas.append(1), "<p>no</p>")[1]), \
+             redirect_stdout(salida):
+            tutoria.main(None, dry_run=False)
+        check("no llama al modelo", llamadas == [], llamadas)
+        check("no le responde", enviados == [], enviados)
+        check("no registra un error con flujo test e item T1",
+              len(datos.log.leer(sid, evento="error")) == errores_antes,
+              datos.log.leer(sid, evento="error")[errores_antes:])
+        check("ni una tutoria", len(datos.log.leer(sid, evento="tutoria")) == tutorias_antes)
+        check("la cuenta aparte en la salida",
+              "1 respuesta(s) a feedback de Tareas" in salida.getvalue(), salida.getvalue()[-300:])
+        check("y no crea una casilla de tests para T1",
+              datos.notas.estado(alumno, datos.TESTS, "T1", sid) is None)
+
 
 PROMPT_CANDIDATO = """Evalúa la respuesta.
 Preguntas: {{PREGUNTAS}}

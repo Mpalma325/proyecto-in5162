@@ -99,18 +99,21 @@ def _mismo_id(a: str, b: str) -> bool:
 
 
 def fila_por_message_id(message_id: str, semestre_id: str | None = None,
-                        eventos: tuple | None = None) -> dict | None:
+                        eventos: tuple | None = None, flujo: str | None = None) -> dict | None:
     """El evento que produjo el mensaje con ese Message-ID.
 
     Sirve para saber a qué está contestando un correo entrante: si el id
     corresponde a un 'envio' es la respuesta a la pregunta de la semana, y si
     corresponde a una 'evaluacion' o a una 'tutoria' es una repregunta sobre el
     feedback que ya se le mandó.
+
+    `flujo` limita la búsqueda a tests o a tareas: los dos mandan feedback, y
+    una duda sobre el de una tarea no la puede atender la tutoría de tests.
     """
     mid = (message_id or "").strip()
     if not mid:
         return None
-    for fila in leer(semestre_id):
+    for fila in leer(semestre_id, flujo=flujo):
         if eventos and fila.get("Evento") not in eventos:
             continue
         if _mismo_id(fila.get("MessageId", ""), mid):
