@@ -1,4 +1,4 @@
-# Sitio del curso: las páginas de Streamlit en la web. Ver SITIO.md.
+# Sitio del curso. Ver SITIO.md.
 #
 # El Worker sirve la página (public/) y la API sobre D1 y R2. Los trabajos los
 # ejecuta el motor (../motor/, en Cloud Run); el Worker nunca ve las

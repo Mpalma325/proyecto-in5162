@@ -101,7 +101,8 @@ def main(origen: str, semestre_id: str | None = None, simular: bool = False) -> 
             print(f"\nLog actualizado. Copia del anterior en {r['Respaldo']}")
         e = _notas.sincronizar_desde_log(sid)
         print(f"Estado al día: {e['FilasNuevas']} filas nuevas, {e['Enviado']} "
-              f"envíos, {e['Respondio']} respuestas, {e['Nota']} notas.")
+              f"envíos, {e['Respondio']} respuestas, {e['Nota']} notas"
+              + (f", {e['NotaAlDia']} notas atrasadas puestas al día." if e["NotaAlDia"] else "."))
 
         print("\n" + "-" * 60)
         print("Cómo quedaron las dos copias:\n")

@@ -25,6 +25,11 @@ def _clave(fila: dict) -> tuple:
             fila.get("Flujo", ""), str(fila.get("Item", "")))
 
 
+def _fila_nueva(correo: str, flujo: str, item: str) -> dict:
+    """Una casilla sin nada registrado, con todas las columnas del esquema."""
+    return {**{c: "" for c in COLUMNAS_NOTAS}, "Correo": correo, "Flujo": flujo, "Item": str(item)}
+
+
 def leer(semestre_id: str | None = None, flujo: str | None = None,
          item: str | None = None) -> list[dict]:
     _migracion.asegurar(semestre_id)
@@ -58,8 +63,7 @@ def _upsert(correo: str, flujo: str, item: str, cambios: dict,
             fila.update(cambios)
             break
     else:
-        nueva = {"Correo": objetivo[0], "Flujo": flujo, "Item": str(item),
-                 "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": ""}
+        nueva = _fila_nueva(objetivo[0], flujo, item)
         nueva.update(cambios)
         filas.append(nueva)
 
@@ -78,21 +82,68 @@ def marcar_respondio(correo: str, flujo: str, item: str,
 
 
 def registrar_nota(correo: str, flujo: str, item: str, nota: str,
-                   originalidad: str = "", semestre_id: str | None = None) -> None:
+                   originalidad: str = "", semestre_id: str | None = None,
+                   *, logro: str = "") -> None:
+    """La nota que se le comunicó al alumno.
+
+    `logro` (de 0 a 1) se escribe siempre: una nota registrada sin logro, como
+    un ajuste fuera de la escala, queda fija aunque la escala cambie.
+    """
     _upsert(correo, flujo, item,
-            {"Nota": nota, "Originalidad": originalidad}, semestre_id)
+            {"Nota": nota, "Originalidad": originalidad, "Logro": logro}, semestre_id)
+
+
+def marcar_corregido(correo: str, flujo: str, item: str, cuando: str | None = None,
+                     logro: str = "", semestre_id: str | None = None) -> None:
+    """Quedó la corrección (del modelo o del docente), todavía sin mandar."""
+    _upsert(correo, flujo, item, {"Corregido": cuando or _ahora(), "Logro": logro}, semestre_id)
+
+
+def marcar_descartada(correo: str, flujo: str, item: str, cuando: str | None = None,
+                      semestre_id: str | None = None) -> None:
+    """El docente decidió no mandar feedback: la casilla se cierra sin nota."""
+    _upsert(correo, flujo, item, {"Descartada": cuando or _ahora()}, semestre_id)
+
+
+def _hay(fila: dict | None, campo: str) -> bool:
+    return bool(fila and (fila.get(campo) or "").strip())
 
 
 def ya_enviado(correo: str, flujo: str, item: str,
                semestre_id: str | None = None) -> bool:
-    e = estado(correo, flujo, item, semestre_id)
-    return bool(e and e.get("Enviado", "").strip())
+    return _hay(estado(correo, flujo, item, semestre_id), "Enviado")
 
 
 def ya_evaluado(correo: str, flujo: str, item: str,
                 semestre_id: str | None = None) -> bool:
-    e = estado(correo, flujo, item, semestre_id)
-    return bool(e and e.get("Nota", "").strip())
+    """Si tiene nota, es decir, si se le mandó el feedback con esa nota."""
+    return _hay(estado(correo, flujo, item, semestre_id), "Nota")
+
+
+def esta_corregida(fila: dict | None) -> bool:
+    """Si a esa casilla ya no hay que corregirla: tiene corrección, nota o descarte."""
+    return any(_hay(fila, c) for c in ("Corregido", "Nota", "Descartada"))
+
+
+def esta_por_revisar(fila: dict | None) -> bool:
+    """Corregida y sin mandar: con Corregido, sin Nota ni Descartada."""
+    return _hay(fila, "Corregido") and not _hay(fila, "Nota") and not _hay(fila, "Descartada")
+
+
+def ya_corregido(correo: str, flujo: str, item: str,
+                 semestre_id: str | None = None) -> bool:
+    """Si hay que dejar de corregir a ese alumno en ese ítem.
+
+    Es la pregunta de quien decide a quién llamar al modelo (y a quién mandarle
+    el correo de duplicado). Distinta de `ya_evaluado`, que dice si hay nota.
+    """
+    return esta_corregida(estado(correo, flujo, item, semestre_id))
+
+
+def por_revisar(correo: str, flujo: str, item: str,
+                semestre_id: str | None = None) -> bool:
+    """Si la corrección espera que el docente la revise (o que se reintente su envío)."""
+    return esta_por_revisar(estado(correo, flujo, item, semestre_id))
 
 
 def pendientes_de_envio(correos: list[str], flujo: str, item: str,
@@ -103,6 +154,23 @@ def pendientes_de_envio(correos: list[str], flujo: str, item: str,
         if f.get("Enviado", "").strip()
     }
     return [c for c in correos if c.strip().lower() not in enviados]
+
+
+def _misma_nota(a: str, b: str) -> bool:
+    """6,5 y 6.5 son la misma nota: tests escribe con coma y tareas con punto."""
+    a, b = (a or "").strip().replace(",", "."), (b or "").strip().replace(",", ".")
+    try:
+        return float(a) == float(b)
+    except ValueError:
+        return a == b
+
+
+def _nota_atrasada(en_tabla: str | None, historia: list[str]) -> bool:
+    """Si la nota de la tabla es una anterior del log y no la última."""
+    en_tabla = (en_tabla or "").strip()
+    if not en_tabla or not historia or _misma_nota(en_tabla, historia[-1]):
+        return False
+    return any(_misma_nota(en_tabla, n) for n in historia[:-1])
 
 
 def sincronizar_desde_log(semestre_id: str | None = None,
@@ -117,10 +185,16 @@ def sincronizar_desde_log(semestre_id: str | None = None,
     pendientes.
 
     **Solo agrega.** Crea la fila que falte y llena el campo que esté vacío;
-    nunca borra una fila ni pisa un valor ya escrito. Las dos razones: la tabla
-    también se edita a mano cuando el equipo docente corrige una nota, y los
-    semestres que vienen del esquema viejo tienen filas que el log no conoce
-    porque son anteriores a él.
+    nunca borra una fila ni pisa un valor escrito a mano. Las dos razones: la
+    tabla también se edita a mano cuando el equipo docente corrige una nota, y
+    los semestres que vienen del esquema viejo tienen filas que el log no
+    conoce porque son anteriores a él.
+
+    La única nota que se reemplaza es la atrasada: si la de la tabla es una de
+    las notas anteriores que el log fue dejando (`historia_nota`) y no la
+    última, falta un ajuste o un recálculo que llegó por el log de otro equipo,
+    y se pone la última. Una nota que el log nunca tuvo es una edición a mano y
+    no se toca. Esas se cuentan aparte, en `NotaAlDia`.
 
     Con `simular` dice cuánto cambiaría sin escribir nada.
     """
@@ -128,7 +202,8 @@ def sincronizar_desde_log(semestre_id: str | None = None,
     filas = _csv.leer(NOTAS, semestre_id)
     indice = {_clave(f): f for f in filas}
 
-    resumen = {"FilasNuevas": 0, "Enviado": 0, "Respondio": 0, "Nota": 0}
+    resumen = {"FilasNuevas": 0, "Enviado": 0, "Respondio": 0, "Nota": 0,
+               "Corregido": 0, "Logro": 0, "Descartada": 0, "NotaAlDia": 0}
 
     for clave, desde_log in _log.reconstruir_estado(semestre_id).items():
         correo, flujo, item = clave
@@ -136,13 +211,19 @@ def sincronizar_desde_log(semestre_id: str | None = None,
             continue
         fila = indice.get(clave)
         if fila is None:
-            fila = {"Correo": correo, "Flujo": flujo, "Item": str(item),
-                    "Enviado": "", "Respondio": "", "Nota": "", "Originalidad": ""}
+            fila = _fila_nueva(correo, flujo, item)
             filas.append(fila)
             indice[clave] = fila
             resumen["FilasNuevas"] += 1
 
-        for campo in ("Enviado", "Respondio", "Nota"):
+        if _nota_atrasada(fila.get("Nota"), desde_log.get("historia_nota") or []):
+            fila["Nota"] = desde_log.get("Nota", "")
+            fila["Logro"] = desde_log.get("Logro", "")
+            if (desde_log.get("Originalidad") or "").strip():
+                fila["Originalidad"] = desde_log["Originalidad"]
+            resumen["NotaAlDia"] += 1
+
+        for campo in ("Enviado", "Respondio", "Nota", "Corregido", "Logro", "Descartada"):
             valor = (desde_log.get(campo) or "").strip()
             if valor and not (fila.get(campo) or "").strip():
                 fila[campo] = valor

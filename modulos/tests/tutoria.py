@@ -42,20 +42,28 @@ def _anunciar_semestre() -> str:
     return sid
 
 
-def _pendientes(semana: int | None = None) -> list[tuple[dict, dict]]:
-    """Correos sin leer que contestan a un feedback nuestro.
+def _pendientes(semana: int | None = None,
+                de_tareas: list | None = None) -> list[tuple[dict, dict]]:
+    """Correos sin leer que contestan a un feedback nuestro de tests.
 
     Devuelve pares (correo entrante, evento que lo originó). El emparejamiento
     es por In-Reply-To contra el MessageId de una 'evaluacion' o una 'tutoria';
     por eso solo se reconocen los feedback enviados desde que ese id se guarda.
+
+    Los que contestan a un feedback de Tareas no se atienden acá (las preguntas
+    de una tarea no son las de un test): se dejan sin leer y, si se pasa
+    `de_tareas`, se agregan ahí para contarlos.
     """
     salida = []
     for corr in buscar_no_leidos():
         irt = (corr.get("in_reply_to") or "").strip()
         if not irt:
             continue
-        origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE)
+        origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE, flujo=_datos.TESTS)
         if not origen:
+            if de_tareas is not None and _datos.log.fila_por_message_id(
+                    irt, eventos=_esquema.DEL_AGENTE + ("feedback",), flujo=_datos.TAREAS):
+                de_tareas.append(corr)
             continue
         if semana is not None and str(origen.get("Item")) != str(semana):
             continue
@@ -66,9 +74,13 @@ def _pendientes(semana: int | None = None) -> list[tuple[dict, dict]]:
 def main(semana: int | None = None, dry_run: bool = False) -> None:
     _anunciar_semestre()
 
-    pendientes = _pendientes(semana)
+    de_tareas = []
+    pendientes = _pendientes(semana, de_tareas)
     ambito = f"semana {semana}" if semana is not None else "todas las semanas"
     print(f"Dudas sobre el feedback ({ambito}): {len(pendientes)}")
+    if de_tareas:
+        print(f"{len(de_tareas)} respuesta(s) a feedback de Tareas: sin tutoría automática; "
+              "quedan sin leer para revisarlas en Gmail.")
     if not pendientes:
         print("Nada que responder.")
         return

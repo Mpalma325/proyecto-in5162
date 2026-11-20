@@ -25,6 +25,13 @@ COLUMNAS_NOTAS = [
     "Enviado",        # ISO 8601, vacío si todavía no se le envió
     "Respondio",      # ISO 8601, vacío si no ha respondido
     "Nota", "Originalidad",
+    # Para la revisión docente y la escala de notas. Las filas viejas los tienen
+    # vacíos y se leen igual que antes.
+    "Corregido",      # ISO 8601: cuándo quedó la corrección (del modelo o del docente).
+                      # Con Nota vacía significa "corregida, sin enviar".
+    "Logro",          # de 0 a 1, con cuatro decimales (tests); vacío en tareas y en
+                      # ajustes fuera de escala
+    "Descartada",     # ISO 8601: el docente decidió no mandar feedback
 ]
 
 # Qué pasó. Una fila por EVENTO, nunca se edita ni se reescribe: solo se agrega
@@ -40,6 +47,9 @@ EVENTOS = (
     "ajuste",       # alguien del equipo docente cambió la nota a mano (motivo en Detalle)
     "feedback",     # salió el correo de una corrección que se guardó para revisarla antes (tareas)
     "error",
+    "correccion",   # la corrección propuesta (del modelo o del docente), antes de mandarla
+    "descarte",     # el docente decidió no mandar feedback (motivo y quién en Detalle)
+    "recalculo",    # la nota cambió porque cambió la escala del semestre
 )
 
 COLUMNAS_LOG = [
@@ -59,11 +69,14 @@ COLUMNAS_LOG = [
     "Respuesta",      # lo que escribió el alumno ('respuesta' y 'repregunta')
     "EvaluacionIA",   # lo que devolvió el modelo ('evaluacion' y 'tutoria')
     "Detalle",        # en 'error': el mensaje
+    "Puntajes",       # puntaje de cada pregunta, separados por ";" (p. ej. "3;2;0.5")
+    "Logro",          # de 0 a 1: puntaje obtenido / puntaje máximo
 ]
 
 # Eventos que son un mensaje del alumno, y su contraparte del agente.
 DEL_ALUMNO = ("respuesta", "repregunta")
-DEL_AGENTE = ("evaluacion", "tutoria")
+# Un 'ajuste' solo calza con un correo del alumno cuando se le avisó (trae MessageId).
+DEL_AGENTE = ("evaluacion", "tutoria", "ajuste")
 
 # Los dos flujos del curso
 TESTS = "test"

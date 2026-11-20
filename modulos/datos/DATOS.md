@@ -28,8 +28,8 @@ una función de acá necesita eso, va en el flujo que la llama.
 Librería estándar y `modulos.semestre` (que resuelve dónde están los archivos).
 **No importa `mail` ni `ia`**: quien orquesta los tres es el flujo (`tests`,
 `tareas`), no este módulo. Tampoco pandas: la reportería devuelve listas de
-diccionarios y quien quiera un DataFrame lo arma en la app, que es donde pandas
-ya vive. Así estas agregaciones sirven igual desde un script o un servidor.
+diccionarios y quien quiera un DataFrame lo arma por su cuenta. Así estas
+agregaciones sirven igual desde un script, el motor o el navegador.
 
 ## Los eventos del log
 

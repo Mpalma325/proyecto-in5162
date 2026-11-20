@@ -45,8 +45,8 @@ def activo_o_error() -> str:
     valor = activo()
     if not valor:
         raise RuntimeError(
-            f"No hay un semestre activo en {ACTIVO_FILE}. Créalo desde la "
-            f"página Datos y Configuración de la app antes de ejecutar scripts."
+            f"No hay un semestre activo en {ACTIVO_FILE}. Créalo con semestre.crear "
+            f"y semestre.activar, o trae la carpeta de uno ya corrido, antes de ejecutar scripts."
         )
     return valor
 

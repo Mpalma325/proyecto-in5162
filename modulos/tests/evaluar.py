@@ -141,8 +141,32 @@ def _es_repregunta(corr: dict) -> bool:
     irt = (corr.get("in_reply_to") or "").strip()
     if not irt:
         return False
-    origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE)
+    origen = _datos.log.fila_por_message_id(irt, eventos=_esquema.DEL_AGENTE, flujo=_datos.TESTS)
     return origen is not None
+
+
+def _sin_angulos(message_id: str | None) -> str:
+    return (message_id or "").strip().strip("<>")
+
+
+def _respuestas_registradas() -> set[str]:
+    """Los Message-ID de los correos de alumnos que ya se procesaron.
+
+    Son los de cada 'respuesta' de tests del log, también las que llegaron
+    duplicadas. Se lee el log una sola vez por corrida, no una por correo.
+    """
+    return {_sin_angulos(f.get("MessageId"))
+            for f in _datos.log.leer(flujo=_datos.TESTS, evento="respuesta")
+            if _sin_angulos(f.get("MessageId"))}
+
+
+def _ya_corregido_texto(estado: dict) -> str:
+    nota = (estado.get("Nota") or "").strip()
+    if nota:
+        return f"ya tenía nota ({nota})"
+    if (estado.get("Descartada") or "").strip():
+        return "su corrección se descartó"
+    return "ya estaba corregido, por revisar"
 
 
 def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> None:
@@ -177,8 +201,21 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
     repreguntas = 0
     candidatos = []  # lo que se evaluaría, para elegir en la página
     no_elegidos = 0
+    ya_procesados = 0
+    registradas = _respuestas_registradas()
 
     for corr in avanzar(correos, "respuestas"):
+        # Un correo que ya está en el log se procesó en una corrida anterior
+        # que no alcanzó a marcarlo como leído (falló el buzón o se cortó el
+        # trabajo). Solo falta marcarlo: volver a tratarlo le mandaba al alumno
+        # el correo de "ya respondiste" por su propia respuesta.
+        if _sin_angulos(corr.get("message_id")) in registradas:
+            ya_procesados += 1
+            quien = (_identificar_alumno(corr, semana, filas) or {}).get("Nombre") or corr.get("remitente", "?")
+            print(f"  ✓ {quien:30s} ya procesado en una corrida anterior; solo se marca leído")
+            procesados.append(corr["uid"])
+            continue
+
         # Si contesta a un feedback que ya le mandamos, no es una respuesta
         # atrasada: es una duda sobre su corrección. Se deja sin leer para que
         # la recoja `python -m modulos.tests.tutoria`. Sin esto el alumno
@@ -209,12 +246,14 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             print(f"  ⋯ {nombre:30s} no elegido: su correo queda sin leer")
             continue
 
-        # No se re-evalúa a quien ya tiene nota: gasta API y le manda un
-        # correo repetido al alumno.
-        nota_existente = (_datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {}).get("Nota", "").strip()
-        if nota_existente or correo_alumno.lower() in ya_evaluados_en_esta_corrida:
+        # No se re-corrige a quien ya está corregido (con nota, por revisar o
+        # descartado): gasta API y le manda un correo repetido al alumno.
+        estado_previo = _datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {}
+        if _datos.notas.esta_corregida(estado_previo) or correo_alumno.lower() in ya_evaluados_en_esta_corrida:
             duplicados += 1
-            print(f"  ⊘ {nombre:30s} ya tenía nota ({nota_existente or 'evaluado en esta corrida'})")
+            motivo = (_ya_corregido_texto(estado_previo) if _datos.notas.esta_corregida(estado_previo)
+                      else "ya tenía nota (evaluado en esta corrida)")
+            print(f"  ⊘ {nombre:30s} {motivo}")
 
             if not dry_run:
                 try:
@@ -228,6 +267,16 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
                     )
                 except Exception as e:
                     print(f"     ✗ Error mandando correo de duplicado: {e}")
+                # Queda en el log como respuesta duplicada: no cuenta como su
+                # respuesta, pero el equipo docente puede ver qué mandó, y si el
+                # correo vuelve a aparecer sin leer se reconoce por su Message-ID.
+                _datos.log.registrar("respuesta", _datos.TESTS, semana, correo_alumno.lower(),
+                                     Ronda=0, MessageId=corr.get("message_id") or "",
+                                     RespondeA=corr.get("in_reply_to") or "",
+                                     Respuesta=corr.get("texto", "").strip(),
+                                     Detalle=_datos.log.DUPLICADO)
+                if _sin_angulos(corr.get("message_id")):
+                    registradas.add(_sin_angulos(corr.get("message_id")))
             else:
                 mostrar_correo(correo_alumno, asunto_respuesta,
                                _construir_cuerpo_duplicado(template_duplicado, nombre),
@@ -284,8 +333,12 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             _fecha = corr.get("fecha").isoformat() if corr.get("fecha") else None
             _datos.notas.marcar_respondio(_c, _datos.TESTS, semana, _fecha)
             _datos.notas.registrar_nota(_c, _datos.TESTS, semana, nota, originalidad)
+            # Con su Message-ID se reconoce después si el correo vuelve a
+            # aparecer sin leer; RespondeA dice a qué envío contestó.
             _datos.log.registrar("respuesta", _datos.TESTS, semana, _c,
-                                 Ronda=0, Respuesta=respuesta_alumno)
+                                 Ronda=0, MessageId=corr.get("message_id") or "",
+                                 RespondeA=corr.get("in_reply_to") or "",
+                                 Respuesta=respuesta_alumno)
             # El MessageId del feedback es lo que después permite reconocer una
             # repregunta del alumno sobre esta corrección. Antes se generaba y
             # se descartaba, y por eso una repregunta era indistinguible de una
@@ -320,8 +373,8 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             print(f"  Las {evaluados} evaluaciones SÍ quedaron guardadas y los "
                   f"correos ya se enviaron. No hay que repetir nada.")
             print(f"  Quedan {len(procesados)} correos sin marcar en el buzón. "
-                  f"Volver a correr este paso es seguro: los que ya tienen nota "
-                  f"no se re-evalúan, solo se marcan.")
+                  f"Volver a correr este paso es seguro: los que ya se procesaron "
+                  f"se reconocen y solo se marcan, sin mandar nada.")
 
     if dry_run:
         _candidatos.guardar("tests_semanales", semana, candidatos)
@@ -330,7 +383,8 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
 
     if correos:
         print(f"\nEvaluados: {evaluados}  Duplicados: {duplicados}  Sin identificar: {sin_alumno}  Fallidos: {fallidos}"
-              + (f"  No elegidos: {no_elegidos}" if no_elegidos else ""))
+              + (f"  No elegidos: {no_elegidos}" if no_elegidos else "")
+              + (f"  Ya procesados antes: {ya_procesados}" if ya_procesados else ""))
         if repreguntas:
             print(f"Repreguntas sobre el feedback: {repreguntas} (sin leer; las atiende: python -m modulos.tests.tutoria {semana})")
 

@@ -232,4 +232,40 @@ for sem, filas in paneles.items():
     check(f"{sem}: pendientes de evaluar cuadra con el KPI",
           len(reportes.pendientes_de_evaluar(filas)) == total["PendientesEvaluar"])
 
+titulo("13. las columnas nuevas del panel: vacías en lo ya hecho, y salen del estado")
+NUEVAS = ["Logro", "NotaModelo", "PorRevisar", "Descartada"]
+for sem in SEMESTRES:
+    filas = reportes.panel(sem)
+    if not filas:
+        continue
+    check(f"{sem}: las cuatro van al final y en orden", list(filas[0])[-4:] == NUEVAS, list(filas[0])[-6:])
+    check(f"{sem}: una casilla con nota no está por revisar ni descartada",
+          not any((f["PorRevisar"] or f["Descartada"]) and f["Nota"] is not None for f in filas))
+    check(f"{sem}: ninguna está por revisar y descartada a la vez",
+          not any(f["PorRevisar"] and f["Descartada"] for f in filas))
+    check(f"{sem}: PorRevisar y Descartada son booleanas, como las demás de BOOLEANAS",
+          all(isinstance(f["PorRevisar"], bool) and isinstance(f["Descartada"], bool) for f in filas))
+    check(f"{sem}: NotaModelo vacía hasta que exista la corrección en el log",
+          all(f["NotaModelo"] is None for f in filas))
+
+from comun import semestre_desechable  # noqa: E402
+from modulos import datos  # noqa: E402
+
+with semestre_desechable(sid="_tmp_reportes_panel") as (sid, _tmp):
+    casillas = [f for f in datos.notas.leer(sid, flujo=datos.TESTS) if not f["Nota"].strip()][:3]
+    por_revisar, descartada, con_logro = [(f["Correo"], f["Item"]) for f in casillas]
+    datos.notas.marcar_corregido(por_revisar[0], datos.TESTS, por_revisar[1], logro="0.8333", semestre_id=sid)
+    datos.notas.marcar_corregido(descartada[0], datos.TESTS, descartada[1], semestre_id=sid)
+    datos.notas.marcar_descartada(descartada[0], datos.TESTS, descartada[1], semestre_id=sid)
+    datos.notas.registrar_nota(con_logro[0], datos.TESTS, con_logro[1], "6,5", semestre_id=sid, logro="0.9167")
+    por_casilla = {(f["Correo"], f["Item"]): f for f in reportes.panel(sid)}
+    f = por_casilla[(por_revisar[0].lower(), por_revisar[1])]
+    check("corregida sin nota: por revisar, con su logro", f["PorRevisar"] and not f["Descartada"]
+          and f["Logro"] == 0.8333 and f["Nota"] is None, f)
+    f = por_casilla[(descartada[0].lower(), descartada[1])]
+    check("descartada: no queda por revisar", f["Descartada"] and not f["PorRevisar"], f)
+    f = por_casilla[(con_logro[0].lower(), con_logro[1])]
+    check("con nota: ni por revisar ni descartada, y el logro como número",
+          not f["PorRevisar"] and not f["Descartada"] and f["Logro"] == 0.9167 and f["Nota"] == 6.5, f)
+
 sys.exit(resultado())

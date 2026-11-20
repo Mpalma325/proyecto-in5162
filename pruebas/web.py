@@ -1,5 +1,5 @@
 """
-El sitio web calcula exactamente lo mismo que Streamlit.
+El sitio web calcula exactamente lo mismo que reportes.py.
 
 La página no reimplementa las métricas: corre modulos/datos/agregaciones.py con
 Pyodide, a través de un puente escrito en app.js. Acá se ejecuta ese mismo
@@ -7,7 +7,7 @@ puente con Python normal, sobre los semestres reales, y se compara carácter por
 carácter contra lo que calcula reportes.py. No usa red ni navegador.
 
 Los tres problemas que motivaron esto aparecieron al construir el sitio:
-- JavaScript serializa 7.0 como 7, y la página mostraba "7" donde Streamlit
+- JavaScript serializa 7.0 como 7, y la página mostraba "7" donde Python
   muestra "7.0".
 - El orden de los alumnos empatados en nota dependía del orden de las filas de
   entrada, y la base de datos las devuelve en otro orden que los CSV.
@@ -122,6 +122,24 @@ columnas_ts = re.search(r"const COLUMNAS = \[(.*?)\]", WORKER.read_text(encoding
 orden_ts = re.findall(r'"([A-Za-z]+)"', columnas_ts.group(1)) if columnas_ts else []
 check("mismo orden que reportes.panel()", orden_ts == list(local[0].keys()),
       f"{orden_ts} vs {list(local[0].keys())}")
+booleanas_ts = re.search(r"const BOOLEANAS = new Set\(\[(.*?)\]\)", WORKER.read_text(encoding="utf-8"), re.S)
+booleanas_ts = set(re.findall(r'"([A-Za-z]+)"', booleanas_ts.group(1))) if booleanas_ts else set()
+booleanas_py = {c for c, v in local[0].items() if isinstance(v, bool)}
+check("BOOLEANAS son justo las que en Python son bool", booleanas_ts == booleanas_py,
+      f"{sorted(booleanas_ts)} vs {sorted(booleanas_py)}")
+migraciones = sorted((RAIZ / "web" / "migrations").glob("*.sql"))
+esquema = migraciones[0].read_text(encoding="utf-8")
+tabla = re.search(r"CREATE TABLE IF NOT EXISTS panel \((.*?)\n\);", esquema, re.S)
+en_tabla = re.findall(r"^\s+([A-Za-z]+)\s+(?:TEXT|INTEGER|REAL)", tabla.group(1), re.M) if tabla else []
+# Las columnas que se sumaron después de la 0001 llegan con ALTER TABLE, en orden.
+alter = [c for m in migraciones[1:]
+         for c in re.findall(r"^ALTER TABLE panel ADD COLUMN (\w+) \w+;$", m.read_text(encoding="utf-8"), re.M)]
+check("la tabla panel (0001 + ALTER de las migraciones) tiene cada columna, en el mismo orden",
+      [c for c in en_tabla + alter if c not in ("semestre", "Correo", "Item")]
+      == [c for c in orden_ts if c not in ("Correo", "Item")]
+      and {"Correo", "Item"} <= set(en_tabla), en_tabla + alter)
+check("las cuatro columnas nuevas llegan con una migración, una por sentencia",
+      alter == ["Logro", "NotaModelo", "PorRevisar", "Descartada"] == orden_ts[-4:], alter)
 
 titulo("6. la página de datos guarda los CSV sin alterarlos")
 # Abrir alumnos.csv o preguntas.csv en la página y guardarlo sin tocar nada

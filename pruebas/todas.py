@@ -6,7 +6,7 @@ import sys
 
 AQUI = pathlib.Path(__file__).resolve().parent
 RAIZ = AQUI.parent
-ARCHIVOS = ["limpieza_correos.py", "correos_en_salida.py", "versiones_prompt.py", "contexto_curso.py", "ajuste_notas.py", "sabana.py", "e2e_tests_semanales.py", "e2e_tareas.py", "reportes.py", "web.py", "motor.py", "app_paginas.py",
+ARCHIVOS = ["limpieza_correos.py", "correos_en_salida.py", "versiones_prompt.py", "contexto_curso.py", "ajuste_notas.py", "esquema_nuevo.py", "escala.py", "simulaciones.py", "sabana.py", "e2e_tests_semanales.py", "e2e_tareas.py", "reportes.py", "web.py", "motor.py",
              "entregas_zip.py",
              "chequeo_tareas.py", "chequeo_correos.py", "citas_tareas.py", "segunda_oportunidad.py",
              "instalador.py"]

@@ -1,0 +1,329 @@
+"""
+El esquema común de notas.csv y del log: lo que necesitan la revisión docente y
+la escala de notas, sin que cambie nada de lo que ya funciona.
+
+Corre sobre la plantilla, con tablas armadas acá y nombres inventados: no lee
+datos de alumnos reales.
+"""
+
+import csv
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, ".")
+sys.path.insert(0, "pruebas")
+from comun import check, resultado, semestre_desechable, titulo  # noqa: E402
+
+
+def _escribir_csv(ruta, campos, filas):
+    with ruta.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=campos)
+        w.writeheader()
+        w.writerows(filas)
+
+
+def _leer_csv(ruta):
+    with ruta.open(encoding="utf-8-sig", newline="") as f:
+        lector = csv.DictReader(f)
+        return lector.fieldnames, list(lector)
+
+
+def escritura_que_conserva(tmp, sid):
+    from modulos.datos import _csv, alumnos
+    from modulos.datos.esquema import COLUMNAS_NOTAS, NOTAS
+
+    titulo("1. escribir conserva las columnas que no conoce")
+    ruta = tmp / NOTAS
+    viejas = ["Correo", "Flujo", "Item", "Enviado", "Respondio", "Nota", "Originalidad"]
+    _escribir_csv(ruta, viejas[:3] + ["Comentario"] + viejas[3:], [
+        {"Correo": "ana.prueba@correo.test", "Flujo": "test", "Item": "1", "Comentario": "revisar",
+         "Enviado": "2026-11-02T09:00:00-03:00", "Respondio": "", "Nota": "", "Originalidad": ""},
+    ])
+    _, filas = _leer_csv(ruta)
+    _csv.escribir(NOTAS, filas, COLUMNAS_NOTAS, sid)
+    campos, filas = _leer_csv(ruta)
+    check("la columna desconocida sigue ahí, con su valor",
+          "Comentario" in campos and filas[0]["Comentario"] == "revisar", (campos, filas))
+    check("primero las del llamador, después las que solo tenía el archivo",
+          campos == list(COLUMNAS_NOTAS) + ["Comentario"], campos)
+    check("no queda el archivo temporal", not (tmp / (NOTAS + ".tmp")).exists())
+
+    titulo("2. si la escritura falla a mitad, queda el archivo anterior entero")
+    antes = ruta.read_bytes()
+    real = csv.DictWriter
+
+    class DictWriterQueFalla(real):
+        def writerow(self, fila):
+            self.n = getattr(self, "n", 0) + 1
+            if self.n == 3:  # la cabecera no pasa por acá: es la fila 3 de datos
+                raise OSError("disco lleno")
+            return super().writerow(fila)
+
+    filas_nuevas = [dict(filas[0], Item=str(i)) for i in range(1, 6)]
+    with patch.object(_csv.csv, "DictWriter", DictWriterQueFalla):
+        try:
+            _csv.escribir(NOTAS, filas_nuevas, COLUMNAS_NOTAS, sid)
+            check("la falla llega al llamador", False, "no levantó")
+        except OSError:
+            check("la falla llega al llamador", True)
+    check("el archivo anterior quedó igual, byte a byte", ruta.read_bytes() == antes)
+    check("y sin el temporal a medio escribir", not (tmp / (NOTAS + ".tmp")).exists())
+
+    titulo("3. alumnos.csv conserva las columnas del profesor al asignar grupos")
+    _escribir_csv(tmp / "alumnos.csv", ["Nombre", "Correo", "CorreosAlternativos", "Grupo"], [
+        {"Nombre": "Ana Prueba", "Correo": "ana.prueba@correo.test",
+         "CorreosAlternativos": "ana.otra@correo.test", "Grupo": ""},
+        {"Nombre": "Beto Ensayo", "Correo": "beto.ensayo@correo.test",
+         "CorreosAlternativos": "", "Grupo": ""},
+    ])
+    alumnos.asignar_grupos_faltantes(7, sid)
+    campos, filas = _leer_csv(tmp / "alumnos.csv")
+    check("los grupos quedaron asignados", all(f["Grupo"] for f in filas), filas)
+    check("CorreosAlternativos sigue con su valor",
+          "CorreosAlternativos" in campos and filas[0]["CorreosAlternativos"] == "ana.otra@correo.test",
+          (campos, filas))
+
+
+COLUMNAS_NOTAS_VIEJAS = ["Correo", "Flujo", "Item", "Enviado", "Respondio", "Nota", "Originalidad"]
+COLUMNAS_LOG_VIEJAS = ["Timestamp", "Semestre", "Flujo", "Item", "Correo", "Evento", "MessageId",
+                       "RespondeA", "Ronda", "Modelo", "Versiones", "TokensEntrada", "TokensSalida",
+                       "Nota", "Originalidad", "Respuesta", "EvaluacionIA", "Detalle"]
+
+
+def columnas_y_eventos_nuevos(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, COLUMNAS_NOTAS, DEL_AGENTE, LOG, NOTAS
+
+    titulo("4. el esquema trae las columnas y eventos de la revisión")
+    check("notas.csv: Corregido, Logro y Descartada al final",
+          COLUMNAS_NOTAS == COLUMNAS_NOTAS_VIEJAS + ["Corregido", "Logro", "Descartada"], COLUMNAS_NOTAS)
+    check("log: Puntajes y Logro al final",
+          COLUMNAS_LOG == COLUMNAS_LOG_VIEJAS + ["Puntajes", "Logro"], COLUMNAS_LOG)
+    check("un ajuste avisado cuenta como mensaje del agente", "ajuste" in DEL_AGENTE)
+
+    titulo("5. un notas.csv y un log viejos ganan las columnas nuevas al escribir")
+    _escribir_csv(tmp / NOTAS, COLUMNAS_NOTAS_VIEJAS, [
+        {"Correo": "ana.prueba@correo.test", "Flujo": "test", "Item": "2",
+         "Enviado": "2026-11-02T09:00:00-03:00", "Respondio": "", "Nota": "6,5", "Originalidad": "Media"},
+    ])
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG_VIEJAS, [
+        {"Timestamp": "2026-11-02T09:00:00-03:00", "Semestre": sid, "Flujo": "test", "Item": "2",
+         "Correo": "ana.prueba@correo.test", "Evento": "envio"},
+    ])
+    datos.notas.marcar_enviado("beto.ensayo@correo.test", "test", "2", semestre_id=sid)
+    campos, filas = _leer_csv(tmp / NOTAS)
+    check("notas.csv quedó con el esquema nuevo", campos == COLUMNAS_NOTAS, campos)
+    vieja = next(f for f in filas if f["Correo"] == "ana.prueba@correo.test")
+    check("la fila vieja conserva lo suyo y queda con las nuevas vacías",
+          vieja["Nota"] == "6,5" and vieja["Originalidad"] == "Media"
+          and not (vieja["Corregido"] or vieja["Logro"] or vieja["Descartada"]), vieja)
+
+    for evento in ("correccion", "descarte", "recalculo"):
+        datos.log.registrar(evento, "test", "2", "ana.prueba@correo.test", sid,
+                            Puntajes="3;2", Logro="0.8333", Nota="6,5")
+    campos, filas = _leer_csv(tmp / LOG)
+    check("el log quedó con Puntajes y Logro al final", campos == COLUMNAS_LOG, campos)
+    check("los tres eventos nuevos se registran",
+          [f["Evento"] for f in filas[1:]] == ["correccion", "descarte", "recalculo"], filas)
+    check("con sus puntajes y su logro",
+          all(f["Puntajes"] == "3;2" and f["Logro"] == "0.8333" for f in filas[1:]), filas[1:])
+    check("la fila vieja del log sigue entera", filas[0]["Evento"] == "envio" and not filas[0]["Logro"])
+    try:
+        datos.log.registrar("inventado", "test", "2", "ana.prueba@correo.test", sid)
+        check("un evento desconocido sigue rechazándose", False)
+    except ValueError:
+        check("un evento desconocido sigue rechazándose", True)
+
+
+def estados_de_una_casilla(tmp, sid):
+    from modulos import datos
+    n = datos.notas
+
+    titulo("6. corregida, por revisar, descartada y con nota")
+    ana, beto = "ana.prueba@correo.test", "beto.ensayo@correo.test"
+    n.marcar_enviado(ana, "test", "3", semestre_id=sid)
+    n.marcar_respondio(ana, "test", "3", semestre_id=sid)
+    check("respondió y sin corregir: hay que corregirla",
+          not n.ya_corregido(ana, "test", "3", sid) and not n.por_revisar(ana, "test", "3", sid))
+    check("una casilla que no existe tampoco está corregida", not n.ya_corregido("nadie@correo.test", "test", "3", sid))
+
+    n.marcar_corregido(ana, "test", "3", "2026-11-02T09:41:07-03:00", logro="0.8333", semestre_id=sid)
+    fila = n.estado(ana, "test", "3", sid)
+    check("corregida: ya no se corrige de nuevo", n.ya_corregido(ana, "test", "3", sid))
+    check("y queda por revisar, sin nota", n.por_revisar(ana, "test", "3", sid)
+          and not n.ya_evaluado(ana, "test", "3", sid))
+    check("guarda cuándo y el logro", fila["Corregido"] == "2026-11-02T09:41:07-03:00"
+          and fila["Logro"] == "0.8333", fila)
+
+    n.registrar_nota(ana, "test", "3", "6,5", "Media", sid, logro="0.8333")
+    fila = n.estado(ana, "test", "3", sid)
+    check("con nota: deja de estar por revisar", not n.por_revisar(ana, "test", "3", sid)
+          and n.ya_evaluado(ana, "test", "3", sid) and n.ya_corregido(ana, "test", "3", sid))
+    check("la nota se guarda con su logro", fila["Nota"] == "6,5" and fila["Logro"] == "0.8333", fila)
+    n.registrar_nota(ana, "test", "3", "3,0", "Media", sid)
+    check("una nota registrada sin logro lo deja vacío (queda fija ante la escala)",
+          n.estado(ana, "test", "3", sid)["Logro"] == "")
+
+    n.marcar_corregido(beto, "test", "3", semestre_id=sid)
+    n.marcar_descartada(beto, "test", "3", semestre_id=sid)
+    check("descartada: cerrada, sin nota y fuera de por revisar",
+          n.ya_corregido(beto, "test", "3", sid) and not n.por_revisar(beto, "test", "3", sid)
+          and not n.ya_evaluado(beto, "test", "3", sid))
+    check("con fecha en Descartada", bool(n.estado(beto, "test", "3", sid)["Descartada"]))
+    check("una nota sola (legado, sin Corregido) también cuenta como corregida",
+          n.esta_corregida({"Nota": "6,0"}) and not n.esta_por_revisar({"Nota": "6,0"}))
+
+
+def _evento(ts, evento, correo, flujo="test", item="4", **campos):
+    return {"Timestamp": f"2026-11-0{ts}T10:00:00-03:00", "Semestre": "_tmp_esquema", "Flujo": flujo,
+            "Item": item, "Correo": correo, "Evento": evento, **campos}
+
+
+CARLA, DIEGO, ELISA = "carla.prueba@correo.test", "diego.ensayo@correo.test", "elisa.muestra@correo.test"
+LOG_DE_PRUEBA = [
+    _evento(1, "envio", CARLA),
+    _evento(2, "respuesta", CARLA, Respuesta="mi respuesta de verdad", MessageId="<c1@correo.test>"),
+    _evento(2, "correccion", CARLA, Logro="0.8333", Nota="6,5"),
+    _evento(3, "evaluacion", CARLA, Nota="6,5", Originalidad="Media", Logro="0.8333"),
+    _evento(4, "respuesta", CARLA, Respuesta="la mando otra vez", MessageId="<c2@correo.test>",
+            Detalle="duplicado"),
+    _evento(5, "ajuste", CARLA, Nota="7,0"),
+    _evento(6, "recalculo", CARLA, Nota="6,8", Logro="0.9333"),
+    _evento(1, "envio", DIEGO),
+    _evento(2, "respuesta", DIEGO, Respuesta="respuesta de diego"),
+    _evento(3, "correccion", DIEGO, Logro="0.5"),
+    _evento(4, "descarte", DIEGO, Detalle="respondió otra pregunta; por profe@correo.test"),
+    # Tareas con segunda oportunidad: dos respuestas legítimas, se corrige la segunda.
+    _evento(1, "respuesta", ELISA, flujo="tarea", item="T1", Respuesta="primera entrega"),
+    _evento(3, "respuesta", ELISA, flujo="tarea", item="T1", Respuesta="segunda oportunidad"),
+    _evento(4, "evaluacion", ELISA, flujo="tarea", item="T1", Nota="5.5"),
+]
+
+
+def estado_desde_el_log(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, LOG
+
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, LOG_DE_PRUEBA)
+    estado = datos.log.reconstruir_estado(sid)
+
+    titulo("7. reconstruir_estado con corrección, duplicado, ajuste y recálculo")
+    carla = estado[(CARLA, "test", "4")]
+    check("Respondio es la respuesta que se corrigió, no el duplicado",
+          carla["Respondio"] == "2026-11-02T10:00:00-03:00", carla["Respondio"])
+    check("Corregido sale de la corrección", carla["Corregido"] == "2026-11-02T10:00:00-03:00")
+    check("la última nota manda (el recálculo), con su logro",
+          carla["Nota"] == "6,8" and carla["Logro"] == "0.9333", carla)
+    check("la originalidad sigue siendo la de la evaluación", carla["Originalidad"] == "Media")
+    check("historia_nota guarda las notas en orden", carla["historia_nota"] == ["6,5", "7,0", "6,8"],
+          carla["historia_nota"])
+    diego = estado[(DIEGO, "test", "4")]
+    check("el descarte llena Descartada y no pone nota",
+          diego["Descartada"] == "2026-11-04T10:00:00-03:00" and not diego["Nota"], diego)
+
+    titulo("8. la vista por casilla no confunde el duplicado con la respuesta")
+    vista = {(f["Correo"], f["Item"]): f for f in datos.log.como_interacciones(sid)}
+    check("Tests: la respuesta es la que se corrigió",
+          vista[(CARLA, "4")]["Respuesta"] == "mi respuesta de verdad", vista[(CARLA, "4")])
+    check("y su fecha también", vista[(CARLA, "4")]["FechaRespuesta"] == "2026-11-02T10:00:00-03:00")
+    check("Tareas con segunda oportunidad: la última respuesta, que es la corregida",
+          vista[(ELISA, "T1")]["Respuesta"] == "segunda oportunidad", vista[(ELISA, "T1")])
+    check("y Respondio también es la segunda",
+          estado[(ELISA, "tarea", "T1")]["Respondio"] == "2026-11-03T10:00:00-03:00")
+
+
+FRANCO = "franco.ejemplo@correo.test"
+
+
+def sincronizar_y_comparar(tmp, sid):
+    import io
+    import shutil
+    from contextlib import redirect_stdout
+
+    from modulos import datos
+    from modulos.datos import comparar
+    from modulos.datos.esquema import COLUMNAS_LOG, COLUMNAS_NOTAS, LOG, NOTAS
+
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, LOG_DE_PRUEBA + [
+        _evento(2, "evaluacion", FRANCO, Nota="5,0", Originalidad="Baja"),
+        _evento(3, "ajuste", FRANCO, Nota="6,0"),
+    ])
+    vacia = {c: "" for c in COLUMNAS_NOTAS}
+    _escribir_csv(tmp / NOTAS, COLUMNAS_NOTAS, [
+        # Atrasada: la tabla quedó con la evaluación; el ajuste y el recálculo
+        # llegaron por el log de otro equipo.
+        dict(vacia, Correo=CARLA, Flujo="test", Item="4", Enviado="SI", Respondio="SI",
+             Nota="6,5", Originalidad="Media", Logro="0.8333"),
+        # Editada a mano: 5,5 no es ninguna nota que el log haya tenido.
+        dict(vacia, Correo=FRANCO, Flujo="test", Item="4", Nota="5,5", Originalidad="Baja"),
+        # Corregida y descartada en el log, sin reflejo en la tabla.
+        dict(vacia, Correo=DIEGO, Flujo="test", Item="4", Enviado="SI", Respondio="SI"),
+    ])
+
+    titulo("9. sincronizar pone al día la nota atrasada y no pisa la editada a mano")
+    sim = datos.notas.sincronizar_desde_log(sid, simular=True)
+    check("simular cuenta la nota atrasada aparte", sim["NotaAlDia"] == 1, sim)
+    check("y las columnas nuevas que faltan", sim["Corregido"] >= 1 and sim["Descartada"] == 1, sim)
+    check("pero no escribe", datos.notas.estado(CARLA, "test", "4", sid)["Nota"] == "6,5")
+    hecho = datos.notas.sincronizar_desde_log(sid)
+    check("aplicar hace lo mismo que dijo", hecho == sim, (hecho, sim))
+    carla = datos.notas.estado(CARLA, "test", "4", sid)
+    check("la atrasada queda con la última nota del log y su logro",
+          carla["Nota"] == "6,8" and carla["Logro"] == "0.9333", carla)
+    check("sin perder la originalidad", carla["Originalidad"] == "Media", carla)
+    check("la editada a mano no se toca", datos.notas.estado(FRANCO, "test", "4", sid)["Nota"] == "5,5")
+    diego = datos.notas.estado(DIEGO, "test", "4", sid)
+    check("Corregido y Descartada llegan desde el log",
+          diego["Corregido"] == "2026-11-03T10:00:00-03:00" and diego["Descartada"] == "2026-11-04T10:00:00-03:00"
+          and not diego["Nota"], diego)
+    otra = datos.notas.sincronizar_desde_log(sid)
+    check("la segunda pasada no hace nada", not any(otra.values()), otra)
+
+    titulo("10. comparar ve una diferencia en Corregido")
+    alla = tmp.parent / "_tmp_esquema_alla"
+    shutil.rmtree(alla, ignore_errors=True)
+    shutil.copytree(tmp, alla)
+    try:
+        campos, filas = _leer_csv(alla / NOTAS)
+        for f in filas:
+            if f["Correo"] == DIEGO:
+                f["Corregido"] = "2026-11-05T10:00:00-03:00"
+        _escribir_csv(alla / NOTAS, campos, filas)
+        salida = io.StringIO()
+        with redirect_stdout(salida):
+            rc = comparar.main(str(alla), sid)
+        check("no las da por iguales", rc == 1, salida.getvalue()[-300:])
+        check("y dice cuál casilla y qué campo", DIEGO in salida.getvalue() and "Corregido" in salida.getvalue(),
+              salida.getvalue()[-400:])
+    finally:
+        shutil.rmtree(alla, ignore_errors=True)
+
+
+def fusion_con_duplicados(tmp, sid):
+    from modulos import datos
+    from modulos.datos.esquema import COLUMNAS_LOG, LOG
+
+    titulo("11. fusionar no pierde un duplicado registrado en el mismo segundo")
+    # Dos correos del mismo alumno en la misma corrida: su respuesta y un
+    # segundo envío, con el mismo Timestamp. Solo el MessageId los distingue.
+    respuesta = _evento(7, "respuesta", CARLA, item="5", MessageId="<r1@correo.test>", Respuesta="primera")
+    duplicado = dict(respuesta, MessageId="<r2@correo.test>", Respuesta="segunda", Detalle="duplicado")
+    _escribir_csv(tmp / LOG, COLUMNAS_LOG, [respuesta])
+    ajeno = tmp / "log_del_otro_equipo.csv"
+    _escribir_csv(ajeno, COLUMNAS_LOG, [respuesta, duplicado])
+    r = datos.log.fusionar(ajeno, sid)
+    check("entra el duplicado y no se repite la respuesta", r["Nuevas"] == 1 and r["YaEstaban"] == 1, r)
+    _, filas = _leer_csv(tmp / LOG)
+    check("el log queda con los dos", sorted(f["MessageId"] for f in filas) == ["<r1@correo.test>", "<r2@correo.test>"],
+          filas)
+
+
+with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
+    escritura_que_conserva(tmp, sid)
+    columnas_y_eventos_nuevos(tmp, sid)
+    estados_de_una_casilla(tmp, sid)
+    estado_desde_el_log(tmp, sid)
+    sincronizar_y_comparar(tmp, sid)
+    fusion_con_duplicados(tmp, sid)
+
+sys.exit(resultado())

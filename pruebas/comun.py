@@ -124,8 +124,13 @@ class _DobleParche:
         return False
 
 
-def respuestas_falsas(correos, item, desde=0, cantidad=None):
-    """Correos entrantes simulados, como los devolvería la lectura del inbox."""
+def respuestas_falsas(correos, item, desde=0, cantidad=None, message_ids=False):
+    """Correos entrantes simulados, como los devolvería la lectura del inbox.
+
+    Con `message_ids`, cada uno trae su Message-ID (el mismo si se piden de
+    nuevo): es con lo que se reconoce un correo que ya se procesó. Sin él,
+    como los casos que ya existían, un correo repetido se trata como nuevo.
+    """
     trozo = correos[desde:] if cantidad is None else correos[desde:desde + cantidad]
     return [
         {
@@ -133,6 +138,7 @@ def respuestas_falsas(correos, item, desde=0, cantidad=None):
             "remitente": c,
             "asunto": f"Re: Modulo {item}",
             "in_reply_to": "",
+            **({"message_id": f"<falsa-{item}-{i}@correo.test>"} if message_ids else {}),
             "fecha": datetime.now(timezone.utc),
             "texto": f"Respuesta de {c} con contenido suficiente para evaluar.",
         }

@@ -323,7 +323,8 @@ def sincronizar_estado(semestre_id: str, simular: bool = False) -> None:
     prefijo = "[simulacion] " if simular else ""
     log(f"{prefijo}{semestre_id}: estado completado con "
         f"{r['FilasNuevas']} casilla(s) nueva(s), {r['Enviado']} envio(s), "
-        f"{r['Respondio']} respuesta(s), {r['Nota']} nota(s)")
+        f"{r['Respondio']} respuesta(s), {r['Nota']} nota(s)"
+        + (f", {r['NotaAlDia']} nota(s) atrasada(s) puesta(s) al dia" if r["NotaAlDia"] else ""))
 
 
 def main(filtro: str | None = None, incluir_envios: bool = True,

@@ -1,6 +1,6 @@
 // Copia agregaciones.py a public/py/ para que la página lo cargue en Pyodide.
 //
-// Es la misma lógica que usa Streamlit, no una traducción: si alguien cambia
+// Es la misma lógica que usan los scripts, no una traducción: si alguien cambia
 // una métrica en Python, la página la calcula igual en el próximo despliegue.
 import { mkdirSync, copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";

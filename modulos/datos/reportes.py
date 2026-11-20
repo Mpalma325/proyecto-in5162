@@ -7,9 +7,9 @@ métrica se calcula en un solo lugar y no puede discrepar entre dos vistas.
 
 Sin pandas a propósito. El resto de `modulos/` usa el `csv` de la stdlib, y la
 reportería no es razón para meterle una dependencia pesada a la capa de datos:
-quien quiera un DataFrame hace `pd.DataFrame(reportes.panel())` en la app, que
-es donde pandas ya vive. Así estas agregaciones sirven igual desde la app, desde
-un script o desde un servidor, sin arrastrar nada.
+quien quiera un DataFrame hace `pd.DataFrame(reportes.panel())` por su cuenta.
+Así estas agregaciones sirven igual desde un script, el motor o el navegador,
+sin arrastrar nada.
 
 Acá solo queda `panel()`, que lee los CSV. Los cálculos viven en
 `agregaciones.py`, que no depende de nada del proyecto y corre también en el
@@ -111,6 +111,15 @@ def panel(semestre_id: str | None = None, flujo: str = TESTS) -> list[dict]:
             "FechaRespuesta": (extra.get("FechaRespuesta") or "").strip(),
             "Respuesta": extra.get("Respuesta", ""),
             "EvaluacionIA": extra.get("EvaluacionIA", ""),
+            # Desde aquí, las del esquema nuevo. Van al final y en este orden
+            # en COLUMNAS (web/src/index.ts) y en la tabla panel (web/migrations/).
+            # Logro, de 0 a 1; vacío mientras nadie corrija con puntajes.
+            "Logro": nota_a_float(estado.get("Logro")),
+            # La nota que propuso el modelo, antes de la revisión. Queda vacía
+            # hasta que exista el evento `correccion` en el log.
+            "NotaModelo": None,
+            "PorRevisar": _notas.esta_por_revisar(estado),
+            "Descartada": _hay(estado.get("Descartada")),
         })
 
     filas.sort(key=lambda f: (_orden_item(f["Item"]), f["Nombre"].lower()))

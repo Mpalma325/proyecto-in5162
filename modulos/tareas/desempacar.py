@@ -1,9 +1,10 @@
 """
 Sacar las entregas de los comprimidos: los .html de cada grupo y su .Rmd.
 
-Lo usan la app de Streamlit (al subir el .zip de U-Cursos) y los pasos de
-Tareas: la página sube los .rar sin abrir, porque el navegador no los lee, y el
-chequeo o generar los abren acá antes de leer las entregas.
+Lo usan los pasos de Tareas: la página sube los .rar sin abrir, porque el
+navegador no los lee, y el chequeo o generar los abren acá antes de leer las
+entregas. `extraer_entregas` hace en Python lo que la página hace al subir el
+.zip de U-Cursos; pruebas/entregas_zip.py la usa para fijar esas reglas.
 
 Reglas, las mismas que sigue la página en web/public/datos.js:
   - Se ignora la metadata de macOS (__MACOSX/, ._*, .DS_Store) y la carpeta .git
@@ -247,7 +248,7 @@ def extraer_entregas(archivos: list, destino: Path) -> tuple[list[str], list[str
     .Rmd que los acompaña. Cualquier otro miembro se reporta en `omitidos` en
     vez de descartarse en silencio.
 
-    `archivos` son objetos UploadedFile (con .name y .getvalue()).
+    `archivos` son objetos con .name y .getvalue().
     Devuelve (agregados, omitidos) con los nombres de archivo.
     """
     import zipfile

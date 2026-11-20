@@ -18,6 +18,9 @@ import os
 from pathlib import Path
 
 PREFIJO = "@@progreso"
+# Con esto empieza la línea que avisa que el recorrido paró. El motor la busca
+# para saber si un trabajo paró por el límite de tiempo (motor/trabajo.py).
+DETENIDO = "⊘ Detenido a pedido"
 
 
 def progreso(hechos: int, total: int, unidad: str = "") -> None:
@@ -35,7 +38,7 @@ def avanzar(items, unidad: str = ""):
     items = list(items)
     for i, x in enumerate(items):
         if pidieron_detener():
-            print(f"⊘ Detenido a pedido: quedaron {len(items) - i} {unidad or 'pendientes'} sin procesar.",
+            print(f"{DETENIDO}: quedaron {len(items) - i} {unidad or 'pendientes'} sin procesar.",
                   flush=True)
             return
         progreso(i, len(items), unidad)
