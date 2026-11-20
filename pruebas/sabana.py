@@ -73,7 +73,9 @@ with semestre_desechable(sid="_tmp_sabana") as (sid, tmp):
           filas[revisada]["FechaFeedback"] == log[(revisada, "feedback")] and filas[revisada]["NotaDelModelo"] == "4.0",
           filas[revisada]["FechaFeedback"])
     check("2026-2: corregida sin mandar no tiene fecha de feedback", filas[sin_mandar]["FechaFeedback"] == "")
-    check("tests no cambia: sin fecha de feedback", all(x["FechaFeedback"] == "" for x in tests))
+    # En Tests la `evaluacion` es el correo que salió, antes y después de la revisión.
+    check("tests: la fecha de feedback es la de la evaluación que salió",
+          all(x["FechaFeedback"] == x["FechaEvaluacion"] for x in tests))
 
     titulo("6. la revisión: propuesta, lo que salió, quién y los descartes")
     sin_nota = [x for x in datos.notas.leer(sid, datos.TESTS) if not (x.get("Nota") or "").strip()][:3]
