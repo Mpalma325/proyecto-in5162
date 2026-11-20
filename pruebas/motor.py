@@ -260,9 +260,9 @@ try:
 except ValueError:
     check("sin_modelo en texto se rechaza", True)
 # 3.13: el evaluar programado al Cierre no fija el modo; lo lee el script de
-# configuracion.json al correr. El comando es el mismo con o sin a_las.
+# la columna Revision de su instancia al correr. El comando es el mismo con o sin a_las.
 programado = evaluar_cmd({"instancia": 4, "prueba": False, "a_las": "2026-12-01T10:00:00-03:00"})
-check("el evaluar programado no lleva modo ni elegidos: lo decide configuracion.json al correr",
+check("el evaluar programado no lleva modo ni elegidos: lo decide la instancia al correr",
       programado == ["-m", "modulos.tests.evaluar", "4"], programado)
 _, feedback_cmd = trabajo.FLUJOS["tests.feedback"]
 check("tests.feedback es prueba salvo prueba:false", "--dry-run" in feedback_cmd({"instancia": 4})

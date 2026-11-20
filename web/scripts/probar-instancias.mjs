@@ -57,8 +57,61 @@ const texto = escribirCsv(d);
 check("lo escrito se vuelve a leer igual (ids, tipos y estados)", j(P.semanasDe(leerCsv(texto)).map((x) => x.nombre))
   === j(["Instancia 1", "Control 2", "control 3"]), j(P.semanasDe(leerCsv(texto)).map((x) => x.nombre)));
 
+// ---------------------------------------------------------------- revisar o no, en cada instancia
+let [m, im] = P.agregarInstancia(vacio, { tipo: "Control" });
+check("la primera del semestre parte revisando", P.leerSemana(m, im).revision === "revisar", j(P.leerSemana(m, im)));
+m = P.conRevision(m, im, "auto");
+const [m2, im2] = P.agregarInstancia(m, {});
+check("la siguiente toma el modo de la última creada (automático)", P.leerSemana(m2, im2).revision === "auto"
+  && P.leerSemana(m2, im).revision === "auto");
+const sinModo = P.conRevision(m2, im2, "");
+check("si la última no dice el suyo, la nueva toma el de configuracion.json; sin saberlo, revisa",
+  P.leerSemana(P.agregarInstancia(sinModo, { respaldo: "auto" })[0], im2 + 1).revision === "auto"
+  && P.leerSemana(P.agregarInstancia(sinModo, { respaldo: null })[0], im2 + 1).revision === "revisar");
+// Una cabecera nueva de antes del interruptor (la de 2026-2 ya usada en un semestre con instancias).
+const cabeceraSinRevision = P.CABECERA_NUEVA.filter((c) => c !== "Revision");
+const filaSin = (valores) => cabeceraSinRevision.map((c) => valores[c] ?? "").join(",");
+const antiguo = leerCsv([cabeceraSinRevision.join(","),
+  filaSin({ Instancia: 1, Tipo: "Control", Numero: 1, Estado: "confirmada", Tema: "A", "Control P1": "¿A?" }),
+  filaSin({ Instancia: 2, Tipo: "Control", Numero: 2, Estado: "borrador", Tema: "B", "Control P1": "¿B?" })].join("\n"));
+check("un archivo sin la columna Revision: la fila dice vacío (rige configuracion.json)",
+  P.leerSemana(antiguo, 1).revision === "" && P.columnasFaltantes(antiguo).length === 0);
+const conCol = P.agregarInstancia(antiguo, { respaldo: "auto" })[0];
+check("al crear una instancia ahí, la columna se agrega al final y las demás filas quedan vacías",
+  conCol.columnas.at(-1) === "Revision" && P.leerSemana(conCol, 1).revision === "" && P.leerSemana(conCol, 3).revision === "auto",
+  j(conCol.columnas));
+check("guardar sin decir el modo no agrega la columna", !P.escribirSemana(antiguo, 2, P.leerSemana(antiguo, 2))
+  .columnas.includes("Revision"));
+const guardadaAuto = P.escribirSemana(antiguo, 2, { ...P.leerSemana(antiguo, 2), revision: "auto" });
+check("guardar con el interruptor movido la agrega y la escribe, sin tocar la otra fila",
+  P.leerSemana(guardadaAuto, 2).revision === "auto" && P.leerSemana(guardadaAuto, 1).revision === "");
+const cambiada = P.conRevision(leerCsv(escribirCsv(m2)), im, "revisar");
+check("conRevision cambia solo esa celda", P.leerSemana(cambiada, im).revision === "revisar"
+  && P.leerSemana(cambiada, im2).revision === "auto" && P.leerSemana(cambiada, im).tipo === "Control");
+let falta = "";
+try { P.conRevision(m2, 99, "auto"); } catch (e) { falta = e.message; }
+check("conRevision de una instancia que no está avisa", /no está/.test(falta), falta);
+check("pasar a revisar no pregunta", P.textoCambioRevision("Control 2", "revisar", 4) === null);
+const aAuto = P.textoCambioRevision("Control 2", "auto", 0);
+check("pasar a automático pregunta, y sin nada esperando no habla de Revisar",
+  /Control 2 le llega al alumno por correo apenas queda lista/.test(aAuto) && !/Tests › Revisar/.test(aAuto), aAuto);
+const conEspera = P.textoCambioRevision("Control 2", "auto", 3);
+check("con correcciones esperando dice cuántas, y que no salen solas",
+  /Quedan 3 correcciones esperando en Tests › Revisar/.test(conEspera) && /no salen solas/.test(conEspera)
+  && /Aprobar todas/.test(conEspera), conEspera);
+check("en singular", /Queda 1 corrección esperando/.test(P.textoCambioRevision("Test 1", "auto", 1)));
+const registro = P.cambiosSemana(im, { ...P.leerSemana(m2, im), revision: "revisar" }, P.leerSemana(m2, im));
+check("el registro dice el cambio de modo", registro === "Control 1: cambió la revisión (ahora el feedback sale solo)",
+  registro);
+const esperan = P.enviosDeNotas(["Correo,Flujo,Item,Enviado,Nota,Corregido,Descartada",
+  "a@x.cl,test,6,2026-11-23,,2026-11-30,", "b@x.cl,test,6,2026-11-23,\"6,0\",2026-11-30,",
+  "c@x.cl,test,6,2026-11-23,,2026-11-30,2026-12-01", "d@x.cl,test,6,2026-11-23,,,", "e@x.cl,test,7,2026-11-23,,2026-11-30,"]
+  .join("\n")).esperando;
+check("de notas.csv: cuántas esperan revisión por instancia (corregidas sin nota ni descarte)",
+  esperan.get(6) === 1 && esperan.get(7) === 1 && esperan.size === 2, j([...esperan]));
+
 // ---------------------------------------------------------------- los dos formatos
-const legado = leerCsv(`Semana,Tema,Fecha de Entrega,${P.CABECERA_NUEVA.slice(8).join(",")}\n4,Tema,lunes,¿P?,,,p,,,,,,,,\n`);
+const legado = leerCsv(`Semana,Tema,Fecha de Entrega,${P.CABECERA_NUEVA.slice(9).join(",")}\n4,Tema,lunes,¿P?,,,p,,,,,,,,\n`);
 check("formato antiguo: «Semana 4», sin estado, todas confirmadas", P.esLegado(legado)
   && P.semanasDe(legado)[0].nombre === "Semana 4" && !("estado" in P.leerSemana(legado, 4)));
 check("formato antiguo: el asunto de siempre", P.asuntoDe(P.leerSemana(legado, 4))

@@ -15,8 +15,13 @@
 // instancia trae su Envio y su Cierre, y puede haber varias abiertas a la vez.
 // Lo que toca sale de esas fechas; la regla de «una semana después de la
 // anterior» queda solo para el formato antiguo.
+//
+// modoDe(n) dice si las correcciones de esa instancia esperan al docente
+// (`revisar`) o salen solas (`auto`): su columna Revision y, vacía,
+// configuracion.json (modoInstancia).
 
 import { api, el, enCuanto, fechaCorta, nombrarInstancias } from "./comun.js";
+import { leerConfiguracion, modoInstancia } from "./configuracion.js";
 import { leerCsv } from "./csv.js";
 import {
   esLegado, fechaEntrega, leerSemana, nombreDe, RUTA as RUTA_PREGUNTAS, semanasDe, textoFecha,
@@ -39,7 +44,7 @@ export function diaMes(iso) {
  */
 export async function leerCiclo(semestre) {
   const base = `/api/archivo/${encodeURIComponent(semestre)}`;
-  const [notas, resumenes, preguntas] = await Promise.all([
+  const [notas, resumenes, preguntas, configuracion] = await Promise.all([
     fetch(`${base}/notas.csv`, { cache: "no-store" }).then((r) => {
       if (r.status === 404) return ""; // semestre nuevo: todavía no se envía nada
       if (!r.ok) throw new Error(String(r.status));
@@ -49,15 +54,23 @@ export async function leerCiclo(semestre) {
       encodeURIComponent("tests_semanales/data/resumen_semana_")}`),
     // Para las fechas de entrega; si falla, se sigue sin ellas.
     fetch(`${base}/${RUTA_PREGUNTAS}`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : "")).catch(() => ""),
+    // El modo de respaldo de las instancias sin Revision. Sin archivo, null
+    // (automático); si no se pudo leer, false: el modo no se sabe.
+    fetch(`${base}/configuracion.json`, { cache: "no-store" })
+      .then((r) => (r.status === 404 ? null : r.ok ? r.text() : false)).catch(() => false),
   ]);
-  const c = armarCiclo(notas, resumenes.map((a) => a.ruta), preguntas);
+  const c = armarCiclo(notas, resumenes.map((a) => a.ruta), preguntas, configuracion);
   // Los historiales de trabajos muestran «Control 2», no el id que va en los argumentos.
   if (!c.legado) nombrarInstancias(semanasDe(c.preguntas).map((s) => [s.numero, s.nombre]));
   return c;
 }
 
-/** El ciclo a partir de los textos ya leídos (separado de la red para poder probarlo). */
-export function armarCiclo(notas, rutasResumen, preguntas) {
+/**
+ * El ciclo a partir de los textos ya leídos (separado de la red para poder
+ * probarlo). `configuracion` es el texto de configuracion.json: null si no
+ * existe, false si no se pudo leer.
+ */
+export function armarCiclo(notas, rutasResumen, preguntas, configuracion = null) {
   const porSemana = new Map();
   if (notas.trim()) {
     const { columnas, filas } = leerCsv(notas);
@@ -158,8 +171,11 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
   const porRevisar = () => [...porSemana].filter(([, x]) => x.porRevisar)
     .sort(([a], [b]) => antes(entregaDe(a).fecha, entregaDe(b).fecha) || a - b)
     .map(([n, x]) => [n, x.porRevisar]);
+  // El modo de cada instancia; null si no se sabe (no se pudo leer configuracion.json y la fila no dice el suyo).
+  const conf = configuracion === false ? null : leerConfiguracion(configuracion);
+  const modoDe = (n) => modoInstancia(legado ? "" : instancia(n)?.revision, conf ? conf.modo : null);
   return { porSemana, conResumen, preguntas: tablaPreguntas, estadoDe, enviadas, entregaDe, proximoPaso, sinNota,
-    porRevisar, legado, nombre, mencion };
+    porRevisar, legado, nombre, mencion, modoDe, configuracion: conf };
 }
 
 /**

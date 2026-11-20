@@ -11,19 +11,24 @@
 //   Instancia  semestres nuevos. Un id que el docente no ve, más Tipo y Numero
 //              («Control 2»), Estado (borrador o confirmada), Envio y Cierre
 //              (ISO con la zona de Santiago). Al confirmar se programan el envío
-//              y la evaluación (confirmarInstancia).
+//              y la evaluación (confirmarInstancia). Revision (auto o revisar)
+//              es el interruptor «Revisar las correcciones antes de enviarlas»;
+//              vacía, manda configuracion.json (modoInstancia). Se puede cambiar
+//              en cualquier momento y vale para lo que se corrija desde ahí.
 // En el código, `numero` es siempre el id; el número visible es `numeroTipo`.
 
 import { api, caja, centrarSeleccion, conDetalle, confirmar, el, idDe, normalizar, pedirTrabajo, textoProgramado,
   urlTrabajos } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
-import { AUTO, cargarConfiguracion, REVISAR } from "./configuracion.js";
+import {
+  AUTO, AYUDA_REVISION, cargarConfiguracion, modoInstancia, REVISAR, ROTULO_REVISION,
+} from "./configuracion.js";
 import { ARCHIVO as ARCHIVO_ESCALA, leerEscala, POR_DEFECTO, rango } from "./escala.js";
 
 /**
- * Qué pasa al cierre de una instancia confirmada, según el modo de revisión
- * vigente (configuracion.json). `cuando` es «vie 14/11 10:00». Sin saber el
- * modo (no se pudo leer), lo dice en general.
+ * Qué pasa al cierre de una instancia confirmada, según su modo de revisión
+ * (modoInstancia). `cuando` es «vie 14/11 10:00». Sin saber el modo (no se
+ * pudo leer), lo dice en general.
  */
 export function textoAlCierre(modo, cuando) {
   if (modo === AUTO) return `se evalúa ${cuando}, al cierre, con el feedback por correo.`;
@@ -31,8 +36,8 @@ export function textoAlCierre(modo, cuando) {
     return `se corrige ${cuando}, al cierre; las correcciones quedan esperando tu revisión en Tests › Revisar y el `
       + "feedback no sale hasta que lo apruebes.";
   }
-  return `se corrige ${cuando}, al cierre; según la configuración del semestre, el feedback sale solo o espera tu `
-    + "revisión.";
+  return `se corrige ${cuando}, al cierre; el feedback sale solo o espera tu revisión, según lo que diga `
+    + "«Revisar las correcciones antes de enviarlas» en esta instancia.";
 }
 
 export const RUTA = "tests_semanales/data/preguntas.csv";
@@ -45,8 +50,10 @@ const columna = (grupo, i, pauta) => `${titulo(grupo)} ${pauta ? "Pauta " : ""}P
 const COLUMNAS = ["Semana", "Tema", "Fecha de Entrega",
   ...GRUPOS.flatMap((g) => [1, 2, 3].flatMap((i) => [columna(g, i, false), columna(g, i, true)]))];
 const COLUMNAS_INSTANCIA = ["Instancia", "Tipo", "Numero", "Estado", "Envio", "Cierre"];
+/** El modo de revisión de cada instancia. Opcional: un archivo sin la columna la recibe al guardar un modo. */
+const COLUMNA_REVISION = "Revision";
 /** La cabecera de un preguntas.csv nuevo, la misma de la plantilla (semestres/_template). */
-export const CABECERA_NUEVA = [...COLUMNAS_INSTANCIA, "Tema", "Fecha de Entrega",
+export const CABECERA_NUEVA = [...COLUMNAS_INSTANCIA, COLUMNA_REVISION, "Tema", "Fecha de Entrega",
   ...GRUPOS.flatMap((g) => [false, true].flatMap((pauta) => [1, 2, 3].map((i) => columna(g, i, pauta))))];
 /** Los tipos que se sugieren al crear una instancia; se puede escribir otro. */
 export const TIPOS = ["Control", "Test", "Evaluación", "Instancia"];
@@ -129,8 +136,19 @@ export function leerSemana(datos, numero) {
   if (esLegado(datos)) return s;
   const n = String(v("Numero")).trim();
   return { ...s, tipo: String(v("Tipo")).trim() || TIPO_POR_DEFECTO, numeroTipo: ID.test(n) ? Number(n) : numero,
-    estado: estadoDeTexto(v("Estado")), envio: String(v("Envio")).trim(), cierre: String(v("Cierre")).trim() };
+    estado: estadoDeTexto(v("Estado")), envio: String(v("Envio")).trim(), cierre: String(v("Cierre")).trim(),
+    // Tal cual: vacío es «lo que diga configuracion.json» (modoInstancia).
+    revision: String(v(COLUMNA_REVISION)).trim() };
 }
+
+/** El archivo con esa columna al final, si no la tenía (cada fila la recibe vacía). */
+function conColumna(datos, columna) {
+  if (datos.columnas.includes(columna)) return datos;
+  return { ...datos, columnas: [...datos.columnas, columna], filas: datos.filas.map((f) => [...f, ""]) };
+}
+
+/** El modo de revisión, dicho para el registro de cambios y los mensajes. */
+export const textoRevision = (modo) => (modo === AUTO ? "el feedback sale solo" : "se revisa antes de enviar");
 
 /**
  * Qué cambió en una semana, en una frase para el registro: "Semana 11: cambió
@@ -158,6 +176,9 @@ export function cambiosSemana(numero, antes, despues) {
       a[g].pauta !== d[g].pauta && "pauta"]).filter(Boolean))].join(" y ");
     cambios.push(`la pregunta ${i + 1} (${partes}${d.igual ? "" : `, ${grupos.join(" y ")}`})`);
   }
+  if (despues.tipo && (antes.revision || "") !== (despues.revision || "") && despues.revision) {
+    cambios.push(`la revisión (ahora ${textoRevision(despues.revision)})`);
+  }
   if (despues.tipo && antes.estado !== despues.estado) {
     cambios.push(despues.estado === "confirmada" ? "quedó confirmada" : "volvió a borrador");
   }
@@ -172,6 +193,8 @@ export function cambiosSemana(numero, antes, despues) {
  * copia a los dos grupos, que es lo que lee preguntas.py.
  */
 export function escribirSemana(datos, numero, semana) {
+  // Un archivo de antes del interruptor recibe la columna Revision cuando una instancia dice su modo.
+  if (semana.tipo && lleno(semana.revision)) datos = conColumna(datos, COLUMNA_REVISION);
   const i = datos.filas.findIndex((f) => numeroDe(datos, f) === numero);
   if (i < 0) throw new Error(`No existe la semana ${numero} en el archivo.`);
   const fila = [...datos.filas[i]];
@@ -185,6 +208,7 @@ export function escribirSemana(datos, numero, semana) {
     poner("Estado", semana.estado);
     poner("Envio", semana.envio);
     poner("Cierre", semana.cierre);
+    if (datos.columnas.includes(COLUMNA_REVISION)) poner(COLUMNA_REVISION, semana.revision ?? "");
   }
   const preguntas = semana.preguntas.filter((p) =>
     [p.control.texto, p.control.pauta, p.tratamiento.texto, p.tratamiento.pauta].some(lleno));
@@ -240,14 +264,20 @@ export function conTipo(datos, s, tipo) {
  * Item de tests de notas.csv, más uno: así una instancia borrada que se envió
  * nunca le pasa sus notas a otra. Si el archivo está vacío, se crea con la
  * cabecera nueva. Devuelve [datos, id].
+ *
+ * El modo de revisión es el de la última instancia creada (`respaldo` es el
+ * de configuracion.json, para una que no dice el suyo); la primera del
+ * semestre parte revisando.
  */
-export function agregarInstancia(datos, { tipo = null, itemsNotas = [] } = {}) {
-  const base = datos && datos.columnas.some(lleno) ? datos : archivoVacio();
+export function agregarInstancia(datos, { tipo = null, itemsNotas = [], respaldo = REVISAR } = {}) {
+  const base = conColumna(datos && datos.columnas.some(lleno) ? datos : archivoVacio(), COLUMNA_REVISION);
   const tipoNuevo = String(tipo ?? tipoPorDefecto(base)).trim() || TIPO_POR_DEFECTO;
   const ids = [...idsDe(base), ...itemsNotas.map(Number).filter((n) => Number.isInteger(n) && n > 0)];
   const numero = ids.length ? Math.max(...ids) + 1 : 1;
+  const previa = idsDe(base).at(-1);
   const valores = { Instancia: String(numero), Tipo: tipoNuevo, Numero: String(siguienteNumero(base, tipoNuevo)),
-    Estado: "borrador" };
+    Estado: "borrador",
+    [COLUMNA_REVISION]: previa ? modoInstancia(leerSemana(base, previa).revision, respaldo || REVISAR) : REVISAR };
   const fila = base.columnas.map((c) => valores[c] ?? "");
   let ultima = -1;
   base.filas.forEach((f, i) => { if (numeroDe(base, f) !== null) ultima = i; });
@@ -511,20 +541,132 @@ const DIA_MS = 864e5;
 export const PROGRAMAR_HASTA_DIAS = 200;
 const FLUJOS_PROGRAMADOS = ["tests.enviar", "tests.evaluar"];
 
-/** De notas.csv: cuántos alumnos tienen Enviado en cada test (Map id -> n) y todos los Item de tests. */
+/**
+ * De notas.csv: cuántos alumnos tienen Enviado en cada test (Map id -> n),
+ * cuántas correcciones esperan al docente (Corregido sin Nota ni Descartada,
+ * Map id -> n; lo mismo que «por revisar» en ciclo.js) y todos los Item de tests.
+ */
 export function enviosDeNotas(texto) {
   const enviados = new Map();
+  const esperando = new Map();
   const items = new Set();
-  if (!String(texto || "").trim()) return { enviados, items: [] };
+  if (!String(texto || "").trim()) return { enviados, esperando, items: [] };
   const { columnas, filas } = leerCsv(texto);
-  const [iF, iI, iE] = ["Flujo", "Item", "Enviado"].map((c) => columnas.indexOf(c));
+  const [iF, iI, iE, iC, iN, iD] = ["Flujo", "Item", "Enviado", "Corregido", "Nota", "Descartada"]
+    .map((c) => columnas.indexOf(c));
   for (const f of filas) {
     const n = Number(String(f[iI] ?? "").trim());
     if (String(f[iF] ?? "").trim() !== "test" || !Number.isInteger(n) || n < 1) continue;
     items.add(n);
     if (lleno(f[iE])) enviados.set(n, (enviados.get(n) || 0) + 1);
+    if (iC >= 0 && lleno(f[iC]) && !lleno(f[iN]) && !(iD >= 0 && lleno(f[iD]))) esperando.set(n, (esperando.get(n) || 0) + 1);
   }
-  return { enviados, items: [...items] };
+  return { enviados, esperando, items: [...items] };
+}
+
+// ---------------------------------------------------------------- el modo de revisión de una instancia
+// Un interruptor por instancia: encendido, las correcciones esperan al docente;
+// apagado, salen solas. El evaluar programado al cierre lo lee al correr, así
+// que cambiarlo después de confirmar (o de enviar) vale para lo que se corrija
+// desde ese momento. Lo que ya espera en Revisar sigue esperando.
+
+/** El archivo con el modo de esa instancia cambiado (y la columna Revision, si no la tenía). */
+export function conRevision(datos, numero, modo) {
+  const conCol = conColumna(datos, COLUMNA_REVISION);
+  const i = conCol.filas.findIndex((f) => numeroDe(conCol, f) === numero);
+  if (i < 0) throw new Error("Esa instancia no está en preguntas.csv.");
+  const filas = [...conCol.filas];
+  filas[i] = [...filas[i]];
+  filas[i][conCol.columnas.indexOf(COLUMNA_REVISION)] = modo;
+  return { ...conCol, filas };
+}
+
+/**
+ * Lo que se pregunta antes de pasar una instancia a automático: desde ahora el
+ * feedback sale sin que nadie lo vea, y lo que ya espera en Revisar no sale
+ * solo. Pasar a revisar no pregunta nada (es lo seguro): devuelve null.
+ */
+export function textoCambioRevision(nombre, modo, esperando = 0) {
+  if (modo !== AUTO) return null;
+  const quedan = esperando === 1 ? "Queda 1 corrección esperando" : `Quedan ${esperando} correcciones esperando`;
+  return `Desde ahora, cada corrección de ${nombre} le llega al alumno por correo apenas queda lista, sin que la `
+    + "veas antes."
+    + (esperando > 0 ? `\n\n${quedan} en Tests › Revisar. ${esperando === 1 ? "Esa no sale sola" : "Esas no salen solas"}: `
+      + "apruébalas y envíalas desde ahí (está «Aprobar todas»)." : "")
+    + "\n\n¿Dejar de revisar antes de enviar?";
+}
+
+/**
+ * El interruptor, con su rótulo y la línea que dice qué pasa en cada
+ * posición. `alCambiar(modo)` hace lo que haga falta (preguntar, guardar) y
+ * devuelve false si no se hizo: el interruptor vuelve a donde estaba.
+ */
+export function interruptorRevision({ modo, alCambiar, deshabilitado = false }) {
+  const casilla = el("input", { type: "checkbox", checked: modo !== AUTO, disabled: deshabilitado });
+  casilla.addEventListener("change", async () => {
+    const antes = !casilla.checked;
+    casilla.disabled = true;
+    let hecho = false;
+    try {
+      hecho = await alCambiar(casilla.checked ? REVISAR : AUTO) !== false;
+    } finally {
+      if (!hecho) casilla.checked = antes;
+      casilla.disabled = deshabilitado;
+    }
+  });
+  return el("div", { class: "interruptor-revision" },
+    el("label", { class: "interruptor" }, casilla, ROTULO_REVISION),
+    el("p", { class: "nota-pie" }, AYUDA_REVISION));
+}
+
+/**
+ * Guarda el modo de una instancia en preguntas.csv: lee el archivo con su
+ * etag, cambia esa celda y lo escribe con If-Match. Si alguien lo guardó
+ * entretanto (409), relee y aplica el mismo cambio una vez más: solo toca la
+ * celda de esa instancia, así que no pisa lo que cambió el otro. Devuelve el
+ * texto guardado.
+ */
+export async function guardarRevision(semestre, numero, modo, nombre) {
+  for (let intento = 0; ; intento++) {
+    const r = await fetch(urlArchivo(semestre, RUTA), { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status === 404 ? "preguntas.csv no existe" : `${r.status} ${r.statusText}`);
+    const etag = r.headers.get("etag");
+    const texto = escribirCsv(conRevision(leerCsv(await r.text()), numero, modo));
+    const w = await fetch(urlArchivo(semestre, RUTA), {
+      method: "PUT", body: texto,
+      headers: { "content-type": "text/csv; charset=utf-8", ...(etag ? { "if-match": etag } : {}),
+        ...conDetalle(`${nombre}: ${textoRevision(modo)}`) },
+    });
+    if (w.ok) return texto;
+    if (w.status !== 409 || intento >= 1) {
+      const cuerpo = await w.json().catch(() => ({}));
+      throw new Error(cuerpo.error || `${w.status} ${w.statusText}`);
+    }
+  }
+}
+
+/**
+ * El interruptor de Tests (Evaluar y Revisar): pregunta si hace falta y guarda
+ * apenas se aprieta. `esperando` = correcciones de esa instancia que esperan en
+ * Revisar. `alGuardar(modo)` corre después de guardar; `mensaje` muestra el
+ * resultado. Devuelve el nodo.
+ */
+export function interruptorDeInstancia({ semestre, numero, nombre, modo, esperando = 0, alGuardar, mensaje }) {
+  return interruptorRevision({ modo, alCambiar: async (nuevo) => {
+    const pregunta = textoCambioRevision(nombre, nuevo, typeof esperando === "function" ? esperando() : esperando);
+    if (pregunta && !await confirmar(pregunta, "Dejar de revisar", "real")) return false;
+    try {
+      await guardarRevision(semestre, numero, nuevo, nombre);
+    } catch (e) {
+      mensaje?.replaceChildren(caja("aviso", `No pude guardarlo: ${e.message}`));
+      return false;
+    }
+    mensaje?.replaceChildren(caja("exito", nuevo === AUTO
+      ? `Guardado: en ${nombre} el feedback sale solo desde ahora.`
+      : `Guardado: en ${nombre} las correcciones esperan tu revisión desde ahora.`));
+    await alGuardar?.(nuevo);
+    return true;
+  } });
 }
 
 const deInstancia = (t, numero) => Number(idDe(t.argumentos || {})) === numero;
@@ -726,8 +868,11 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   let original = null; // la misma instancia al abrirla, para saber si hay cambios
   let plantilla = null; // correo_pregunta.md, para la vista previa
   let escalaSemestre = POR_DEFECTO; // escala_notas.json, para {ESCALA}
-  let envios = { enviados: new Map(), items: [] }; // de notas.csv
+  let envios = { enviados: new Map(), esperando: new Map(), items: [] }; // de notas.csv
   let legado = true;
+  // El modo de respaldo de configuracion.json, para las instancias sin Revision; null si no se pudo leer.
+  let respaldo = null;
+  const modoDe = (s) => modoInstancia(s.revision, respaldo);
 
   const hayCambios = () => borrador !== null && JSON.stringify(borrador) !== original;
   const avisarCambio = () => alCambiar?.(hayCambios());
@@ -798,7 +943,7 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   const buscador = el("input", { type: "search", placeholder: "Buscar…",
     "aria-label": "Buscar por enunciado, tema o número de semana" });
   const grupoBuscado = usaGrupos ? el("select", { "aria-label": "Buscar en el grupo" },
-    el("option", { value: "" }, "Ambos"), GRUPOS.map((g) => el("option", { value: g }, titulo(g)))) : null;
+    el("option", { value: "" }, "Ambos grupos"), GRUPOS.map((g) => el("option", { value: g }, `Grupo ${g}`))) : null;
   const columna = el("div", { class: "columna-semanas" },
     el("div", { class: "buscar-preguntas", role: "search" }, buscador, grupoBuscado));
   // Solo se rehace la lista: el buscador no pierde el foco mientras se escribe.
@@ -829,7 +974,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     const semanas = semanasDe(datos).filter((s) => !hallados || hallados.has(s.numero));
     const agregar = el("button", { class: "agregar-semana", type: "button", onclick: async () => {
       if (!await descartarSiHace()) return;
-      const [nuevos, numero] = legado ? agregarSemana(datos) : agregarInstancia(datos, { itemsNotas: envios.items });
+      const [nuevos, numero] = legado ? agregarSemana(datos) : agregarInstancia(datos, { itemsNotas: envios.items,
+        respaldo: respaldo || REVISAR });
       datos = nuevos;
       actual = numero;
       borrador = { ...leerSemana(datos, numero), preguntas: [preguntaVacia()] };
@@ -843,6 +989,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
       hallados && !semanas.length ? el("p", { class: "nota-pie sin-resultados" }, "Sin resultados.") : null,
       semanas.map((s) => {
         const estado = legado ? null : estadoInstancia(s, enviadosDe(s.numero));
+        // Solo se marca la excepción: las que no se revisan antes de enviar.
+        const automatica = !legado && modoDe(s) === AUTO;
         return el("button", {
           type: "button", class: "item-semana", "aria-current": s.numero === actual ? "true" : null,
           onclick: async () => { if (s.numero !== actual && await descartarSiHace()) elegir(s.numero); },
@@ -850,8 +998,9 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
         el("span", { class: "num-semana" }, s.nombre),
         el("span", { class: "tema-semana" }, lleno(s.tema) ? s.tema : "Sin tema"),
         lineaHallada(hallados?.get(s.numero)?.[0], consulta),
-        estado || s.avisos.length ? el("span", { class: "marcas" },
+        estado || automatica || s.avisos.length ? el("span", { class: "marcas" },
           estado ? el("span", { class: `marca estado-instancia ${estado.clase}` }, estado.texto) : null,
+          automatica ? el("span", { class: "marca" }, "feedback automático") : null,
           s.avisos.map((a) => el("span", { class: "marca" }, a))) : null);
       }),
       agregar);
@@ -906,7 +1055,7 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     return el("section", { class: "tarjeta-pregunta" },
       el("header", {},
         el("h4", {}, `Pregunta ${i + 1}`),
-        usaGrupos ? el("label", { class: "interruptor" }, distinta, "Distinta para Control y Tratamiento") : null,
+        usaGrupos ? el("label", { class: "interruptor" }, distinta, "Distinta por grupo (control y tratamiento)") : null,
         quitar),
       separadas
         ? el("div", { class: "dos-variantes" }, variante(p.control, "control", i + 1),
@@ -1037,8 +1186,9 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     if (problemas.length) { mensaje.replaceChildren(caja("aviso", problemas.join(" "))); return; }
     const avisosAntes = avisosDe(s);
     const sale = enviarAhora ? "sale ahora" : `sale ${textoProgramado(new Date(s.envio))}`;
-    // El modo no se fija al confirmar: lo lee la evaluación al correr. Se dice el de hoy.
-    const modo = await cargarConfiguracion(semestre).then((c) => c.modo, () => null);
+    // El modo no se fija al confirmar: lo lee la evaluación al correr. Se dice
+    // el que tiene ahora el interruptor de la instancia.
+    const modo = modoDe(s);
     if (!await confirmar(`Vas a confirmar ${nombreDe(s)}: la pregunta ${sale} a los alumnos que no la tienen, y `
       + `${textoAlCierre(modo, textoProgramado(new Date(s.cierre)))} Son correos reales.`
       + `${avisosAntes.length ? `\n\nOjo: ${avisosAntes.join(" ")}` : ""}`
@@ -1130,9 +1280,22 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
         enBorrador ? null : el("span", { class: "nota-campo" },
           enviados ? "Ya salió." : "Para cambiarlo, vuelve a borrador.")),
       el("label", { class: "campo" }, "Cierre (hora de Santiago)", cierre, notaCierre),
-      enviados ? el("p", { class: "nota-pie congelado" }, `Ya se envió a ${enviados}: el nombre y el tema quedan fijos, `
-        + "porque el asunto del feedback y el reconocimiento de las respuestas dependen de ellos.") : null,
     ];
+  }
+
+  /**
+   * El interruptor del modo de revisión. Se puede cambiar siempre, también
+   * confirmada o enviada, y se guarda con el resto («Guardar …»). Pasar a
+   * automático pregunta antes, y dice cuántas correcciones quedan esperando.
+   */
+  function revisionInstancia() {
+    return interruptorRevision({ modo: modoDe(borrador), alCambiar: async (modo) => {
+      const pregunta = textoCambioRevision(nombreDe(borrador), modo, envios.esperando.get(borrador.numero) || 0);
+      if (pregunta && !await confirmar(pregunta, "Dejar de revisar", "real")) return false;
+      borrador.revision = modo;
+      cambio();
+      return true;
+    } });
   }
 
   function accionesInstancia() {
@@ -1152,8 +1315,10 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
         el("p", { class: "nota-pie" }, `Confirmada: la pregunta sale ${textoProgramado(new Date(borrador.envio))} y se `
           + `evalúa ${textoProgramado(new Date(borrador.cierre))}. Si cambias el cierre, la evaluación se programa de nuevo.`));
     }
-    return el("p", { class: "nota-pie" }, `Ya se envió a ${enviados} alumnos; los cambios no les llegan. La pauta sí `
-      + "cuenta al corregir. Si cambias el cierre, la evaluación se programa de nuevo.");
+    return el("p", { class: "nota-pie congelado" }, `Ya se envió a ${enviados} alumnos. El nombre y el tema quedan fijos, `
+      + "porque el asunto del feedback y el reconocimiento de las respuestas dependen de ellos. Los demás cambios no "
+      + "les llegan a quienes ya la recibieron, pero la pauta sí cuenta al corregir. Si cambias el cierre, la "
+      + "evaluación se programa de nuevo.");
   }
 
   function panelSemana() {
@@ -1188,6 +1353,7 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
           el("label", { class: "campo" }, "Fecha de entrega", fecha, avisoFecha))
         : el("div", { class: "campos-semana campos-instancia" }, el("label", { class: "campo" }, "Tema", tema),
           ...camposInstancia().filter(Boolean)),
+      legado ? null : revisionInstancia(),
       legado ? el("p", { class: "nota-pie" }, "Si la semana ya se envió, los cambios no se reenvían. La pauta sí cuenta al corregir.")
         : accionesInstancia(),
       el("h4", { class: "titulo-preguntas" }, `Preguntas (${borrador.preguntas.length})`),
@@ -1209,11 +1375,13 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   (async () => {
     let notas = "";
     try {
-      [guardado, etag, notas] = await Promise.all([
+      [guardado, etag, notas, respaldo] = await Promise.all([
         leerTexto(semestre, RUTA).catch((e) => { if (e.message === "no existe") return null; throw e; }),
         etagDe(semestre),
         // Para saber qué instancias ya se enviaron y no repetir un id con notas.
-        leerTexto(semestre, "notas.csv").catch(() => "")]);
+        leerTexto(semestre, "notas.csv").catch(() => ""),
+        // El modo de respaldo, para las instancias que no dicen el suyo.
+        cargarConfiguracion(semestre).then((c) => c.modo, () => null)]);
     } catch (e) {
       raiz.replaceChildren(caja("aviso", `No pude leer preguntas.csv: ${e.message}`));
       return;

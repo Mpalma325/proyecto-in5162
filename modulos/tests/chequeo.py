@@ -65,6 +65,9 @@ def main(semana: int) -> int:
     except Exception as e:
         print(f"  ✗ preguntas: {e}")
         return 1
+    # El modo de esta instancia (columna Revision; vacía, configuracion.json).
+    automatico = _configuracion.modo_de(info.revision) == _configuracion.AUTO
+    print(f"  al corregir        {'el feedback sale solo' if automatico else 'esperan revisión en Tests › Revisar'}")
 
     # 3. el curso
     con_correo = [a for a in datos.alumnos.leer() if a.get("Correo", "").strip()]
@@ -132,7 +135,7 @@ def main(semana: int) -> int:
     else:
         duplicados = len(de_alumnos) - len(a_evaluar)
         print(f"  Listo para evaluar {len(a_evaluar)} respuesta(s).")
-        if _configuracion.modo_revision() == _configuracion.AUTO:
+        if automatico:
             print(f"  Eso manda {len(a_evaluar)} correo(s) de feedback y "
                   f"{duplicados} aviso(s) de 'ya respondiste'.")
         else:

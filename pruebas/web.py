@@ -776,6 +776,9 @@ if shutil.which("node"):
     _textos_conf = [None, "", "{}", '{"revision": "revisar"}', '{"revision": "AUTO "}', '{"revision": "otra"}',
                     "no es json", "[]", '﻿{"revision": "auto", "correo_muestra": "Puntajes"}',
                     '{"correo_muestra": "rara"}', '{"revision": null, "correo_muestra": "nada"}']
+    # La columna Revision de cada instancia, con cada configuracion.json de
+    # respaldo: configuracion.modo_de y modoInstancia (configuracion.js) dan lo mismo.
+    _revisiones = [None, "", "  ", "auto", "revisar", " AUTO ", "Revisar", "sí", "auto revisar"]
     _confs = []
     with _tempfile.TemporaryDirectory() as _tmp_conf:
         _ruta_conf = Path(_tmp_conf) / "configuracion.json"
@@ -789,7 +792,14 @@ if shutil.which("node"):
                 if _texto is not None:
                     _ruta_conf.write_text(_texto, encoding="utf-8")
                 _confs.append({"texto": _texto, "modo": _configuracion.modo_revision(),
-                               "muestra": _configuracion.correo_muestra()})
+                               "muestra": _configuracion.correo_muestra(),
+                               "instancias": [{"revision": _r, "modo": _configuracion.modo_de(_r)}
+                                              for _r in _revisiones]})
+    check("una instancia que dice su modo manda sobre configuracion.json; vacía, rige el archivo",
+          [x["modo"] for x in _confs[0]["instancias"]] == ["auto", "auto", "auto", "auto", "revisar", "auto",
+                                                          "revisar", "revisar", "revisar"]
+          and [x["modo"] for x in _confs[3]["instancias"]][:4] == ["revisar", "revisar", "revisar", "auto"],
+          [[x["modo"] for x in c["instancias"]] for c in _confs[:4]])
 
     def _sin_originalidad(d):
         # revision.juntar no devuelve la originalidad: la página la muestra aparte.

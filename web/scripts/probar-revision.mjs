@@ -8,7 +8,7 @@
 import fs from "node:fs";
 
 const R = await import(new URL("../public/revision.js", import.meta.url));
-const { leerConfiguracion } = await import(new URL("../public/configuracion.js", import.meta.url));
+const { leerConfiguracion, modoInstancia } = await import(new URL("../public/configuracion.js", import.meta.url));
 const P = await import(new URL("../public/preguntas.js", import.meta.url));
 const { armarCiclo } = await import(new URL("../public/ciclo.js", import.meta.url));
 const { estadoCandidato } = await import(new URL("../public/comun.js", import.meta.url));
@@ -48,11 +48,37 @@ esperado.faltante.forEach(({ decision, sale }, i) => {
   const js = R.faltanteManual(decision);
   check(`faltante_manual ${i + 1}: «${sale || "nada"}»`, js === sale, j(js));
 });
-esperado.configuracion.forEach(({ texto, modo, muestra }, i) => {
+esperado.configuracion.forEach(({ texto, modo, muestra, instancias }, i) => {
   const c = leerConfiguracion(texto);
   check(`configuracion.json ${i + 1} (${j(texto)?.slice(0, 40)}): ${modo}, ${muestra}, como configuracion.py`,
     c.modo === modo && c.muestra === muestra, j(c));
+  // La columna Revision de cada instancia, con ese archivo de respaldo: lo mismo que configuracion.modo_de.
+  const js = instancias.map(({ revision }) => modoInstancia(revision, c.modo));
+  check(`configuracion.json ${i + 1}: el modo de cada instancia (Revision vacía, auto, revisar, rara) es el de modo_de`,
+    j(js) === j(instancias.map((x) => x.modo)), `${j(js)} ≠ ${j(instancias.map((x) => x.modo))}`);
+  // Y el ciclo (Inicio, Tests) lo lee igual desde preguntas.csv.
+  const filas = instancias.map(({ revision }, k) => `${k + 1},Control,${k + 1},confirmada,,,${revision ?? ""},T,`);
+  const ciclo = armarCiclo("", [], ["Instancia,Tipo,Numero,Estado,Envio,Cierre,Revision,Tema,Fecha de Entrega", ...filas]
+    .join("\n"), texto);
+  const delCiclo = instancias.map((_, k) => ciclo.modoDe(k + 1));
+  check(`configuracion.json ${i + 1}: el ciclo da el mismo modo por instancia`,
+    j(delCiclo) === j(instancias.map((x) => x.modo)), `${j(delCiclo)} ≠ ${j(instancias.map((x) => x.modo))}`);
 });
+{
+  // Sin la columna Revision (2026-2) ni configuracion.json: todo automático, como antes.
+  const sinColumna = armarCiclo("", [], "Instancia,Tipo,Numero,Estado,Envio,Cierre,Tema,Fecha de Entrega\n"
+    + "1,Control,1,confirmada,,,T,\n", null);
+  const legado = armarCiclo("", [], "Semana,Tema,Fecha de Entrega\n4,T,lunes\n", null);
+  check("sin columna Revision ni configuracion.json, automático; el formato antiguo también",
+    sinColumna.modoDe(1) === "auto" && legado.modoDe(4) === "auto");
+  check("el formato antiguo toma el de configuracion.json", armarCiclo("", [], "Semana,Tema,Fecha de Entrega\n4,T,lunes\n",
+    '{"revision": "revisar"}').modoDe(4) === "revisar");
+  check("si configuracion.json no se pudo leer y la fila no dice su modo, no se sabe (null)",
+    armarCiclo("", [], "Instancia,Tipo,Numero,Estado,Envio,Cierre,Revision,Tema,Fecha de Entrega\n"
+      + "1,Control,1,confirmada,,,,T,\n2,Control,2,confirmada,,,auto,T,\n", false).modoDe(1) === null
+    && armarCiclo("", [], "Instancia,Tipo,Numero,Estado,Envio,Cierre,Revision,Tema,Fecha de Entrega\n"
+      + "1,Control,1,confirmada,,,,T,\n2,Control,2,confirmada,,,auto,T,\n", false).modoDe(2) === "auto");
+}
 
 // ---------------------------------------------------------------- el log de una instancia
 const log = esperado.log;
@@ -86,6 +112,19 @@ check("estados de la pestaña: por revisar, aprobada, enviada, descartada y la d
 check("la corrección a mano se marca como del docente; la automática pendiente, como automática",
   casos.find((c) => c.correo === "caro@correo.test")?.manual === true
   && casos.find((c) => c.correo === "ivan@correo.test")?.automatica === true);
+const enBloque = R.aprobablesEnBloque(casos).map((c) => c.correo);
+check("«Aprobar todas» toma las por revisar sin nada que mirar: no la de quien respondió otra vez (ana) ni la "
+  + "corregida otra vez después de la decisión (dani)", j(enBloque) === j(["ivan@correo.test"]), j(enBloque));
+const anaCaso = { ...casos.find((c) => c.correo === "ana@correo.test"), duplicados: [] };
+check("sin el duplicado, la de ana sí entra", R.aprobablesEnBloque([anaCaso]).length === 1);
+check("ni una sin nota, ni una a mano", R.aprobablesEnBloque([
+  { ...anaCaso, correccion: { ...anaCaso.correccion, Nota: "", EvaluacionIA: "<p>sin nota</p>" } },
+  { ...anaCaso, manual: true }]).length === 0);
+const enJson = { ...anaCaso, correccion: { ...anaCaso.correccion, Nota: "", EvaluacionIA: JSON.stringify({
+  preguntas: [{ rotulo: "P1", puntaje: 2 }, { rotulo: "P2", puntaje: 3 }], originalidad: "Alta", retroalimentacion: "Bien" }) } };
+check("una corrección en JSON con nota entra; si sus bloques no calzan con las preguntas, no",
+  R.aprobablesEnBloque([enJson]).length === 1 && R.aprobablesEnBloque([enJson], {}, () => 3).length === 0
+  && R.aprobablesEnBloque([enJson], {}, () => 2).length === 1);
 const cuenta = R.conteos(casos);
 check("conteos por filtro", cuenta.porRevisar === 3 && cuenta.aprobadas === 2 && cuenta.enviadas === 1
   && cuenta.descartadas === 2 && cuenta.descartes === 1, j(cuenta));
@@ -131,7 +170,7 @@ check("Confirmar en automático dice que el feedback sale solo al cierre",
 check("Confirmar en revisión dice que las correcciones esperan y el feedback no sale",
   /esperando tu revisión en Tests › Revisar/.test(P.textoAlCierre("revisar", "x"))
   && !/con el feedback por correo/.test(P.textoAlCierre("revisar", "x")));
-check("Confirmar sin saber el modo no promete ninguno de los dos", /según la configuración/.test(P.textoAlCierre(null, "x")));
+check("Confirmar sin saber el modo no promete ninguno de los dos", /sale solo o espera tu revisión/.test(P.textoAlCierre(null, "x")));
 
 const preguntas = leerCsv("Instancia,Tipo,Numero,Estado,Envio,Cierre,Tema,Fecha de Entrega\n"
   + "4,Control,2,confirmada,,,A,\n5,control ,2,confirmada,,,B,\n6,Control,3,borrador,,,C,\n");

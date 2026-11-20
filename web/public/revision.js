@@ -24,7 +24,7 @@ import {
 import { leerConfiguracion } from "./configuracion.js";
 import * as E from "./escala.js";
 import { POR_DEFECTO } from "./escala.js";
-import { asuntoDe, leerSemana } from "./preguntas.js";
+import { asuntoDe, interruptorDeInstancia, leerSemana } from "./preguntas.js";
 
 export const TESTS = "test";
 export const APROBADA = "aprobada";
@@ -284,6 +284,26 @@ export function instanciasParaElegir(filasLog, filasNotas, decisionesPorId, { no
   return lista.sort((a, b) => Number(b.pendiente) - Number(a.pendiente) || t(a.id) - t(b.id) || a.id - b.id);
 }
 
+/**
+ * Las que «Aprobar todas» aprueba tal como las dejó la IA: las por revisar,
+ * salvo las que en su tarjeta traen algo que mirar. Quedan para revisarlas una
+ * por una las corregidas a mano (les falta lo del docente), las que no tienen
+ * nota (un puntaje fuera de la rúbrica, o el HTML sin NOTA FINAL), las que
+ * traen un aviso de la lectura (bloques que no calzan con las preguntas), las
+ * de un alumno que respondió otra vez y las que la IA volvió a corregir
+ * después de una decisión. `opciones` = { escala, muestra };
+ * `nPreguntas(correo)`, cuántas preguntas tuvo ese alumno (o null).
+ */
+export function aprobablesEnBloque(casos, opciones = {}, nPreguntas = () => null) {
+  return casos.filter((c) => {
+    if (c.estado !== "por_revisar" || c.manual || c.vieja || c.duplicados?.length) return false;
+    const j = juntar(c.correccion, null, opciones);
+    if (j.problemas.length || String(j.nota || "").trim() === "") return false;
+    return !leerCorreccion(c.correccion?.EvaluacionIA, opciones.escala || POR_DEFECTO, nPreguntas(c.correo))
+      .avisos.length;
+  });
+}
+
 /** La decisión que se guarda al aprobar: la nota y el HTML solo si el docente los cambió. */
 export function decisionAl(estado, caso, { nota, html } = {}, ahora = new Date()) {
   const d = { estado, base: baseDe(caso.correccion) };
@@ -373,13 +393,18 @@ function pedirMotivo(nombre) {
  * La pestaña Revisar. `ciclo` es el de ciclo.js (nombres y cierres); `id`, la
  * instancia con que abre (la de `#revisar/<id>`), o null para la primera con
  * algo pendiente. `alCambiarId(id)` deja el id en la URL; `alCambiar()` avisa
- * que cambió algo que cuenta el resto de la página.
+ * que cambió algo que cuenta el resto de la página; `alCambiarModo()`, que se
+ * cambió el interruptor de revisión de una instancia.
  */
-export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () => {}, alCambiar = () => {} }) {
+export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () => {}, alCambiar = () => {},
+  alCambiarModo = () => {} }) {
   const nodo = el("div", { class: "revisar" }, el("p", { class: "cargando" }, "Leyendo las correcciones…"));
   const legado = ciclo?.legado !== false;
   const nombre = (n) => (ciclo ? ciclo.nombre(n) : `Semana ${n}`);
   const cierre = (n) => (ciclo ? ciclo.entregaDe(n).fecha : null);
+  // El modo de cada instancia: el del ciclo, o el que se acaba de guardar acá.
+  const modosGuardados = new Map();
+  const modoDe = (n) => modosGuardados.get(n) ?? ciclo?.modoDe?.(n) ?? null;
   let filtro = "por_revisar";
   let datos = null;
   const resultado = el("div", { class: "resultado-revision" });
@@ -643,7 +668,7 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
     if (editable) for (const a of ed.avisos || []) avisos.push(caja("aviso", a));
     if (caso.vieja) avisos.push(caja("aviso", "La IA volvió a corregir después de tu decisión: revisa otra vez."));
     if (caso.automatica && caso.estado === "por_revisar") {
-      avisos.push(caja("info", "Se corrigió en modo automático y el feedback no salió. Ahora espera tu revisión."));
+      avisos.push(caja("info", "Se corrigió para salir sola, pero el feedback no salió. Ahora espera tu revisión."));
     }
     for (const dup of caso.duplicados) {
       avisos.push(el("details", { class: "aviso-duplicado" },
@@ -780,13 +805,63 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
     // replaceChildren (a diferencia de el()) escribe un null como el texto "null": se filtra.
     nodo.replaceChildren(...[
       el("div", { class: "form-trabajo" }, el("label", {}, legado ? "Semana" : "Instancia", selector)),
+      zonaModo(id, casos),
       ilegible ? caja("aviso", `${rutaDecisiones(id)} no se puede leer: no guardo nada encima. Hay que `
         + "revisarlo a mano.") : null,
       chips,
+      filtro === "por_revisar" && cuenta.porRevisar && !ilegible ? ayudaAprobar(id, casos) : null,
       visibles.length ? visibles.map((c) => tarjeta(id, c, asunto))
         : el("p", { class: "tenue" }, filtro === "por_revisar" ? "No queda nada por revisar acá." : "Ninguna."),
       barraEnvio(id, casos),
       resultado].flat().filter(Boolean));
+  }
+
+  /**
+   * El interruptor «Revisar las correcciones antes de enviarlas» de la
+   * instancia elegida (solo en el formato nuevo). Se guarda apenas se aprieta;
+   * pasar a automático dice cuántas quedan esperando acá, que no salen solas.
+   */
+  function zonaModo(n, casos) {
+    if (legado || !ciclo?.preguntas || !leerSemana(ciclo.preguntas, n)) return null;
+    const mensaje = el("div");
+    const cuenta = conteos(casos);
+    return el("div", { class: "zona-modo" }, interruptorDeInstancia({
+      semestre, numero: n, nombre: nombre(n), modo: modoDe(n), mensaje,
+      esperando: cuenta.porRevisar + cuenta.aprobadas,
+      alGuardar: (modo) => { modosGuardados.set(n, modo); alCambiarModo(); },
+    }), mensaje);
+  }
+
+  /** Qué hace cada botón, y «Aprobar todas» para las que quedan por revisar. */
+  function ayudaAprobar(n, casos) {
+    const enBloque = aprobablesEnBloque(casos, opciones(), (correo) => nPreguntasDe(correo, n));
+    const fuera = casos.filter((c) => c.estado === "por_revisar").length - enBloque.length;
+    const estado = el("span", { class: "estado-guardado" });
+    const boton = enBloque.length ? el("button", { class: "secundario", type: "button", onclick: async () => {
+      if (!await confirmar(`Vas a aprobar ${enBloque.length === 1 ? "la corrección que queda" : `las ${enBloque.length} `
+        + "correcciones que quedan"} por revisar de ${nombre(n)}, tal como las dejó la IA. Todavía no sale nada: `
+        + "después, «Enviar las aprobadas» les manda el feedback."
+        + (fuera ? `\n\n${plural(fuera, "corrección queda", "correcciones quedan")} para revisar una por una: `
+          + "las corregidas a mano, las que no tienen nota y las que traen un aviso." : "")
+        + "\n\n¿Aprobarlas?", "Aprobar todas")) return;
+      boton.disabled = true;
+      estado.textContent = "Guardando…";
+      try {
+        const ahora = new Date();
+        await guardar(n, (crudo) => {
+          for (const c of enBloque) ponerDecision(c.correo, decisionAl(APROBADA, c, {}, ahora))(crudo);
+          return crudo;
+        }, `Aprobó ${plural(enBloque.length, "corrección", "correcciones")} de una vez (${nombre(n)})`);
+        dibujar();
+      } catch (e) {
+        estado.textContent = `No pude guardarlas: ${e.message}`;
+        boton.disabled = false;
+      }
+    } }, `Aprobar todas (${enBloque.length})`) : null;
+    return el("div", { class: "ayuda-aprobar" },
+      el("p", { class: "nota-pie" }, "«Aprobar» deja la corrección lista; las aprobadas salen juntas con «Enviar las "
+        + "aprobadas». «Aprobar y enviar» la manda ahora."),
+      boton ? el("div", { class: "acciones" }, boton, estado) : null);
   }
 
   /** «Enviar las 23 aprobadas»: pasa las aprobadas a `enviar` en un guardado y pide un trabajo. */

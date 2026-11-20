@@ -145,9 +145,10 @@ def _n_preguntas(grupo_info) -> int:
     return len([p for p in grupo_info.preguntas if str(p).strip()])
 
 
-def _modo_de_la_corrida(sin_modelo: bool) -> str:
-    """El modo de esta corrida: el de configuracion.json, salvo «Las corrijo yo», que siempre revisa."""
-    modo = _configuracion.modo_revision()
+def _modo_de_la_corrida(info: SemanaInfo, sin_modelo: bool) -> str:
+    """El modo de esta corrida: el de la instancia (columna Revision; vacía,
+    configuracion.json), salvo «Las corrijo yo», que siempre revisa."""
+    modo = _configuracion.modo_de(info.revision)
     # Una corrección a mano está vacía: en automático se le mandaría eso al alumno.
     return _configuracion.REVISAR if sin_modelo else modo
 
@@ -160,15 +161,20 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
     `sin_modelo`: no llama al modelo; deja una corrección vacía a nombre del
     docente (`por`) para que la complete en Tests › Revisar.
 
-    El modo sale de configuracion.json al momento de correr: en `auto` cada
-    corrección se manda apenas queda (feedback.enviar_una); en `revisar` queda
-    esperando la revisión. La primera línea de la salida dice cuál es.
+    El modo es el de la instancia, leído de preguntas.csv al momento de correr
+    (columna Revision; vacía, configuracion.json; sin archivo, automático): en
+    `auto` cada corrección se manda apenas queda (feedback.enviar_una); en
+    `revisar` queda esperando la revisión. Cambiarlo vale para lo que se
+    corrija desde ese momento. La primera línea de la salida dice cuál es.
     """
-    modo = _modo_de_la_corrida(sin_modelo)
+    avisos_preguntas: list[str] = []
+    info = cargar_semana(semana, avisos=avisos_preguntas)
+    modo = _modo_de_la_corrida(info, sin_modelo)
     print(_configuracion.describir(modo)
           + (" Corrección a mano: no se llama al modelo." if sin_modelo else ""))
     _anunciar_semestre()
-    info = cargar_semana(semana)
+    for aviso in avisos_preguntas:
+        print(aviso)
     if info.borrador and not dry_run:
         print(f"✗ {info.nombre} está en borrador: no se envió, no hay nada que evaluar.")
         return
@@ -335,7 +341,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
             modelo = meta.get("modelo") or config.MODELO
 
         # Un puntaje fuera de la rúbrica deja la corrección sin nota: no sale
-        # sola aunque el semestre esté en automático, espera la revisión.
+        # sola aunque la instancia esté en automático, espera la revisión.
         problemas = (leida or {}).get("problemas") or []
         avisos = problemas + ((leida or {}).get("avisos") or [])
         modo_alumno = _configuracion.REVISAR if problemas else modo
