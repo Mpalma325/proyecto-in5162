@@ -173,8 +173,13 @@ def mandar_feedback(tarea: str, fila: dict, nota, comentario: str, template: str
         _datos.notas.registrar_nota(correo, _datos.TAREAS, tarea, str(nota))
     except Exception as e:  # noqa: BLE001
         print(f"     ⚠ el correo salió y quedó en el log, pero no pude escribir la nota en notas.csv: {e}")
-    storage.actualizar_fila(tarea, fila["grupo_archivo"], fila["alumno_nombre"],
-                            {"feedback_pendiente": "", "nota": str(nota), "comentario": comentario})
+    try:
+        storage.actualizar_fila(tarea, fila["grupo_archivo"], fila["alumno_nombre"],
+                                {"feedback_pendiente": "", "nota": str(nota), "comentario": comentario})
+    except Exception as e:  # noqa: BLE001
+        # El correo ya salió y el log lo sabe: la próxima corrida no lo reenvía y
+        # _al_dia_con_el_log le quita el pendiente al CSV.
+        print(f"     ⚠ el correo salió y quedó en el log, pero no pude actualizar el CSV de {tarea}: {e}")
     return message_id
 
 
