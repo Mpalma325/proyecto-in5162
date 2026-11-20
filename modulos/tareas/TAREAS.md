@@ -170,3 +170,38 @@ que es justo donde el emparejamiento se equivoca, y la unicidad evita elegir
 entre dos alumnos que comparten el primer nombre. En T1 quedó a mano un grupo
 que firmó solo con apellidos, y uno de esos apellidos lo tenían dos alumnos
 distintos.
+
+La contención vale también al revés: la tabla trae nombre y dos apellidos y el
+roster nombre y uno. Ahí se pide además que el primer nombre sea el mismo, y la
+misma unicidad: si dos alumnos del roster caben en el nombre de la tabla, queda
+a mano.
+
+## Lo que se revisa después de generar
+
+La tabla de roles la lee el código (`partes_declaradas`) y al modelo le llega
+ya leída, como la lista de preguntas donde cada integrante declaró código. Con
+el HTML de la tabla, el modelo a veces tomaba "Transformaciones" como P1 y
+corría las columnas. Si igual devuelve una parte que el integrante no declaró,
+se rehace una vez ofreciéndole sus partes; si sigue fuera, queda en `aviso`.
+
+Las citas de código se comparan con el HTML y el .Rmd de la entrega: lo que va
+entre comillas invertidas, lo que tiene forma de código fuera de ellas
+(`base_limpia`, `ll.sg2s`, `myparam[3]`) y la lista `codigo_citado` que pide el
+prompt de `_template`. Una cita que no está en la entrega rehace la pregunta una
+vez, y si sigue, queda en `aviso`. Al rehacer cualquiera de las dos, el modelo
+recibe las preguntas que ya tiene el resto del grupo.
+
+El mismo HTML subido dos veces (o por dos integrantes) se genera una sola vez;
+el chequeo lo muestra.
+
+## Lo que se revisa al recolectar
+
+`recolectar` mira todos los correos del alumno en el hilo. Los que llegaron
+dentro del plazo se corrigen juntos, separados por una línea, y el plazo se mide
+con el primero; los que llegaron después quedan fuera y anotados en `aviso`. Un
+correo que trae solo la cita de la pregunta cuenta como vacío: el alumno sigue
+sin respuesta, igual que con un correo en blanco. También quedan en `aviso` la
+respuesta desde otra dirección (se acepta igual) y los adjuntos, que no se leen.
+
+`enviar` no manda nada si `correo_pregunta.md` no usa `{plazo}` y trae una fecha
+u hora escrita a mano que no es la de este envío.
