@@ -1,6 +1,7 @@
 """
-Validación de cada dato apenas se escribe, sin efectos: no se manda ningún
-correo, no se crea nada, no se gasta en la API.
+Validación de cada dato apenas se escribe: no se manda ningún correo ni se
+crea nada. Lo único que se gasta es una respuesta de 1 token de OpenAI, la
+única forma de saber si la cuenta tiene saldo.
 
 Cada `probar_*` devuelve (ok, mensaje). `ok` es None cuando no se pudo saber
 (sin conexión, o una API que no respondió) y la decisión queda para quien llama.
@@ -8,6 +9,7 @@ Cada `probar_*` devuelve (ok, mensaje). `ok` es None cuando no se pudo saber
 
 from __future__ import annotations
 
+import imaplib
 import re
 import smtplib
 import socket
@@ -24,8 +26,9 @@ SUBDOMINIO = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 CF_API = "https://api.cloudflare.com/client/v4"
 OPENAI_API = "https://api.openai.com/v1"
-# El modelo que usa config.py si nadie lo cambia en Parámetros.
+# El modelo que usa config.py si nadie lo cambia en Configuración › La IA › Parámetros.
 MODELO_POR_DEFECTO = "gpt-5.4-mini"
+PARAMETROS = "Configuración › La IA › Parámetros"
 
 
 # ---------------------------------------------------------------- formato
@@ -84,25 +87,44 @@ def error_cuenta_cf(cuenta: str) -> str | None:
 # ---------------------------------------------------------------- correo
 
 
+SMTP_HOST, SMTP_PUERTO = "smtp.gmail.com", 587
+IMAP_HOST, IMAP_PUERTO = "imap.gmail.com", 993
+
+
 def probar_correo(correo: str, clave: str, *, smtp=smtplib.SMTP,
-                  host: str = "smtp.gmail.com", puerto: int = 587) -> tuple[bool | None, str]:
-    """Inicia sesión en el SMTP con STARTTLS y sale. No manda nada."""
+                  imap=imaplib.IMAP4_SSL) -> tuple[bool | None, str]:
+    """Inicia sesión en los dos servidores que usa el sistema y sale: SMTP para
+    mandar las preguntas e IMAP para leer las respuestas. No manda ni lee nada.
+    El mensaje dice cuál de los dos falló."""
+    ok, mensaje = _probar_smtp(correo, clave, smtp)
+    if not ok:
+        return ok, mensaje
+    ok, mensaje = _probar_imap(correo, clave, imap)
+    if not ok:
+        return ok, mensaje
+    return True, f"{correo} inició sesión en {SMTP_HOST} (envío) y en {IMAP_HOST} (lectura)."
+
+
+def _probar_smtp(correo: str, clave: str, smtp) -> tuple[bool | None, str]:
+    """STARTTLS, login y QUIT."""
     try:
-        s = smtp(host, puerto, timeout=20)
+        s = smtp(SMTP_HOST, SMTP_PUERTO, timeout=20)
     except (OSError, smtplib.SMTPException) as e:
-        return None, f"No pude conectarme a {host}:{puerto} ({e}). ¿Hay conexión?"
+        return None, (f"No pude conectarme a {SMTP_HOST}:{SMTP_PUERTO}, el servidor de envío "
+                      f"(SMTP) ({e}). ¿Hay conexión?")
     try:
         s.ehlo()
         s.starttls(context=ssl.create_default_context())
         s.ehlo()
         s.login(correo, clave)
-        return True, f"{correo} inició sesión en {host}."
+        return True, ""
     except smtplib.SMTPAuthenticationError:
-        return False, ("Gmail rechazó el correo o la contraseña de aplicación. Revisa que la "
-                       "cuenta tenga verificación en dos pasos y que la contraseña sea una de "
-                       "aplicación (myaccount.google.com/apppasswords), no la de siempre.")
+        return False, ("Gmail rechazó el correo o la contraseña de aplicación al iniciar sesión "
+                       f"para enviar (SMTP, {SMTP_HOST}). Revisa que la cuenta tenga verificación "
+                       "en dos pasos y que la contraseña sea una de aplicación "
+                       "(myaccount.google.com/apppasswords), no la de siempre.")
     except (OSError, smtplib.SMTPException, socket.timeout) as e:
-        return None, f"El servidor de correo cortó la conexión ({e})."
+        return None, f"El servidor de envío (SMTP, {SMTP_HOST}) cortó la conexión ({e})."
     finally:
         try:
             s.quit()
@@ -110,29 +132,82 @@ def probar_correo(correo: str, clave: str, *, smtp=smtplib.SMTP,
             pass
 
 
+def _probar_imap(correo: str, clave: str, imap) -> tuple[bool | None, str]:
+    """Login y LOGOUT por IMAP con SSL, que es como el sistema lee el buzón."""
+    try:
+        m = imap(IMAP_HOST, IMAP_PUERTO, timeout=20)
+    except (OSError, imaplib.IMAP4.error) as e:
+        return None, (f"El envío (SMTP) funcionó, pero no pude conectarme a {IMAP_HOST}:{IMAP_PUERTO}, "
+                      f"el servidor de lectura (IMAP) ({e}). ¿Hay conexión?")
+    try:
+        m.login(correo, clave)
+        return True, ""
+    except imaplib.IMAP4.error as e:
+        detalle = e.args[0].decode("utf-8", "replace") if e.args and isinstance(e.args[0], bytes) else str(e)
+        return False, ("Gmail aceptó la contraseña para enviar (SMTP), pero rechazó el inicio de sesión "
+                       f"para leer el buzón (IMAP, {IMAP_HOST}): {detalle}. El sistema lee por IMAP las "
+                       "respuestas de los alumnos. Si el correo es de Google Workspace (por ejemplo, de "
+                       "una universidad), el administrador puede tener IMAP desactivado: usa una cuenta "
+                       "@gmail.com.")
+    except (OSError, socket.timeout) as e:
+        return None, f"El servidor de lectura (IMAP, {IMAP_HOST}) cortó la conexión ({e})."
+    finally:
+        try:
+            m.logout()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- OpenAI
 
 
-def probar_openai(clave: str, ej: Ejecutor) -> tuple[bool | None, str]:
-    """Lista los modelos: no cuesta nada y dice si la clave sirve."""
-    estado, cuerpo = ej.pedir("GET", f"{OPENAI_API}/models", token=clave)
-    if estado == 200 and isinstance(cuerpo, dict):
-        modelos = {m.get("id") for m in cuerpo.get("data", []) if isinstance(m, dict)}
-        if MODELO_POR_DEFECTO not in modelos:
-            return True, (f"La clave sirve, pero no ve el modelo {MODELO_POR_DEFECTO}, que es el "
-                          "que se usa por defecto. Se puede cambiar después en Parámetros.")
-        return True, "La clave de OpenAI sirve."
-    if estado == 401:
-        return False, "OpenAI rechazó la clave. Cópiala de nuevo desde platform.openai.com/api-keys."
+# Lo que OpenAI responde cuando la cuenta no tiene saldo o no tiene la facturación activa.
+SIN_SALDO = ("insufficient_quota", "billing_not_active")
+
+
+def probar_openai(clave: str, ej: Ejecutor, modelo: str = MODELO_POR_DEFECTO) -> tuple[bool | None, str]:
+    """Pide al modelo por defecto una respuesta de 1 token, como las llamadas
+    del sistema (chat/completions). Listar los modelos funciona igual con saldo
+    cero; esta llamada no, y cuesta una fracción de centavo."""
+    estado, cuerpo = ej.pedir("POST", f"{OPENAI_API}/chat/completions", token=clave, lectura=False,
+                              datos={"model": modelo, "max_completion_tokens": 1,
+                                     "messages": [{"role": "user", "content": "Responde solo: ok"}]},
+                              tiempo=60)
+    codigo, mensaje = _error_openai(cuerpo)
+    if estado == 200:
+        return True, f"La clave de OpenAI sirve y la cuenta tiene saldo (una respuesta de 1 token de {modelo})."
     if estado == 0:
         return None, f"No pude conectarme a OpenAI ({cuerpo})."
-    return None, f"OpenAI respondió {estado}: {_mensaje_openai(cuerpo)}"
+    if codigo in SIN_SALDO:
+        return False, ("La clave sirve, pero la cuenta de OpenAI no tiene saldo (insufficient_quota). "
+                       "Carga saldo en platform.openai.com/settings/organization/billing y presiona "
+                       "Enter para probar de nuevo; un pago recién hecho puede tardar unos minutos en "
+                       "verse.")
+    if estado in (401, 403) and re.search(r"scope|permission", mensaje, re.I):
+        return False, ("La clave no tiene permiso para usar los modelos (" + mensaje[:120] + "). Crea "
+                       "otra en platform.openai.com/api-keys con «Permissions» en «All» y pégala.")
+    if estado == 401:
+        return False, ("OpenAI rechazó la clave (401). Se copió incompleta o se borró: crea otra en "
+                       "platform.openai.com/api-keys y pégala.")
+    if estado == 429:
+        return None, ("OpenAI respondió 429: demasiadas llamadas seguidas con esta clave. Espera un "
+                      "minuto y presiona Enter para probar de nuevo.")
+    if estado == 404 and codigo == "model_not_found":
+        return True, (f"La clave sirve, pero la cuenta no tiene el modelo {modelo}, que es el que se usa "
+                      "por defecto, así que no pude comprobar el saldo. Después de instalar, elige otro "
+                      f"modelo en {PARAMETROS} y revisa el saldo en platform.openai.com.")
+    if estado == 403:
+        return False, (f"OpenAI no deja usar esta clave (403: {mensaje[:160]}). Revisa en "
+                       "platform.openai.com que la cuenta y el proyecto de la clave estén activos.")
+    return None, f"OpenAI respondió {estado}: {mensaje[:200]}"
 
 
-def _mensaje_openai(cuerpo) -> str:
-    if isinstance(cuerpo, dict):
-        return str((cuerpo.get("error") or {}).get("message", ""))[:200]
-    return ""
+def _error_openai(cuerpo) -> tuple[str, str]:
+    """(código, mensaje) del error que devuelve OpenAI; vacíos si no hay."""
+    error = cuerpo.get("error") if isinstance(cuerpo, dict) else None
+    if not isinstance(error, dict):
+        return "", ""
+    return str(error.get("code") or error.get("type") or ""), str(error.get("message") or "")
 
 
 # ---------------------------------------------------------------- Cloudflare
