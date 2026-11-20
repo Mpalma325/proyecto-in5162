@@ -33,9 +33,27 @@ Cuando alguien aprieta "Evaluar", el Worker anota el trabajo y le avisa al motor
 - **Historial.** Antes de reemplazar un archivo, el Worker guarda la versión anterior en R2 (`historial/`) y anota quién la cambió en la tabla `ediciones`. Se ve en Configuración › Registro › Historial.
 - **Dos tokens con lo mínimo.** `TOKEN_MOTOR` lo usa el motor para leer y escribir archivos y trabajos; no sirve para ver la reportería ni para pedir trabajos. `TOKEN_WEB` lo usa el Worker para avisarle al motor.
 
+## Revisar antes de enviar, instancia por instancia
+
+Cada instancia de Tests tiene el interruptor «Revisar las correcciones antes
+de enviarlas». Está en Configuración › Tests › Preguntas, donde se guarda con
+el resto de la instancia, y en Tests › Evaluar y Tests › Revisar, donde se
+guarda al apretarlo. Encendido, las correcciones esperan en Tests › Revisar;
+apagado, el feedback sale apenas la corrección queda lista. Va en la columna
+`Revision` de `preguntas.csv` (`revisar` o `auto`). Una fila sin valor toma la
+clave `revision` de `configuracion.json`, y sin ese archivo es automático,
+como 2026-2. `modoInstancia` (`configuracion.js`) es la gemela de
+`configuracion.modo_de`.
+
+Los trabajos leen el modo al correr: cambiarlo después de confirmar vale para
+lo que se corrija desde ese momento. Pasar a automático pregunta antes y dice
+cuántas correcciones esperan; esas no salen solas y se aprueban en Revisar,
+que tiene «Aprobar todas». Una instancia nueva parte con el modo de la última
+creada, y la primera del semestre parte revisando.
+
 ## La escala de notas de Tests
 
-Se cambia en Configuración › Semestre, y solo en un semestre con
+Se cambia en Configuración › Semestre › Notas y correo, y solo en un semestre con
 `configuracion.json`; en los otros la página dice que usa la configuración de
 antes. «Ver qué cambia» pide `datos.escala` en modo prueba y muestra cuántas
 notas cambian, la media antes y después y las que quedan fijas. «Guardar y
