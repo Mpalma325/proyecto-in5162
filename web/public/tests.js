@@ -40,6 +40,7 @@ let alCambiarDatos = () => {};
 // El modo de revisión de una instancia (ciclo.js, modoDe): `auto`, `revisar`,
 // o null mientras no se lea.
 const modoDe = (n) => (estadoCurso ? estadoCurso.modoDe(n) : null);
+// Sin saber el modo, los textos avisan que el correo sale: si se equivocan, que sea hacia el lado seguro.
 const enRevision = (n) => modoDe(n) === REVISAR;
 // Si alguna instancia del semestre se revisa antes de enviar (para «Nada pendiente» en Revisar).
 const algunaEnRevision = () => Boolean(estadoCurso?.preguntas)

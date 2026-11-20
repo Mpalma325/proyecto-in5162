@@ -493,7 +493,22 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
     }
   }
 
-  const ponerDecision = (correo, decision) => (crudo) => {
+  /** La decisión de un correo en el JSON crudo (sin importar mayúsculas), o null. */
+  const entradaDe = (crudo, correo) => {
+    const k = Object.keys(crudo || {}).find((x) => x.trim().toLowerCase() === correo);
+    return k === undefined ? null : crudo[k];
+  };
+  /** Cómo estaba la decisión de ese correo cuando el docente la vio, para comparar después. */
+  const vistoDe = (n, correo) => JSON.stringify(entradaDe(datos.archivosPorId.get(n)?.crudo, correo));
+  const AJENO = "Otra persona cambió esta corrección mientras la mirabas. Recarga la página para ver cómo quedó.";
+
+  /**
+   * Pone (o quita) la decisión de un correo. Con `visto`, solo si sigue como
+   * la vio el docente: tras un 409 se relee, y si otra persona la descartó o
+   * la editó entretanto, no se pisa (un descarte pisado saldría por correo).
+   */
+  const ponerDecision = (correo, decision, visto) => (crudo) => {
+    if (visto !== undefined && JSON.stringify(entradaDe(crudo, correo)) !== visto) throw new Error(AJENO);
     // Un mismo correo puede venir con otras mayúsculas: queda una sola entrada.
     for (const k of Object.keys(crudo)) if (k.trim().toLowerCase() === correo) delete crudo[k];
     if (decision) crudo[correo] = decision;
@@ -718,11 +733,13 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         pintarCorreo();
       } }, "Editar"));
     }
+    // Lo que había al dibujar la tarjeta: si cambia antes de guardar, no se pisa.
+    const visto = vistoDe(n, caso.correo);
     if (caso.estado === "por_revisar") {
       botones.push(accion("Aprobar", "primario", async () => {
         const d = aprobada(APROBADA);
         if (!d) return false;
-        await guardar(n, ponerDecision(caso.correo, d), `Aprobó la corrección de ${caso.correo} (${nombre(n)})`);
+        await guardar(n, ponerDecision(caso.correo, d, visto), `Aprobó la corrección de ${caso.correo} (${nombre(n)})`);
         dibujar();
       }));
     }
@@ -732,7 +749,7 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         if (!d) return false;
         if (!await confirmar(`Vas a mandarle el feedback a ${nombreAlumno} (${nombre(n)}). Es un correo real y la nota `
           + "queda guardada.\n\n¿Confirmas?", "Enviar", "real")) return false;
-        await guardar(n, ponerDecision(caso.correo, d), `Aprobó y pidió enviar la corrección de ${caso.correo} (${nombre(n)})`);
+        await guardar(n, ponerDecision(caso.correo, d, visto), `Aprobó y pidió enviar la corrección de ${caso.correo} (${nombre(n)})`);
         dibujar();
         await pedirEnvio(n);
       }));
@@ -741,7 +758,7 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         if (!motivo) return false;
         await guardar(n, ponerDecision(caso.correo, {
           estado: DESCARTADA, base: baseDe(caso.correccion), retroalimentacion: motivo, cuando: new Date().toISOString(),
-        }), `Descartó la corrección de ${caso.correo} (${nombre(n)})`);
+        }, visto), `Descartó la corrección de ${caso.correo} (${nombre(n)})`);
         dibujar();
       }));
     }
@@ -749,7 +766,7 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
       const conCambios = caso.decision && ["html_legado", "nota_legado", "puntajes", "justificaciones", "originalidad"]
         .some((k) => caso.decision[k] !== undefined);
       botones.push(accion(conCambios && !caso.manual ? "Volver a lo de la IA" : "Volver a revisar", "secundario", async () => {
-        await guardar(n, ponerDecision(caso.correo, null), `Volvió a revisar la corrección de ${caso.correo} (${nombre(n)})`);
+        await guardar(n, ponerDecision(caso.correo, null, visto), `Volvió a revisar la corrección de ${caso.correo} (${nombre(n)})`);
         dibujar();
       }));
     }
@@ -848,11 +865,22 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
       estado.textContent = "Guardando…";
       try {
         const ahora = new Date();
+        // Si tras un 409 otra persona ya decidió alguna, esa queda como la dejó.
+        const vistas = new Map(enBloque.map((c) => [c.correo, vistoDe(n, c.correo)]));
+        let saltadas = 0;
         await guardar(n, (crudo) => {
-          for (const c of enBloque) ponerDecision(c.correo, decisionAl(APROBADA, c, {}, ahora))(crudo);
+          saltadas = 0;
+          for (const c of enBloque) {
+            if (JSON.stringify(entradaDe(crudo, c.correo)) !== vistas.get(c.correo)) saltadas++;
+            else ponerDecision(c.correo, decisionAl(APROBADA, c, {}, ahora))(crudo);
+          }
           return crudo;
         }, `Aprobó ${plural(enBloque.length, "corrección", "correcciones")} de una vez (${nombre(n)})`);
         dibujar();
+        if (saltadas) {
+          resultado.replaceChildren(caja("aviso", `${plural(saltadas, "corrección", "correcciones")} no se `
+            + "aprobaron: otra persona las cambió mientras tanto y quedaron como las dejó. Revísalas en la lista."));
+        }
       } catch (e) {
         estado.textContent = `No pude guardarlas: ${e.message}`;
         boton.disabled = false;

@@ -589,7 +589,7 @@ export function conRevision(datos, numero, modo) {
 export function textoCambioRevision(nombre, modo, esperando = 0) {
   if (modo !== AUTO) return null;
   const quedan = esperando === 1 ? "Queda 1 corrección esperando" : `Quedan ${esperando} correcciones esperando`;
-  return `Desde ahora, cada corrección de ${nombre} le llega al alumno por correo apenas queda lista, sin que la `
+  return `Desde la próxima corrección de ${nombre}, el alumno recibe el feedback por correo apenas queda listo, sin que lo `
     + "veas antes."
     + (esperando > 0 ? `\n\n${quedan} en Tests › Revisar. ${esperando === 1 ? "Esa no sale sola" : "Esas no salen solas"}: `
       + "apruébalas y envíalas desde ahí (está «Aprobar todas»)." : "")
@@ -662,8 +662,8 @@ export function interruptorDeInstancia({ semestre, numero, nombre, modo, esperan
       return false;
     }
     mensaje?.replaceChildren(caja("exito", nuevo === AUTO
-      ? `Guardado: en ${nombre} el feedback sale solo desde ahora.`
-      : `Guardado: en ${nombre} las correcciones esperan tu revisión desde ahora.`));
+      ? `Guardado: desde la próxima corrección de ${nombre}, el feedback sale solo.`
+      : `Guardado: desde la próxima corrección de ${nombre}, las correcciones esperan tu revisión.`));
     await alGuardar?.(nuevo);
     return true;
   } });
