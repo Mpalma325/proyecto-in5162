@@ -415,6 +415,13 @@ function celdaCorreo(g, i, correosSel, roster) {
 }
 
 function grupoChequeo(g, selects, correosSel, roster) {
+  // El mismo HTML dos veces (o subido por dos integrantes): generar lo salta.
+  if (g.identico_a) {
+    return el("details", {},
+      el("summary", {}, `⊘ ${g.archivo} — igual a ${g.identico_a}`),
+      el("div", { class: "contenido" }, caja("info",
+        `Tiene el mismo contenido que ${g.identico_a}: las preguntas se generan una sola vez, con ese archivo.`)));
+  }
   let icono, resumen;
   if (g.bloqueo.length) [icono, resumen] = ["❌", "se va a saltar"];
   else if (g.sin_roles || g.integrantes.some((i) => !i.correo)) [icono, resumen] = ["⚠️", "pide revisión"];
@@ -1205,13 +1212,17 @@ async function cargarRevision(nodo, destino, t) {
     nota.addEventListener("change", cambio);
     comentario.addEventListener("input", cambio);
     const ia = enCsv(f[iIA]);
+    // Lo que anotó recolectar: otra dirección, adjuntos sin leer, varios correos.
+    const aviso = col("aviso") >= 0 ? enCsv(f[col("aviso")]).trim() : "";
     return el("details", { class: "candidato" },
       el("summary", {},
         el("label", { class: "interruptor", onclick: (e) => e.stopPropagation() }, casilla, el("strong", {}, f[iN])),
         el("span", { class: "tenue" }, [f[iP], f[iG]].filter(Boolean).join(" · ")), " ", insignia,
         ia ? el("span", { class: "estado fallido", title: "El modelo vio señales de que la respuesta es de IA. "
-          + "El alumno no lo ve." }, "señales de IA") : null),
+          + "El alumno no lo ve." }, "señales de IA") : null,
+        aviso ? el("span", { class: "estado", title: aviso }, "aviso") : null),
       el("div", { class: "contenido" },
+        aviso ? caja("aviso", aviso) : null,
         el("p", {}, el("strong", {}, "Pregunta")), el("div", { class: "celda-lectura" }, f[iQ] || ""),
         el("p", {}, el("strong", {}, "Lo que respondió")),
         el("div", { class: "respuesta" }, respuestaLegible(respuestas.get(correo) || "(no la encontré en el registro)")),

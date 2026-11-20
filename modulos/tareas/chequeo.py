@@ -21,7 +21,7 @@ from . import contexto as _contexto
 from . import config, storage
 from .desempacar import desempacar_rars
 from .alumnos import cargar_alumnos, buscar_correo
-from .generar import _leer_entrega, _asignar_preguntas
+from .generar import _leer_entrega, _asignar_preguntas, identicos
 from .limpieza_html import revisar_entrega, extraer_tabla_roles, nombres_de_tabla
 
 
@@ -46,9 +46,18 @@ def revisar(tarea: str) -> dict:
     ya_guardados = {(f["grupo_archivo"], " ".join(f["alumno_nombre"].lower().split())): f["alumno_correo"].strip()
                     for f in storage.leer_csv(tarea) if f.get("alumno_correo", "").strip()}
 
+    repetidos = identicos(archivos)
     grupos = []
     for path in archivos:
         secciones, autores, fuente = _leer_entrega(path)
+        if path.name in repetidos:
+            # Mismo contenido que otra entrega: generar la salta, así que sus
+            # integrantes no cuentan como si aparecieran en dos entregas.
+            grupos.append({"archivo": path.name, "fuente": fuente,
+                           "secciones": {n: len(secciones.get(f"p{n}", "")) for n in (1, 2, 3, 4)},
+                           "origen_integrantes": "", "integrantes": [], "asignacion": {}, "a_mano": [],
+                           "bloqueo": [], "sin_roles": False, "identico_a": repetidos[path.name]})
+            continue
         motivos = revisar_entrega(secciones)
         sin_roles = [m for m in motivos if "roles" in m]
         nombres, origen = _integrantes_de(secciones, autores)
@@ -115,6 +124,7 @@ def revisar(tarea: str) -> dict:
         "grupos": grupos,
         "sin_entrega": sin_entrega,
         "duplicados": duplicados,
+        "identicos": [{"archivo": r, "igual_a": q} for r, q in repetidos.items()],
         "desempacados": desempacados,
         "rar_omitidos": rar_omitidos,
         "total_roster": len(roster),
@@ -150,6 +160,10 @@ def imprimir(informe: dict) -> int:
             print(f"  el HTML viene sin código: se lee {g['fuente']}")
         cortes = "  ".join(f"p{n}={c}" for n, c in g["secciones"].items())
         print(f"  secciones: {cortes}")
+
+        if g.get("identico_a"):
+            print(f"  ⊘ mismo contenido que {g['identico_a']}: se genera una sola vez, con ese archivo\n")
+            continue
 
         if g["bloqueo"]:
             print("  ✗ SE VA A SALTAR — no se llama al modelo:")
@@ -189,6 +203,8 @@ def imprimir(informe: dict) -> int:
     print("-" * 60)
     print(f"Preguntas que se generarían ahora: {a_generar}")
     print(f"Grupos que se saltarían: {sum(1 for g in informe['grupos'] if g['bloqueo'])}")
+    if informe.get("identicos"):
+        print(f"Archivos repetidos (mismo contenido, no se pagan dos veces): {len(informe['identicos'])}")
     print(f"Cosas que piden intervención: {pendientes}")
 
     print(f"\nDel roster ({informe['total_roster']} personas), quedan sin pregunta "

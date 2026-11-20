@@ -46,8 +46,10 @@ COLUMNAS = [
     "pregunta",
     "pauta",
     "motivo_sin_pregunta",
-    # Algo que revisar antes de enviar la pregunta, p. ej. que cite código que
-    # no está en la entrega (generar._revisar_citas).
+    # Algo que revisar a mano: antes de enviar, que la pregunta cite código que
+    # no está en la entrega o caiga en una parte no declarada (generar); al
+    # recolectar, una respuesta desde otra dirección, con adjuntos, en varios
+    # correos o con uno fuera de plazo (recolectar). Varios van separados por "; ".
     "aviso",
     "message_id",
     # Hasta cuándo podía responder: lo deja enviar y lo usan recolectar y corregir.

@@ -4,13 +4,15 @@ Tu tarea: para cada integrante del grupo, generar UNA pregunta que permita verif
 
 Insumos que recibes:
 1. El contenido HTML de 4 preguntas de la tarea (enunciado + código del grupo).
-2. Una tabla HTML de roles que indica qué integrante contribuyó a qué sub-pregunta y de qué forma ("Código", "Código e interpretación", "Redacción", o celda vacía que significa que no contribuyó).
+2. Una tabla HTML de roles que indica qué integrante contribuyó a qué sub-pregunta y de qué forma ("Código", "Código e interpretación", "Redacción", o celda vacía que significa que no contribuyó). A veces la tabla llega ya leída, como una lista de las preguntas donde cada integrante declaró código: en ese caso, usa esa lista tal cual.
 
 Para cada integrante del grupo, identifica las sub-preguntas donde contribuyó con código ("Código" o "Código e interpretación"). De entre esas, elige el fragmento técnicamente más interesante y formula UNA pregunta sobre ese fragmento, junto con la PAUTA DE CORRECCIÓN esperada.
 
 La pregunta es UNA sola, sobre un único punto: sin incisos (a, b), sin una segunda parte ("y además…", "¿y qué pasaría si…?") y sin pedir dos cosas a la vez. El alumno tiene pocos minutos para responder.
 
 La pregunta y la pauta van en un correo de texto plano. Escríbelas sin LaTeX ($...$, \frac, \beta), sin Markdown y sin fórmulas armadas con símbolos: describe la expresión en palabras y nombra las variables y funciones tal como aparecen en el código del grupo.
+
+Todo nombre de variable, función, objeto o columna que la pregunta mencione tiene que estar en el código del grupo. Lista esos nombres en "codigo_citado", escritos exactamente como en el código y sin paréntesis (por ejemplo "base_limpia", "feols", "PROM_GRAL"). Si nombras una función que el grupo NO usó, solo para contrastarla con la que sí usó, no la pongas en la lista.
 
 Qué hace una buena pregunta:
 - Apunta a una decisión de implementación o a un efecto del código que solo se puede responder si se entendió qué hace realmente
@@ -43,6 +45,7 @@ FORMATO DE SALIDA: devuelve ÚNICAMENTE un objeto JSON válido con esta estructu
       "pregunta_tarea": "P1" | "P2" | "P3" | "P4" | null,
       "pregunta": "Texto de la pregunta de comprensión del código" | null,
       "pauta": "Criterios para corregir la respuesta del alumno" | null,
+      "codigo_citado": ["nombres del código del grupo que menciona la pregunta"] | null,
       "motivo_sin_pregunta": "Breve explicación si pregunta es null, ej: 'no contribuyó con código en ninguna sub-pregunta'" | null
     }
   ]

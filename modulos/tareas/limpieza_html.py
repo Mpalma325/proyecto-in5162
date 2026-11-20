@@ -272,6 +272,41 @@ def es_rol_vacio(celda: str) -> bool:
     return (celda or "").strip().lower() in _ROLES_VACIOS
 
 
+# Columna de la tabla de roles que corresponde a una pregunta: "P1", "p2.a",
+# "Pregunta 3". "Transformaciones", "Preliminares" y "Resumen" no lo son.
+_RE_COLUMNA_PARTE = re.compile(r"\s*p(?:reg(?:unta)?)?\.?\s*([1-4])(?!\d)", re.I)
+# Celdas que declaran código: "código", "Código e interpretación", "código y
+# análisis", "Revisión de código", "ambos", "Partes iguales".
+_RE_ROL_CODIGO = re.compile(r"c[oó]digo|\bcode\b|\bambos\b|partes iguales", re.I)
+
+
+def partes_declaradas(filas: list[dict]) -> dict[str, list[str]] | None:
+    """
+    Dónde declaró código cada integrante: {nombre: ["P1", "P3"]}.
+
+    Lo decide el código y no el modelo: con la tabla en HTML, el modelo a veces
+    leía "Transformaciones" como P1 y corría las columnas (6 de 155 preguntas en
+    la prueba del 19/11/2026). Un nombre repetido junta sus filas. Devuelve
+    None si ninguna columna corresponde a una pregunta: ahí no hay cómo decidir.
+    """
+    if not filas:
+        return None
+    columnas = list(filas[0].keys())[1:]
+    parte = {c: f"P{m.group(1)}" for c in columnas if (m := _RE_COLUMNA_PARTE.match(c))}
+    if not parte:
+        return None
+    declaradas: dict[str, list[str]] = {}
+    for fila in filas:
+        valores = list(fila.values())
+        if not valores or es_nombre_placeholder(valores[0]):
+            continue
+        partes = declaradas.setdefault(valores[0].strip(), [])
+        for columna, p in parte.items():
+            if _RE_ROL_CODIGO.search(fila.get(columna) or "") and p not in partes:
+                partes.append(p)
+    return {n: sorted(p) for n, p in declaradas.items()}
+
+
 def nombres_de_tabla(filas: list[dict]) -> list[str]:
     """
     Los integrantes de la tabla de roles, sin placeholders ni repetidos.

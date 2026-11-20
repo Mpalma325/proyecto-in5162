@@ -71,7 +71,7 @@ with semestre_desechable(base="_template", sid="_tmp_chequeo_correos") as (sid, 
           ("daniel@x.cl", ["T9-Grupo1.html", "T9-Grupo3.html"])
           in [(d["correo"], d["archivos"]) for d in informe["duplicados"]], informe["duplicados"])
 
-    def _preguntas(secciones, roles_html, asignacion):
+    def _preguntas(secciones, roles_html, asignacion, **_):
         """El modelo, reemplazado: una pregunta por integrante, en la parte asignada."""
         return {"integrantes": [{"nombre": n, "pregunta_tarea": parte, "pregunta": "¿Qué hace modelo_1?",
                                  "pauta": "Explica lm().", "motivo_sin_pregunta": None}
@@ -108,7 +108,7 @@ with semestre_desechable(base="_template", sid="_tmp_chequeo_correos") as (sid, 
     check("y la trata como entrega sin roles", g["sin_roles"] and len(g["asignacion"]) == 1, g)
     check("no se avisa como duplicada", informe["duplicados"] == [], informe["duplicados"])
 
-    def _tres(secciones, roles_html, asignacion):
+    def _tres(secciones, roles_html, asignacion, **_):
         """El modelo como lo vio en T2: una fila por cada fila de la tabla."""
         return {"integrantes": [{"nombre": "Elena Vidal Araya", "pregunta_tarea": f"P{n}",
                                  "pregunta": f"¿Qué hace modelo_{n}?", "pauta": "-", "motivo_sin_pregunta": None}
@@ -135,6 +135,34 @@ with semestre_desechable(base="_template", sid="_tmp_chequeo_correos") as (sid, 
     fila = {"tarea": "T8", "grupo_archivo": "a.html", "alumno_nombre": "Elena Vidal Araya"}
     storage.agregar_filas("T8", [dict(fila), dict(fila), dict(fila)])
     check("entra una sola vez", len(storage.leer_csv("T8")) == 1, storage.leer_csv("T8"))
+
+    titulo("6. el mismo archivo dos veces se genera una sola vez")
+    # Pasó en la prueba del 19/11/2026: "Tarea1 (1).html" junto al original, y
+    # la misma entrega subida por dos integrantes. Cada copia pagaba su llamada.
+    carpeta6 = tmp / "tareas" / "data" / "entregas" / "T6"
+    carpeta6.mkdir(parents=True)
+    contenido = entrega("Carla Rojas Mena, Daniel Fuentes Vera")
+    (carpeta6 / "Grupo4 (1).html").write_bytes(contenido)
+    (carpeta6 / "Grupo4.html").write_bytes(contenido)
+    (carpeta6 / "Rojas_Mena.html").write_bytes(contenido)
+    (carpeta6 / "Rojas_Mena.Rmd").write_text("# Pregunta 1\nmodelo_1 <- lm(y ~ x)\n", encoding="utf-8")
+    (carpeta6 / "Otro.html").write_bytes(entrega("Ana María Pérez Soto"))
+    informe = chequeo.revisar("T6")
+    check("el chequeo dice cuáles son copias y con cuál se queda (la que trae .Rmd)",
+          sorted((i["archivo"], i["igual_a"]) for i in informe["identicos"])
+          == [("Grupo4 (1).html", "Rojas_Mena.html"), ("Grupo4.html", "Rojas_Mena.html")], informe["identicos"])
+    check("los integrantes de las copias no se avisan como si estuvieran en dos entregas",
+          informe["duplicados"] == [], informe["duplicados"])
+    texto_chequeo = __import__("io").StringIO()
+    with __import__("contextlib").redirect_stdout(texto_chequeo):
+        chequeo.imprimir(informe)
+    check("y lo imprime", "mismo contenido que Rojas_Mena.html" in texto_chequeo.getvalue(), texto_chequeo.getvalue()[-600:])
+    with patch.object(generar, "generar_preguntas", side_effect=_preguntas) as modelo:
+        generar.main("T6", sorted(carpeta6.glob("*.html")), interactivo=False)
+    check("generar llama al modelo una vez por contenido distinto", modelo.call_count == 2, modelo.call_count)
+    check("las filas quedan con el archivo que se conservó",
+          {f["grupo_archivo"] for f in storage.leer_csv("T6")} == {"Rojas_Mena.html", "Otro.html"},
+          {f["grupo_archivo"] for f in storage.leer_csv("T6")})
 
     titulo("7. nombre y dos apellidos en la tabla, nombre y uno en la lista")
     from modulos.tareas.alumnos import buscar_correo
