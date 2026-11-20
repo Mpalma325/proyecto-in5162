@@ -32,7 +32,11 @@ COLUMNAS = [
     "Respondio", "FechaRespuesta", "Respuesta", "LargoRespuesta",
     "FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad",
     "Modelo", "Versiones", "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML",
-    "AjusteManual", "MotivoAjuste", "Repreguntas", "Tutorias",
+    "AjusteManual", "MotivoAjuste",
+    # La revisión docente (fase 3): qué propuso quién corrigió, qué salió y quién lo revisó.
+    "Logro", "NotaEnviada", "Editada", "RevisadoPor", "CorregidoPor", "ModoRevision",
+    "FechaFeedback", "Descartada",
+    "Repreguntas", "Tutorias",
 ]
 
 
@@ -50,13 +54,14 @@ def _numerar(textos: list[str]) -> str:
 
 
 def _eventos(semestre_id: str) -> dict:
-    """Por (correo, flujo, item): el último envío, evaluación y ajuste, y cuántas repreguntas."""
+    """Por (correo, flujo, item): el último envío, corrección, evaluación, descarte y ajuste,
+    y cuántas repreguntas."""
     por = {}
     for e in sorted(datos.log.leer(semestre_id), key=lambda f: datos.log._instante(f.get("Timestamp"))):
         clave = (e.get("Correo", "").strip().lower(), e.get("Flujo", ""), str(e.get("Item", "")))
         d = por.setdefault(clave, {"repreguntas": 0, "tutorias": 0})
         ev = e.get("Evento")
-        if ev in ("envio", "evaluacion", "ajuste"):
+        if ev in ("envio", "correccion", "evaluacion", "descarte", "ajuste"):
             d[ev] = e
         elif ev == "repregunta":
             d["repreguntas"] += 1
@@ -99,9 +104,37 @@ def _preguntas_tareas() -> dict:
 def _estado(f: dict) -> str:
     if f["Nota"] is not None:
         return "evaluada"
+    if f.get("Descartada"):
+        return "descartada"
+    if f.get("PorRevisar"):
+        return "por revisar"
     if f["Respondio"]:
         return "respondió sin nota"
     return "sin responder" if f["Enviado"] else "sin enviar"
+
+
+def _revision(flujo: str, correccion: dict, evaluacion: dict, descarte: dict) -> dict:
+    """Las columnas de la revisión docente. Vacías en filas sin `correccion` (anteriores a la fase 3)."""
+    salida = {}
+    detalle = (evaluacion.get("Detalle") or "").strip()
+    revisado = re.match(r"revisado por ([^;]+)", detalle)
+    if revisado:
+        salida["RevisadoPor"] = revisado.group(1).strip()
+    elif descarte:
+        salida["RevisadoPor"] = (descarte.get("Detalle") or "").rpartition("; por ")[2].strip()
+    if correccion:
+        modelo = correccion.get("Modelo") or ""
+        salida["CorregidoPor"] = modelo.partition(":")[2] if modelo.startswith("docente:") else "modelo"
+        modo = re.search(r"modo=(\w+)", correccion.get("Detalle") or "")
+        salida["ModoRevision"] = modo.group(1) if modo else ""
+    if flujo == datos.TESTS and evaluacion:
+        # En Tests, `evaluacion` es el feedback que salió: su nota y su fecha.
+        salida["NotaEnviada"] = evaluacion.get("Nota", "")
+        salida["FechaFeedback"] = evaluacion.get("Timestamp", "")
+        # Editada: el docente cambió la nota o el texto antes de mandarlo. Un
+        # ajuste posterior no cuenta aquí: va en AjusteManual.
+        salida["Editada"] = "sí" if revisado and ";" in detalle else "no"
+    return salida
 
 
 def construir(semestre_id: str | None = None) -> list[dict]:
@@ -114,6 +147,9 @@ def construir(semestre_id: str | None = None) -> list[dict]:
         for p in datos.reportes.panel(sid, flujo):
             ev = eventos.get((p["Correo"], flujo, str(p["Item"])), {"repreguntas": 0, "tutorias": 0})
             evaluacion, ajuste, envio = ev.get("evaluacion") or {}, ev.get("ajuste") or {}, ev.get("envio") or {}
+            correccion, descarte = ev.get("correccion") or {}, ev.get("descarte") or {}
+            # Los tokens se gastan al corregir: desde la revisión van en `correccion`.
+            costo = correccion if (correccion.get("TokensEntrada") or correccion.get("TokensSalida")) else evaluacion
             fila = {c: "" for c in COLUMNAS}
             fila.update({
                 "Semestre": sid, "Flujo": flujo, "Item": p["Item"],
@@ -125,14 +161,19 @@ def construir(semestre_id: str | None = None) -> list[dict]:
                 "Respuesta": p["Respuesta"], "LargoRespuesta": len(p["Respuesta"] or ""),
                 "FechaEvaluacion": evaluacion.get("Timestamp", ""),
                 "Nota": "" if p["Nota"] is None else p["Nota"], "NotaTexto": p["NotaTexto"],
-                "NotaDelModelo": evaluacion.get("Nota", ""), "Originalidad": p["Originalidad"],
-                "Modelo": p["Modelo"] or evaluacion.get("Modelo", ""),
-                "Versiones": evaluacion.get("Versiones", ""),
-                "TokensEntrada": evaluacion.get("TokensEntrada", ""), "TokensSalida": evaluacion.get("TokensSalida", ""),
+                # La nota que propuso quien corrigió; en filas viejas, la del feedback.
+                "NotaDelModelo": correccion.get("Nota", "") if correccion else evaluacion.get("Nota", ""),
+                "Originalidad": p["Originalidad"],
+                "Modelo": p["Modelo"] or evaluacion.get("Modelo", "") or correccion.get("Modelo", ""),
+                "Versiones": evaluacion.get("Versiones", "") or correccion.get("Versiones", ""),
+                "TokensEntrada": costo.get("TokensEntrada", ""), "TokensSalida": costo.get("TokensSalida", ""),
                 "EvaluacionTexto": _texto_plano(p["EvaluacionIA"]), "EvaluacionHTML": p["EvaluacionIA"],
                 "AjusteManual": "sí" if ajuste else "no", "MotivoAjuste": ajuste.get("Detalle", ""),
                 "Repreguntas": ev["repreguntas"], "Tutorias": ev["tutorias"],
+                "Logro": "" if p.get("Logro") is None else p["Logro"],
+                "Descartada": "sí" if p.get("Descartada") else "no",
             })
+            fila.update(_revision(flujo, correccion, evaluacion, descarte))
             if flujo == datos.TESTS:
                 info = semanas.get(str(p["Item"]))
                 fila["Variante"] = p["Grupo"]

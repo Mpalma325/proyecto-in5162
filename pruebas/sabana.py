@@ -44,4 +44,39 @@ with semestre_desechable(sid="_tmp_sabana") as (sid, tmp):
     import re
     check("sin etiquetas HTML", con_eval and not any(re.search(r"</?(p|br|b|strong|div|span|hr)\b", x["EvaluacionTexto"], re.I) for x in con_eval))
 
+    titulo("5. la revisión: propuesta, lo que salió, quién y los descartes")
+    sin_nota = [x for x in datos.notas.leer(sid, datos.TESTS) if not (x.get("Nota") or "").strip()][:3]
+    a, b, c = (x["Correo"] for x in sin_nota)
+    item = sin_nota[0]["Item"]
+    # a: corregida por el modelo y editada en la revisión; b: por revisar; c: descartada.
+    for correo in (a, b, c):
+        if correo != a:
+            item_c = next(x["Item"] for x in sin_nota if x["Correo"] == correo)
+        else:
+            item_c = item
+        datos.log.registrar("correccion", datos.TESTS, item_c, correo, sid, Modelo="gpt-x", Nota="5,0",
+                            TokensEntrada="900", TokensSalida="300", Detalle="modo=revisar",
+                            EvaluacionIA="<p>NOTA FINAL: 5,0</p>")
+        datos.notas.marcar_corregido(correo, datos.TESTS, item_c, semestre_id=sid)
+    datos.log.registrar("evaluacion", datos.TESTS, item, a, sid, Modelo="gpt-x", Nota="6,0", MessageId="<fb@x>",
+                        EvaluacionIA="<p>NOTA FINAL: 6,0</p>", Detalle="revisado por profe@x.cl; nota 5,0 → 6,0")
+    datos.notas.registrar_nota(a, datos.TESTS, item, "6,0", "", sid)
+    item_c = next(x["Item"] for x in sin_nota if x["Correo"] == c)
+    datos.log.registrar("descarte", datos.TESTS, item_c, c, sid, Detalle="copió; por ayudante@x.cl")
+    datos.notas.marcar_descartada(c, datos.TESTS, item_c, semestre_id=sid)
+    filas = {(x["Correo"], x["Item"]): x for x in sabana.construir(sid) if x["Flujo"] == datos.TESTS}
+    fa = filas[(a.lower(), item)]
+    check("editada: nota del modelo, nota enviada y quién revisó",
+          (fa["NotaDelModelo"], fa["NotaEnviada"], fa["Editada"], fa["RevisadoPor"], fa["CorregidoPor"],
+           fa["ModoRevision"]) == ("5,0", "6,0", "sí", "profe@x.cl", "modelo", "revisar"),
+          {k: fa[k] for k in ("NotaDelModelo", "NotaEnviada", "Editada", "RevisadoPor", "CorregidoPor", "ModoRevision")})
+    check("los tokens salen de la corrección", fa["TokensEntrada"] == "900", fa["TokensEntrada"])
+    check("una edición en la revisión no es un ajuste manual", fa["AjusteManual"] == "no", fa["AjusteManual"])
+    fb = next(x for (co, _), x in filas.items() if co == b.lower() and x["NotaDelModelo"] == "5,0")
+    check("por revisar: estado propio y sin nota enviada",
+          fb["Estado"] == "por revisar" and fb["NotaEnviada"] == "" and fb["Nota"] == "", fb["Estado"])
+    fc = next(x for (co, _), x in filas.items() if co == c.lower() and x["Descartada"] == "sí")
+    check("descartada: estado, marca y quién", fc["Estado"] == "descartada" and fc["RevisadoPor"] == "ayudante@x.cl",
+          (fc["Estado"], fc["RevisadoPor"]))
+
 sys.exit(resultado())
