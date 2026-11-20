@@ -436,9 +436,12 @@ function semanaActual(filas, items) {
     if (!enviados.length) continue;
     const respondieron = sub.filter((f) => f.Respondio).length;
     const evaluados = sub.filter((f) => hay(f.Nota)).length;
+    // En modo revisión una instancia ya corregida no tiene notas hasta que se
+    // aprueban: deja de estar en curso cuando hay algo corregido o descartado.
+    const corregidos = sub.filter((f) => hay(f.Nota) || f.PorRevisar || f.Descartada).length;
     const fechas = enviados.map((f) => fechaValida(f.FechaEnvio)).filter(Boolean).sort((a, b) => a - b);
     return {
-      item, enviados: enviados.length, respondieron, evaluados, enCurso: evaluados === 0,
+      item, enviados: enviados.length, respondieron, evaluados, enCurso: corregidos === 0,
       enviada: fechas.length ? fechas[fechas.length - 1] : null,
       sinResponder: sub.filter((f) => f.Enviado && !f.Respondio),
       sinNota: sub.filter((f) => f.Respondio && !hay(f.Nota)),
@@ -1085,7 +1088,8 @@ function fichaAlumno(correo) {
   const elegidas = estado.selItems.size && estado.selItems.size < estado.items.length ? estado.selItems : null;
   const grupo = f.Grupo === "tratamiento" ? "tratamiento" : "control";
   for (const c of f.Casillas) {
-    const est = c.NotaTexto ? `nota ${c.NotaTexto}` : c.Respondio ? "respondió, sin evaluar"
+    const est = c.NotaTexto ? `nota ${c.NotaTexto}` : c.Descartada ? "descartada, sin feedback"
+      : c.PorRevisar ? "corregida, esperando revisión" : c.Respondio ? "respondió, sin evaluar"
       : c.Item === itemEnCurso() ? "en curso, aún sin evaluar" : "sin responder";
     const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
     const enunciados = semana ? semana.preguntas.map((p) => p[grupo].texto).filter((x) => x.trim()) : [];

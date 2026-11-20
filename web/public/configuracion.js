@@ -28,7 +28,8 @@ export function leerConfiguracion(texto) {
   if (!datos || typeof datos !== "object" || Array.isArray(datos)) {
     return { existe: true, modo: REVISAR, muestra: "nota", datos: null, ilegible: true };
   }
-  const valor = String(datos.revision || AUTO).trim().toLowerCase();
+  // Con archivo pero sin la clave: revisión, igual que en Python.
+  const valor = String(datos.revision || REVISAR).trim().toLowerCase();
   const modo = [AUTO, REVISAR].includes(valor) ? valor : REVISAR;
   const muestra = String(datos.correo_muestra || "nota").trim().toLowerCase();
   return { existe: true, modo, muestra: MUESTRAS.includes(muestra) ? muestra : "nota", datos };

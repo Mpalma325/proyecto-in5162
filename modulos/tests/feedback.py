@@ -131,13 +131,18 @@ def enviar_una(info: SemanaInfo, correo: str, nombre: str, correccion: dict,
         detalle = "auto"
     # Primero el log (una línea) y después la tabla: si el proceso muere entre
     # los dos, la corrida siguiente ve la evaluacion y no lo vuelve a mandar.
-    _datos.log.registrar("evaluacion", _datos.TESTS, item, correo,
-                         Ronda=0, MessageId=message_id or "",
-                         Modelo=correccion.get("Modelo", ""),
-                         Versiones=versiones.juntar(correccion.get("Versiones"), plantilla.version),
-                         Nota=final["nota"], Originalidad=final["originalidad"],
-                         Logro=_logro_de(final["nota"]),
-                         EvaluacionIA=final["html"], Detalle=detalle)
+    try:
+        _datos.log.registrar("evaluacion", _datos.TESTS, item, correo,
+                             Ronda=0, MessageId=message_id or "",
+                             Modelo=correccion.get("Modelo", ""),
+                             Versiones=versiones.juntar(correccion.get("Versiones"), plantilla.version),
+                             Nota=final["nota"], Originalidad=final["originalidad"],
+                             Logro=_logro_de(final["nota"]),
+                             EvaluacionIA=final["html"], Detalle=detalle)
+    except Exception as e:  # noqa: BLE001
+        # El correo ya salió: no se corta el lote. La Nota de abajo es lo que
+        # evita que la corrida siguiente lo reenvíe.
+        print(f"     ⚠ el correo a {nombre or correo} salió, pero no pude anotarlo en el log: {e}")
     try:
         _datos.notas.registrar_nota(correo, _datos.TESTS, item, final["nota"], final["originalidad"],
                                     logro=_logro_de(final["nota"]))
@@ -163,7 +168,9 @@ def seleccionar(item: int, modo: str, *, solo_automaticas: bool = False,
     "esperando": n}. Cada elemento de enviar/descartar es
     {"correo", "correccion", "decision", "respuesta"}.
     """
-    decisiones = {} if solo_automaticas else _decisiones.leer(item, semestre_id)
+    # Las decisiones se leen siempre: con solo_automaticas (el reintento que hace
+    # evaluar) una corrección que el docente ya tocó en Revisar no sale sola.
+    decisiones = _decisiones.leer(item, semestre_id)
     estados = {f["Correo"].strip().lower(): f
                for f in _datos.notas.leer(semestre_id, flujo=_datos.TESTS, item=str(item))}
     salida = {"enviar": [], "descartar": [], "saltadas": [], "esperando": 0}
@@ -175,6 +182,12 @@ def seleccionar(item: int, modo: str, *, solo_automaticas: bool = False,
         correccion = e["correccion"]
         decision = decisiones.get(correo)
         caso = {"correo": correo, "correccion": correccion, "decision": None, "respuesta": e.get("respuesta")}
+
+        if solo_automaticas and decision:
+            # Aprobada, descartada o lo que sea: la decide el docente y la registra
+            # o la manda tests.feedback, nunca el reintento automático.
+            salida["esperando"] += 1
+            continue
 
         if decision and decision.get("estado") in (_decisiones.ENVIAR, _decisiones.DESCARTADA):
             if not _decisiones.vigente(decision, correccion):

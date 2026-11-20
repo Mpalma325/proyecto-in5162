@@ -319,6 +319,48 @@ def flujo_completo():
               decisiones.reescribir_nota_final("<p><b>NOTA FINAL:</b> 5,0</p>", "6,5") == "<p><b>NOTA FINAL:</b> 6,5</p>")
 
 
+def descarte_y_reintento():
+    """Un semestre aparte: lo que deja no cambia las cuentas de flujo_completo."""
+    with semestre_desechable(sid="_tmp_revision_b") as (sid, tmp), sin_red():
+        _vaciar_instancia(tmp, SEM)
+        from modulos import datos
+        from modulos.semestre import configuracion
+        from modulos.tests import evaluar
+
+        curso = datos.alumnos.correos(sid)
+
+        def estado(correo):
+            return datos.notas.estado(correo, datos.TESTS, str(SEM), sid) or {}
+
+        titulo("13. lo que el docente descartó en Revisar no lo manda el reintento automático")
+        _config(tmp, "auto")
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana",
+                   return_value=respuestas_falsas(curso, SEM, cantidad=1, message_ids=True)), \
+             patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("6,0")), \
+             patch("modulos.tests.feedback.enviar_correo", side_effect=RuntimeError("SMTP caído")):
+            _salida(evaluar.main, SEM, dry_run=False)
+        corr = [e for e in datos.log.leer(sid, flujo=datos.TESTS, item=str(SEM), evento="correccion")
+                if e["Correo"] == curso[0].lower()]
+        check("quedó corregida sin enviar", len(corr) == 1 and not estado(curso[0]).get("Nota"), corr)
+        _decidir(tmp, SEM, {curso[0].lower(): {"estado": "descartada", "base": corr[0]["Timestamp"] if corr else "",
+                                               "retroalimentacion": "no corresponde"}})
+        enviados.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[]):
+            _salida(evaluar.main, SEM, dry_run=False)
+        check("el reintento no le manda nada ni le pone nota",
+              enviados == [] and not estado(curso[0]).get("Nota"), (enviados, estado(curso[0])))
+        _decidir(tmp, SEM, {curso[0].lower(): {"estado": "aprobada", "base": corr[0]["Timestamp"] if corr else ""}})
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[]):
+            _salida(evaluar.main, SEM, dry_run=False)
+        check("una aprobada tampoco: la manda tests.feedback cuando el docente la envía", enviados == [], enviados)
+
+        titulo("14. configuracion.json sin la clave revision: modo revisión")
+        (tmp / "configuracion.json").write_text("{}", encoding="utf-8")
+        check("{} es revisar", configuracion.modo_revision(sid) == configuracion.REVISAR)
+        _config(tmp, None)
+        check("sin archivo sigue siendo automático (2026-2)", configuracion.modo_revision(sid) == configuracion.AUTO)
+
+
 def nombres_repetidos():
     titulo("12. dos instancias con el mismo Tipo y Número se avisan")
     import tempfile
@@ -337,5 +379,6 @@ def nombres_repetidos():
 
 cuerpo_identico()
 flujo_completo()
+descarte_y_reintento()
 nombres_repetidos()
 sys.exit(resultado())

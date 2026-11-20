@@ -47,11 +47,13 @@ def leer(semestre_id: str | None = None) -> dict | None:
 
 
 def modo_revision(semestre_id: str | None = None) -> str:
-    """`auto` o `revisar`. Sin archivo, o sin la clave, `auto` (como siempre)."""
+    """`auto` o `revisar`. Sin archivo, `auto` (como siempre, así 2026-2 no
+    cambia). Con archivo pero sin la clave, `revisar`: ante la duda, nada sale
+    sin que el docente lo vea."""
     datos = leer(semestre_id)
     if datos is None:
         return AUTO
-    valor = str(datos.get("revision") or AUTO).strip().lower()
+    valor = str(datos.get("revision") or REVISAR).strip().lower()
     if valor not in MODOS:
         print(f"⚠ {ARCHIVO}: revision «{valor}» no se entiende (auto o revisar): se trabaja en modo revisión.")
         return REVISAR
