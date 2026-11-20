@@ -297,6 +297,117 @@ if shutil.which("node"):
 else:
     print("  (sin node en el PATH: no se prueba preguntas.js)")
 
+titulo("7c2. instancias: nombre, fechas, confirmar y programar, y lo que queda fijo al enviar")
+# Una fila del formato nuevo (columna Instancia), inventada. El asunto, el
+# cuerpo y la fecha de entrega los calcula el Python que de verdad envía.
+if shutil.which("node"):
+    import tempfile as _tempfile
+
+    from modulos.tests import enviar as _enviar
+    from modulos.tests import preguntas as _preguntas
+
+    _fila_nueva = {"Instancia": "6", "Tipo": "Control", "Numero": "2", "Estado": "confirmada",
+                   "Envio": "2026-11-23T10:15:00-03:00", "Cierre": "2026-11-30T10:15:00-03:00",
+                   "Tema": "Logit anidado", "Fecha de Entrega": "lunes 30/11/2026, 10:15",
+                   "Control P1": "¿Qué resuelve un logit anidado?", "Control Pauta P1": "Correlación en el nido.",
+                   "Control P2": "Dé un ejemplo, con \"comillas\".", "Control Pauta P2": "Uno cualquiera.",
+                   "Tratamiento P1": "¿Y uno multinomial?", "Tratamiento Pauta P1": "IIA."}
+    _info = _preguntas._parsear_fila(_fila_nueva, 6)
+    _plantilla = ("<p>Hola {NOMBRE},</p><p>{TITULO} · \"{TEMA}\". Entrega: <b>{FECHA_ENTREGA}</b>.</p>\n"
+                  "  {BLOQUE_PREGUNTAS}\n<p>Número {SEMANA}</p>")
+    _esperado = {
+        "plantilla": _plantilla, "fila": _fila_nueva, "asunto": _enviar._construir_asunto(_info),
+        "cuerpo": {g: _enviar._construir_cuerpo(_plantilla, {"Nombre": "Ana Pérez", "Grupo": g}, _info)
+                   for g in ("control", "tratamiento")},
+        "fechas": {iso: _preguntas.texto_fecha(iso) for iso in
+                   ("2026-11-23T10:15:00-03:00", "2026-07-06T09:05:00-04:00", "2026-11-29T23:59:00-03:00",
+                    "2026-11-19T13:15:00Z")},
+    }
+    check("el asunto nuevo es «Control 2: tema»", _esperado["asunto"] == "Control 2: Logit anidado", _esperado["asunto"])
+    check("el correo nuevo no dice «de la semana» y usa el número visible, no el id",
+          "de la semana" not in _esperado["cuerpo"]["control"] and "Número 2" in _esperado["cuerpo"]["control"]
+          and "Control 2 ·" in _esperado["cuerpo"]["control"], _esperado["cuerpo"]["control"])
+    with _tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "esperado.json").write_text(json.dumps(_esperado, ensure_ascii=False), encoding="utf-8")
+        r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-instancias.mjs"),
+                            str(Path(tmp) / "esperado.json")],
+                           capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-instancias.mjs corre", False, r.stderr[-300:])
+else:
+    print("  (sin node en el PATH: no se prueban las instancias de preguntas.js)")
+
+titulo("7c3. trabajos programados a más de 30 días: esperan en D1 y el cron los encola")
+# Cloud Tasks no acepta más de 30 días; una instancia se confirma con su
+# cierre a meses. Sin red: el código del Worker sobre una D1 de mentira.
+if shutil.which("node"):
+    r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-programados.mjs")],
+                       capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-programados.mjs corre", False, r.stderr[-300:])
+else:
+    print("  (sin node en el PATH: no se prueba el Worker)")
+
+titulo("7c4. subir --plantilla: reemplaza lo distinto con su etag y no toca semestres")
+# Un sitio de mentira en memoria: nada sale del PC.
+import hashlib as _hashlib
+import tempfile as _tempfile2
+
+from modulos import semestre as _semestre_mod
+from modulos.web import subir as _subir
+
+with _tempfile2.TemporaryDirectory() as tmp:
+    _raiz_plantilla = Path(tmp) / "_template"
+    (_raiz_plantilla / "tests_semanales" / "data").mkdir(parents=True)
+    (_raiz_plantilla / "tests_semanales" / "data" / "preguntas.csv").write_text("Instancia,Tipo\n", encoding="utf-8")
+    (_raiz_plantilla / "igual.md").write_text("igual", encoding="utf-8")
+    (_raiz_plantilla / "nuevo.md").write_text("nuevo", encoding="utf-8")
+    _nube = {"tests_semanales/data/preguntas.csv": "etag-viejo",
+             "igual.md": _hashlib.md5(b"igual").hexdigest()}
+    _pedidos = []
+
+    def _pedir_falso(metodo, ruta, token, cuerpo=None, extra=None, tipo=""):
+        _pedidos.append((metodo, ruta, dict(extra or {})))
+        if metodo == "GET" and ruta == "motor/archivos/_template":
+            return json.dumps([{"ruta": k, "etag": f'"{v}"'} for k, v in _nube.items()]).encode()
+        if metodo == "PUT":
+            return b"{}"
+        raise AssertionError(f"pedido inesperado: {metodo} {ruta}")
+
+    _pedir_real, _raiz_real = _subir._pedir, _semestre_mod.raiz
+    _subir._pedir = _pedir_falso
+    _semestre_mod.raiz = lambda sid: _raiz_plantilla if sid == "_template" else _raiz_real(sid)
+    import contextlib as _contextlib
+    import io as _io2
+    try:
+        # El avance («_template: 2/3 archivos») no se mezcla con los resultados.
+        with _contextlib.redirect_stdout(_io2.StringIO()):
+            simulado = _subir.subir_plantilla("token-falso", simular=True)
+        check("--simular dice qué reemplazaría y qué agregaría, sin subir nada",
+              simulado["reemplazados"] == ["tests_semanales/data/preguntas.csv"] and simulado["nuevos"] == ["nuevo.md"]
+              and not [p for p in _pedidos if p[0] == "PUT"], simulado)
+        _pedidos.clear()
+        with _contextlib.redirect_stdout(_io2.StringIO()):
+            _subir.subir_plantilla("token-falso")
+        _puts = {p[1]: p[2] for p in _pedidos if p[0] == "PUT"}
+        check("reemplaza el distinto con If-Match del etag que leyó",
+              _puts.get("motor/archivo/_template/tests_semanales/data/preguntas.csv", {}).get("If-Match") == "etag-viejo",
+              _puts)
+        check("sube el nuevo solo si no existe (If-None-Match)",
+              _puts.get("motor/archivo/_template/nuevo.md", {}).get("If-None-Match") == "*", _puts)
+        check("el igual no se sube", "motor/archivo/_template/igual.md" not in _puts, _puts)
+        check("no pide nada de otros semestres ni sube reportería",
+              all("_template" in p[1] for p in _pedidos) and not any(p[1].startswith("subir/") for p in _pedidos),
+              _pedidos)
+    finally:
+        _subir._pedir, _semestre_mod.raiz = _pedir_real, _raiz_real
+
 titulo("7d. la sábana se vuelve a armar sola cuando cambió algo de lo que lee")
 if shutil.which("node"):
     r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-sabana.mjs")],

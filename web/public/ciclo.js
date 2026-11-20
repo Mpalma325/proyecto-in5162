@@ -8,10 +8,17 @@
 //   respondió sin nota = con Respondio y sin Nota
 //   resumen       = existe tests_semanales/data/resumen_semana_<n>.txt
 // El ciclo de cada semana es enviar y evaluar; el resumen es opcional.
+//
+// Con preguntas.csv del formato nuevo (columna Instancia) no hay semanas: cada
+// instancia trae su Envio y su Cierre, y puede haber varias abiertas a la vez.
+// Lo que toca sale de esas fechas; la regla de «una semana después de la
+// anterior» queda solo para el formato antiguo.
 
-import { api, el, enCuanto, fechaCorta } from "./comun.js";
+import { api, el, enCuanto, fechaCorta, nombrarInstancias } from "./comun.js";
 import { leerCsv } from "./csv.js";
-import { fechaEntrega, leerSemana, RUTA as RUTA_PREGUNTAS } from "./preguntas.js";
+import {
+  esLegado, fechaEntrega, leerSemana, nombreDe, RUTA as RUTA_PREGUNTAS, semanasDe, textoFecha,
+} from "./preguntas.js";
 
 const VACIA = { enviados: 0, primerEnvio: "", evaluadas: 0, sinNota: 0 };
 
@@ -23,7 +30,9 @@ export function diaMes(iso) {
 
 /**
  * Lee el estado del semestre y lo devuelve con lo que se le pregunta:
- * estadoDe(n), enviadas(), entregaDe(n), proximoPaso(), conResumen y preguntas.
+ * estadoDe(n), enviadas(), entregaDe(n), proximoPaso(), conResumen y preguntas,
+ * más legado, nombre(n) («Semana 4» o «Control 2») y mencion(n) («la semana 4»
+ * o «Control 2», para meterlo en una frase).
  */
 export async function leerCiclo(semestre) {
   const base = `/api/archivo/${encodeURIComponent(semestre)}`;
@@ -38,7 +47,10 @@ export async function leerCiclo(semestre) {
     // Para las fechas de entrega; si falla, se sigue sin ellas.
     fetch(`${base}/${RUTA_PREGUNTAS}`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : "")).catch(() => ""),
   ]);
-  return armarCiclo(notas, resumenes.map((a) => a.ruta), preguntas);
+  const c = armarCiclo(notas, resumenes.map((a) => a.ruta), preguntas);
+  // Los historiales de trabajos muestran «Control 2», no el id que va en los argumentos.
+  if (!c.legado) nombrarInstancias(semanasDe(c.preguntas).map((s) => [s.numero, s.nombre]));
+  return c;
 }
 
 /** El ciclo a partir de los textos ya leídos (separado de la red para poder probarlo). */
@@ -65,14 +77,26 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
   const conResumen = new Set(rutasResumen.map((r) => Number((r.match(/resumen_semana_(\d+)\.txt$/) || [])[1]))
     .filter(Boolean));
   const tablaPreguntas = preguntas.trim() ? leerCsv(preguntas) : null;
+  const legado = !tablaPreguntas || esLegado(tablaPreguntas);
 
   const estadoDe = (n) => porSemana.get(n) || VACIA;
   const enviadas = () => [...porSemana].filter(([, s]) => s.enviados).map(([n]) => n).sort((a, b) => a - b);
+  const instancia = (n) => (tablaPreguntas ? leerSemana(tablaPreguntas, n) : null);
   const entregaDe = (n) => {
-    const s = tablaPreguntas ? leerSemana(tablaPreguntas, n) : null;
+    const s = instancia(n);
+    if (!legado && s?.cierre) {
+      const fecha = new Date(s.cierre);
+      if (!Number.isNaN(fecha.getTime())) return { texto: textoFecha(s.cierre), fecha };
+    }
     const texto = (s?.fecha || "").trim();
     return { texto, fecha: fechaEntrega(texto) };
   };
+  const nombre = (n) => {
+    if (legado) return `Semana ${n}`;
+    const s = instancia(n);
+    return s ? nombreDe(s) : `Instancia ${n}`;
+  };
+  const mencion = (n) => (legado ? `la semana ${n}` : nombre(n));
 
   /**
    * Lo que sigue. Si hay una semana enviada sin evaluar, evaluarla cuando
@@ -80,6 +104,7 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
    * después de la anterior. { paso, semana, cuando (Date o null), ya }
    */
   const proximoPaso = (ahora = new Date()) => {
+    if (!legado) return proximoInstancia(ahora);
     const porEvaluar = enviadas().find((n) => !estadoDe(n).evaluadas);
     if (porEvaluar) {
       const { fecha } = entregaDe(porEvaluar);
@@ -93,8 +118,34 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
     return { paso: "enviar", semana: siguiente, cuando, ya: !cuando || cuando <= ahora };
   };
 
+  /**
+   * Formato nuevo: primero evaluar la enviada sin notas que cierra antes; si no
+   * hay, enviar la confirmada que sale antes (`cuando` = su Envio). Si solo
+   * quedan borradores, el primero, con `borrador: true` (falta confirmarlo).
+   */
+  const fecha = (iso) => { const d = new Date(iso || ""); return Number.isNaN(d.getTime()) ? null : d; };
+  const antes = (a, b) => (a ? a.getTime() : Infinity) - (b ? b.getTime() : Infinity);
+  function proximoInstancia(ahora) {
+    const abiertas = enviadas().filter((n) => !estadoDe(n).evaluadas)
+      .map((n) => ({ n, cierre: entregaDe(n).fecha })).sort((a, b) => antes(a.cierre, b.cierre) || a.n - b.n);
+    if (abiertas.length) {
+      const { n, cierre } = abiertas[0];
+      return { paso: "evaluar", semana: n, cuando: cierre, ya: !cierre || cierre <= ahora, abiertas: abiertas.length };
+    }
+    const porEnviar = semanasDe(tablaPreguntas).filter((s) => !estadoDe(s.numero).enviados);
+    const confirmadas = porEnviar.filter((s) => s.estado === "confirmada")
+      .map((s) => ({ n: s.numero, envio: fecha(s.envio) })).sort((a, b) => antes(a.envio, b.envio) || a.n - b.n);
+    if (confirmadas.length) {
+      const { n, envio } = confirmadas[0];
+      return { paso: "enviar", semana: n, cuando: envio, ya: !envio || envio <= ahora };
+    }
+    if (porEnviar.length) return { paso: "enviar", semana: porEnviar[0].numero, cuando: null, ya: false, borrador: true };
+    return { paso: null, semana: enviadas().at(-1) };
+  }
+
   const sinNota = () => [...porSemana.values()].reduce((s, x) => s + x.sinNota, 0);
-  return { porSemana, conResumen, preguntas: tablaPreguntas, estadoDe, enviadas, entregaDe, proximoPaso, sinNota };
+  return { porSemana, conResumen, preguntas: tablaPreguntas, estadoDe, enviadas, entregaDe, proximoPaso, sinNota,
+    legado, nombre, mencion };
 }
 
 /**
@@ -113,10 +164,13 @@ export function flechasCiclo(c, enlace) {
     el("div", { class: "flecha-valor" }, valor),
     nota ? el("div", { class: "flecha-nota" }, nota) : null);
   const textoEntrega = entrega.fecha ? fechaCorta(entrega.fecha) : entrega.texto || "sin fecha";
+  const nombre = c.nombre ? c.nombre(n) : `Semana ${n}`;
   if (p.paso === "enviar") {
+    const notaEnvio = p.borrador ? "en borrador: falta confirmarla"
+      : p.cuando && !p.ya ? `${c.legado === false ? "sale el" : "hacia el"} ${fechaCorta(p.cuando)} (${enCuanto(p.cuando)})`
+        : "lista para enviar";
     return el("div", { class: "flechas-estado" },
-      flecha("actual", "Enviar", enlace(`Semana ${n}`, "enviar", n),
-        p.cuando && !p.ya ? `hacia el ${fechaCorta(p.cuando)} (${enCuanto(p.cuando)})` : "lista para enviar"),
+      flecha("actual", "Enviar", enlace(nombre, "enviar", n), notaEnvio),
       flecha("pendiente", "Entrega", textoEntrega, !entrega.fecha ? "sin fecha en preguntas.csv"
         : entrega.fecha < new Date() ? "ya pasó: revisa la fecha" : null),
       flecha("pendiente", "Evaluar", "Después de la entrega"));

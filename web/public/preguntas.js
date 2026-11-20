@@ -1,12 +1,21 @@
-// Las preguntas de los tests, una semana a la vez.
+// Las preguntas de los tests, una instancia a la vez.
 //
-// preguntas.csv tiene una fila por semana y, por cada grupo, hasta tres
+// preguntas.csv tiene una fila por instancia y, por cada grupo, hasta tres
 // preguntas con su pauta. Editarlo entero en una grilla obliga a buscar la fila
-// y a leer párrafos en celdas angostas. Acá se elige la semana, se ven sus
+// y a leer párrafos en celdas angostas. Acá se elige la instancia, se ven sus
 // preguntas como las va a recibir el alumno, y al guardar se reescribe solo esa
 // fila: el resto del archivo queda igual, byte a byte (csv.js respeta su formato).
+//
+// Dos formatos, que se distinguen por la columna del id (modulos/tests/preguntas.py):
+//   Semana     2026-2 y antes. «Semana N», todas confirmadas. Se ve y se edita como siempre.
+//   Instancia  semestres nuevos. Un id que el docente no ve, más Tipo y Numero
+//              («Control 2»), Estado (borrador o confirmada), Envio y Cierre
+//              (ISO con la zona de Santiago). Al confirmar se programan el envío
+//              y la evaluación (confirmarInstancia).
+// En el código, `numero` es siempre el id; el número visible es `numeroTipo`.
 
-import { api, caja, centrarSeleccion, conDetalle, confirmar, el, normalizar } from "./comun.js";
+import { api, caja, centrarSeleccion, conDetalle, confirmar, el, idDe, normalizar, pedirTrabajo, textoProgramado,
+  urlTrabajos } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 
 export const RUTA = "tests_semanales/data/preguntas.csv";
@@ -18,29 +27,65 @@ const titulo = (g) => g[0].toUpperCase() + g.slice(1);
 const columna = (grupo, i, pauta) => `${titulo(grupo)} ${pauta ? "Pauta " : ""}P${i}`;
 const COLUMNAS = ["Semana", "Tema", "Fecha de Entrega",
   ...GRUPOS.flatMap((g) => [1, 2, 3].flatMap((i) => [columna(g, i, false), columna(g, i, true)]))];
+const COLUMNAS_INSTANCIA = ["Instancia", "Tipo", "Numero", "Estado", "Envio", "Cierre"];
+/** La cabecera de un preguntas.csv nuevo, la misma de la plantilla (semestres/_template). */
+export const CABECERA_NUEVA = [...COLUMNAS_INSTANCIA, "Tema", "Fecha de Entrega",
+  ...GRUPOS.flatMap((g) => [false, true].flatMap((pauta) => [1, 2, 3].map((i) => columna(g, i, pauta))))];
+/** Los tipos que se sugieren al crear una instancia; se puede escribir otro. */
+export const TIPOS = ["Control", "Test", "Evaluación", "Instancia"];
+const TIPO_POR_DEFECTO = "Instancia";
+const ID = /^[1-9]\d{0,2}$/;
 const lleno = (s) => String(s ?? "").trim() !== "";
+/** Un preguntas.csv nuevo, con la cabecera y sin filas. */
+export const archivoVacio = () => ({ columnas: [...CABECERA_NUEVA], filas: [] });
 
 // ---------------------------------------------------------------- el archivo, sin pantalla
 
+/** "Instancia", "Semana" o null: la columna del id. Con las dos, null (el archivo no se puede usar). */
+export function columnaId(datos) {
+  const [i, s] = ["Instancia", "Semana"].map((c) => datos.columnas.includes(c));
+  return i && s ? null : i ? "Instancia" : s ? "Semana" : null;
+}
+
+/** Si el archivo es del formato antiguo (columna Semana): se ve y se comporta como siempre. */
+export const esLegado = (datos) => columnaId(datos) === "Semana";
+
 /** Las columnas que el editor necesita y el archivo no tiene. */
 export function columnasFaltantes(datos) {
-  return COLUMNAS.filter((c) => !datos.columnas.includes(c));
+  const tiene = (c) => datos.columnas.includes(c);
+  if (tiene("Semana") && tiene("Instancia")) return ["solo una de Semana o Instancia, no las dos"];
+  if (!tiene("Instancia")) return COLUMNAS.filter((c) => !tiene(c));
+  return [...COLUMNAS_INSTANCIA, ...COLUMNAS.slice(1)].filter((c) => !tiene(c));
 }
 
 function numeroDe(datos, fila) {
-  const n = Number.parseInt(String(fila[datos.columnas.indexOf("Semana")] ?? "").trim(), 10);
-  return Number.isNaN(n) ? null : n;
+  const c = columnaId(datos);
+  const t = c ? String(fila[datos.columnas.indexOf(c)] ?? "").trim() : "";
+  return ID.test(t) ? Number(t) : null;
 }
 
-/** Las semanas del archivo, en orden: [{ numero, tema, fecha, avisos }]. */
+/** Los ids del archivo, en orden y sin repetir (de una fila repetida vale la primera, como en Python). */
+const idsDe = (datos) => [...new Set(datos.filas.map((f) => numeroDe(datos, f)).filter((n) => n !== null))]
+  .sort((a, b) => a - b);
+
+/** Las instancias del archivo, en orden: [{ numero, nombre, tema, fecha, estado?, envio?, cierre?, avisos }]. */
 export function semanasDe(datos) {
-  return datos.filas.map((f) => numeroDe(datos, f)).filter((n) => n !== null)
-    .sort((a, b) => a - b)
-    .map((n) => {
-      const s = leerSemana(datos, n);
-      return { numero: n, tema: s.tema, fecha: s.fecha, avisos: avisosDe(s, true) };
-    });
+  return idsDe(datos).map((n) => {
+    const s = leerSemana(datos, n);
+    return { ...s, preguntas: undefined, nombre: nombreDe(s), avisos: avisosDe(s, true) };
+  });
 }
+
+/** Lo que ve el docente: «Control 2», o «Semana 4» en el formato antiguo. */
+export const nombreDe = (s) => (s.tipo ? `${s.tipo} ${s.numeroTipo}` : `Semana ${s.numero}`);
+
+/** El asunto del correo de la pregunta, como lo arma modulos/tests/preguntas.py (asunto). */
+export function asuntoDe(s) {
+  if (!s.tipo) return `Evaluación de Progreso Individual Módulo ${s.numero}: ${s.tema.trim()}`;
+  return lleno(s.tema) ? `${nombreDe(s)}: ${s.tema.trim()}` : nombreDe(s);
+}
+
+const estadoDeTexto = (t) => (["", "confirmada"].includes(String(t ?? "").trim().toLowerCase()) ? "confirmada" : "borrador");
 
 /**
  * Una semana como se edita: tema, fecha y sus preguntas. Cada pregunta trae el
@@ -63,7 +108,11 @@ export function leerSemana(datos, numero) {
     const igual = control.texto === tratamiento.texto && control.pauta === tratamiento.pauta;
     preguntas.push({ control, tratamiento, igual });
   }
-  return { numero, tema: v("Tema"), fecha: v("Fecha de Entrega"), preguntas };
+  const s = { numero, tema: v("Tema"), fecha: v("Fecha de Entrega"), preguntas };
+  if (esLegado(datos)) return s;
+  const n = String(v("Numero")).trim();
+  return { ...s, tipo: String(v("Tipo")).trim() || TIPO_POR_DEFECTO, numeroTipo: ID.test(n) ? Number(n) : numero,
+    estado: estadoDeTexto(v("Estado")), envio: String(v("Envio")).trim(), cierre: String(v("Cierre")).trim() };
 }
 
 /**
@@ -71,10 +120,15 @@ export function leerSemana(datos, numero) {
  * la fecha de entrega y la pregunta 2 (control)". `antes` es null si es nueva.
  */
 export function cambiosSemana(numero, antes, despues) {
-  if (!antes) return `Semana ${numero}: semana nueva`;
+  const quien = despues.tipo ? nombreDe(despues) : `Semana ${numero}`;
+  if (!antes) return despues.tipo ? `${quien}: instancia nueva` : `Semana ${numero}: semana nueva`;
   const cambios = [];
+  if (despues.tipo && nombreDe(antes) !== quien) cambios.push(`el nombre (antes ${nombreDe(antes)})`);
   if (antes.tema !== despues.tema) cambios.push("el tema");
-  if (antes.fecha !== despues.fecha) cambios.push(`la fecha de entrega (${despues.fecha.trim() || "vacía"})`);
+  if (despues.tipo) {
+    if (antes.envio !== despues.envio) cambios.push(`el envío (${textoFecha(despues.envio) || "vacío"})`);
+    if (antes.cierre !== despues.cierre) cambios.push(`el cierre (${textoFecha(despues.cierre) || "vacío"})`);
+  } else if (antes.fecha !== despues.fecha) cambios.push(`la fecha de entrega (${despues.fecha.trim() || "vacía"})`);
   const n = Math.max(antes.preguntas.length, despues.preguntas.length);
   for (let i = 0; i < n; i++) {
     const a = antes.preguntas[i];
@@ -87,9 +141,12 @@ export function cambiosSemana(numero, antes, despues) {
       a[g].pauta !== d[g].pauta && "pauta"]).filter(Boolean))].join(" y ");
     cambios.push(`la pregunta ${i + 1} (${partes}${d.igual ? "" : `, ${grupos.join(" y ")}`})`);
   }
-  if (!cambios.length) return `Semana ${numero}: sin cambios`;
+  if (despues.tipo && antes.estado !== despues.estado) {
+    cambios.push(despues.estado === "confirmada" ? "quedó confirmada" : "volvió a borrador");
+  }
+  if (!cambios.length) return `${quien}: sin cambios`;
   const lista = cambios.length > 1 ? `${cambios.slice(0, -1).join(", ")} y ${cambios[cambios.length - 1]}` : cambios[0];
-  return `Semana ${numero}: cambió ${lista}`.replace(/cambió (agregó|quitó)/, "$1");
+  return `${quien}: cambió ${lista}`.replace(/cambió (agregó|quitó|quedó|volvió)/, "$1");
 }
 
 /**
@@ -103,7 +160,15 @@ export function escribirSemana(datos, numero, semana) {
   const fila = [...datos.filas[i]];
   const poner = (c, valor) => { fila[datos.columnas.indexOf(c)] = valor; };
   poner("Tema", semana.tema);
-  poner("Fecha de Entrega", semana.fecha);
+  // En el formato nuevo la fecha de entrega que lee el alumno sale del cierre.
+  poner("Fecha de Entrega", semana.tipo && lleno(semana.cierre) ? textoFecha(semana.cierre) : semana.fecha);
+  if (semana.tipo) {
+    poner("Tipo", semana.tipo.trim());
+    poner("Numero", String(semana.numeroTipo));
+    poner("Estado", semana.estado);
+    poner("Envio", semana.envio);
+    poner("Cierre", semana.cierre);
+  }
   const preguntas = semana.preguntas.filter((p) =>
     [p.control.texto, p.control.pauta, p.tratamiento.texto, p.tratamiento.pauta].some(lleno));
   for (let n = 1; n <= MAX_PREGUNTAS; n++) {
@@ -117,6 +182,61 @@ export function escribirSemana(datos, numero, semana) {
   const filas = [...datos.filas];
   filas[i] = fila;
   return { ...datos, filas };
+}
+
+/** El archivo sin esa instancia (solo se ofrece para borradores que no se han enviado). */
+export function quitarInstancia(datos, numero) {
+  return { ...datos, filas: datos.filas.filter((f) => numeroDe(datos, f) !== numero) };
+}
+
+const mismoTipo = (a, b) => normalizar(String(a).trim()) === normalizar(String(b).trim());
+
+/**
+ * El número visible que le toca a una instancia nueva de ese tipo: el mayor de
+ * ese tipo más uno. `sin` deja fuera una instancia (la que está cambiando de tipo).
+ * Los números no se reasignan: borrar «Control 1» no convierte a «Control 2» en 1.
+ */
+export function siguienteNumero(datos, tipo, sin = null) {
+  const usados = idsDe(datos).filter((n) => n !== sin).map((n) => leerSemana(datos, n))
+    .filter((s) => mismoTipo(s.tipo, tipo)).map((s) => s.numeroTipo);
+  return usados.length ? Math.max(...usados) + 1 : 1;
+}
+
+/** El tipo con que se propone crear la siguiente: el de la última creada, o «Instancia». */
+export function tipoPorDefecto(datos) {
+  const ultima = idsDe(datos).at(-1);
+  return ultima ? leerSemana(datos, ultima).tipo : TIPO_POR_DEFECTO;
+}
+
+/**
+ * Cambiar el tipo de un borrador: toma el número siguiente de ese tipo, o el
+ * suyo si vuelve al tipo con que está guardado.
+ */
+export function conTipo(datos, s, tipo) {
+  const guardada = leerSemana(datos, s.numero);
+  const numeroTipo = guardada && mismoTipo(guardada.tipo, tipo) ? guardada.numeroTipo : siguienteNumero(datos, tipo, s.numero);
+  return { ...s, tipo, numeroTipo };
+}
+
+/**
+ * Una instancia nueva, en borrador. El id es el mayor de preguntas.csv y de los
+ * Item de tests de notas.csv, más uno: así una instancia borrada que se envió
+ * nunca le pasa sus notas a otra. Si el archivo está vacío, se crea con la
+ * cabecera nueva. Devuelve [datos, id].
+ */
+export function agregarInstancia(datos, { tipo = null, itemsNotas = [] } = {}) {
+  const base = datos && datos.columnas.some(lleno) ? datos : archivoVacio();
+  const tipoNuevo = String(tipo ?? tipoPorDefecto(base)).trim() || TIPO_POR_DEFECTO;
+  const ids = [...idsDe(base), ...itemsNotas.map(Number).filter((n) => Number.isInteger(n) && n > 0)];
+  const numero = ids.length ? Math.max(...ids) + 1 : 1;
+  const valores = { Instancia: String(numero), Tipo: tipoNuevo, Numero: String(siguienteNumero(base, tipoNuevo)),
+    Estado: "borrador" };
+  const fila = base.columnas.map((c) => valores[c] ?? "");
+  let ultima = -1;
+  base.filas.forEach((f, i) => { if (numeroDe(base, f) !== null) ultima = i; });
+  const filas = [...base.filas];
+  filas.splice(ultima + 1, 0, fila);
+  return [{ ...base, filas }, numero];
 }
 
 /** El archivo con una semana nueva y vacía, la siguiente a la última. Devuelve [datos, número]. */
@@ -145,7 +265,10 @@ export function buscarPreguntas(datos, consulta, grupo = "") {
   const q = paraBuscar(consulta);
   const semanas = semanasDe(datos);
   if (!q) return semanas.map((s) => ({ numero: s.numero, coincidencias: [] }));
-  const n = q.match(/^(?:semana|sem\.?)?\s*(\d+)$/);
+  // En el formato nuevo el número no es el id: «control 2» va directo a esa, si existe.
+  const porNombre = semanas.find((s) => s.tipo && paraBuscar(s.nombre) === q);
+  if (porNombre) return [{ numero: porNombre.numero, coincidencias: [] }];
+  const n = esLegado(datos) && q.match(/^(?:semana|sem\.?)?\s*(\d+)$/);
   if (n && semanas.some((s) => s.numero === Number(n[1]))) return [{ numero: Number(n[1]), coincidencias: [] }];
   return semanas.flatMap(({ numero }) => {
     const s = leerSemana(datos, numero);
@@ -194,8 +317,14 @@ export function extracto(texto, consulta, alrededor = 30) {
 export function avisosDe(semana, corto = false) {
   const avisos = [];
   if (!semana.preguntas.length) {
-    avisos.push(corto ? "sin preguntas" : "La semana no tiene preguntas: no se puede enviar.");
+    avisos.push(corto ? "sin preguntas" : semana.tipo ? "No tiene preguntas: no se puede enviar."
+      : "La semana no tiene preguntas: no se puede enviar.");
     return avisos;
+  }
+  if (semana.tipo) {
+    // La fecha de entrega sale del cierre; lo que falta se dice al confirmar.
+    semana.preguntas.forEach((p, i) => avisos.push(...avisosDePregunta(p, i, corto)));
+    return corto ? [...new Set(avisos)] : avisos;
   }
   if (!lleno(semana.fecha)) {
     avisos.push(corto ? "sin fecha"
@@ -270,27 +399,243 @@ export function fechaEntrega(texto, hoy = new Date()) {
 
 const ESTILO_CITA = "border-left: 3px solid #ccc; margin: 10px 0; padding-left: 12px; color: #555;";
 
-/** Igual que _construir_bloque_preguntas() de modulos/tests/enviar.py. */
-export function bloquePreguntas(preguntas) {
+/** Igual que _construir_bloque_preguntas() de modulos/tests/enviar.py: «de la semana» solo en el formato antiguo. */
+export function bloquePreguntas(preguntas, legado = true) {
+  const de = legado ? " de la semana" : "";
   if (preguntas.length === 1) {
-    return `<p>La pregunta de la semana es:</p>\n<blockquote style="${ESTILO_CITA}">\n  ${preguntas[0]}\n</blockquote>`;
+    return `<p>La pregunta${de} es:</p>\n<blockquote style="${ESTILO_CITA}">\n  ${preguntas[0]}\n</blockquote>`;
   }
-  return ["<p>Las preguntas de la semana son:</p>",
+  return [`<p>Las preguntas${de} son:</p>`,
     ...preguntas.map((p, i) => `<blockquote style="${ESTILO_CITA}">\n  ${i + 1}. ${p}\n</blockquote>`)].join("\n");
 }
 
 /** El correo que recibe un alumno de ese grupo: { asunto, html }. */
 export function correoDe(plantilla, semana, grupo, nombre = "Ana") {
   const preguntas = semana.preguntas.map((p) => (p.igual ? p.control : p[grupo]).texto.trim()).filter(lleno);
+  // Como preguntas.py: en el formato nuevo manda el cierre, y la columna queda de respaldo.
+  const fecha = (semana.tipo && textoFecha(semana.cierre)) || semana.fecha.trim();
   return {
-    asunto: `Evaluación de Progreso Individual Módulo ${semana.numero}: ${semana.tema.trim()}`,
+    asunto: asuntoDe(semana),
     html: plantilla
       .replaceAll("{NOMBRE}", nombre)
       .replaceAll("{TEMA}", semana.tema.trim())
-      .replaceAll("{FECHA_ENTREGA}", semana.fecha.trim())
-      .replaceAll("{BLOQUE_PREGUNTAS}", bloquePreguntas(preguntas))
-      .replaceAll("{SEMANA}", String(semana.numero)),
+      .replaceAll("{FECHA_ENTREGA}", fecha)
+      .replaceAll("{BLOQUE_PREGUNTAS}", bloquePreguntas(preguntas, !semana.tipo))
+      .replaceAll("{SEMANA}", String(semana.tipo ? semana.numeroTipo : semana.numero))
+      .replaceAll("{TITULO}", nombreDe(semana)),
   };
+}
+
+// ---------------------------------------------------------------- fechas y horas de Santiago
+// Envio y Cierre se guardan como ISO con la zona de Santiago ("2026-10-19T10:15:00-03:00"):
+// el motor y la cola las leen como instantes, y la hora de pared queda escrita.
+
+const ZONA = "America/Santiago";
+const dos = (n) => String(n).padStart(2, "0");
+
+/** Cuántos minutos hay que sumarle a UTC para tener la hora de Santiago en ese instante. */
+function desfaseSantiago(ms) {
+  const z = new Intl.DateTimeFormat("en-US", { timeZone: ZONA, timeZoneName: "longOffset" }).formatToParts(new Date(ms))
+    .find((p) => p.type === "timeZoneName")?.value || "GMT";
+  const m = z.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+}
+const textoDesfase = (min) => `${min < 0 ? "-" : "+"}${dos(Math.floor(Math.abs(min) / 60))}:${dos(Math.abs(min) % 60)}`;
+
+/** "2026-10-19T10:15" (lo que da un <input type="datetime-local">, hora de Santiago) -> ISO con su zona. */
+export function isoSantiago(local) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(local || ""));
+  if (!m) return "";
+  const pared = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  // Dos vueltas: el desfase de esa hora de pared, no el de la misma hora en UTC.
+  const desfase = desfaseSantiago(pared - desfaseSantiago(pared) * 60_000);
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00${textoDesfase(desfase)}`;
+}
+
+/** Un ISO -> "2026-10-19T10:15" en hora de Santiago, para el <input type="datetime-local">. */
+export function localSantiago(iso) {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "" : new Date(ms + desfaseSantiago(ms) * 60_000).toISOString().slice(0, 16);
+}
+
+/** Ahora, como ISO con la zona de Santiago y con segundos. */
+export function isoAhora(ms = Date.now()) {
+  const d = desfaseSantiago(ms);
+  return `${new Date(ms + d * 60_000).toISOString().slice(0, 19)}${textoDesfase(d)}`;
+}
+
+const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+/**
+ * "2026-10-19T10:15:00-03:00" -> "lunes 19/10/2026, 10:15", con la hora escrita
+ * en el ISO. Es la fecha de entrega que lee el alumno; igual que texto_fecha() de
+ * modulos/tests/preguntas.py, y fechaEntrega() la vuelve a leer.
+ */
+export function textoFecha(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || "").trim());
+  if (!m || Number.isNaN(Date.parse(iso))) return "";
+  const dia = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay();
+  return `${DIAS_SEMANA[dia]} ${m[3]}/${m[2]}/${m[1]}, ${Number(m[4])}:${m[5]}`;
+}
+
+// ---------------------------------------------------------------- confirmar y programar
+// Una instancia nueva nace en borrador: se edita y se simula, pero no se envía.
+// Al confirmarla se programan dos trabajos reales con a_las: el envío a la hora
+// de Envio y la evaluación a la de Cierre (src/index.ts los deja esperando en la
+// cola, o en D1 si faltan más de 29 días). Volver a borrador anula los dos, y
+// el motor igual se niega a enviar un borrador (modulos/tests/enviar.py).
+
+const DIA_MS = 864e5;
+/** El mismo límite que PROGRAMAR_HASTA_DIAS en src/index.ts. */
+export const PROGRAMAR_HASTA_DIAS = 200;
+const FLUJOS_PROGRAMADOS = ["tests.enviar", "tests.evaluar"];
+
+/** De notas.csv: cuántos alumnos tienen Enviado en cada test (Map id -> n) y todos los Item de tests. */
+export function enviosDeNotas(texto) {
+  const enviados = new Map();
+  const items = new Set();
+  if (!String(texto || "").trim()) return { enviados, items: [] };
+  const { columnas, filas } = leerCsv(texto);
+  const [iF, iI, iE] = ["Flujo", "Item", "Enviado"].map((c) => columnas.indexOf(c));
+  for (const f of filas) {
+    const n = Number(String(f[iI] ?? "").trim());
+    if (String(f[iF] ?? "").trim() !== "test" || !Number.isInteger(n) || n < 1) continue;
+    items.add(n);
+    if (lleno(f[iE])) enviados.set(n, (enviados.get(n) || 0) + 1);
+  }
+  return { enviados, items: [...items] };
+}
+
+const deInstancia = (t, numero) => Number(idDe(t.argumentos || {})) === numero;
+
+/** Los trabajos reales de esa instancia que esperan su hora (o su turno en la cola). */
+export function programadosDe(trabajos, numero, flujos = FLUJOS_PROGRAMADOS) {
+  return trabajos.filter((t) => flujos.includes(t.flujo) && !t.prueba && t.estado === "pendiente" && deInstancia(t, numero));
+}
+
+/** Si un envío real de esa instancia ya empezó o terminó: entonces ya salieron correos. */
+export const envioEmpezado = (trabajos, numero) => trabajos.some((t) => t.flujo === "tests.enviar" && !t.prueba
+  && ["corriendo", "cancelando", "terminado"].includes(t.estado) && deInstancia(t, numero));
+
+/**
+ * Lo que impide confirmar ([] si se puede). Con `enviarAhora` el envío es este
+ * momento y no se le pide que esté en el futuro.
+ */
+export function problemasAlConfirmar(s, { ahora = Date.now(), enviarAhora = false } = {}) {
+  const p = [];
+  if (!s.preguntas.length) p.push("No tiene preguntas.");
+  const envio = enviarAhora ? ahora : Date.parse(s.envio);
+  const cierre = Date.parse(s.cierre);
+  if (Number.isNaN(envio)) p.push("Falta la fecha y hora de envío.");
+  if (Number.isNaN(cierre)) p.push("Falta la fecha y hora de cierre.");
+  if (!enviarAhora && envio <= ahora) p.push("La hora de envío ya pasó: elige una futura, o «Confirmar y enviar ahora».");
+  if (cierre <= envio) p.push("El cierre tiene que ser después del envío.");
+  if (cierre > ahora + PROGRAMAR_HASTA_DIAS * DIA_MS) {
+    p.push(`El cierre está a más de ${PROGRAMAR_HASTA_DIAS} días: confírmala más cerca de la fecha.`);
+  }
+  return p;
+}
+
+/** Lo que impide cambiar el cierre de una instancia ya confirmada ([] si se puede). */
+export function problemasAlCambiarCierre(s, ahora = Date.now()) {
+  const cierre = Date.parse(s.cierre);
+  if (Number.isNaN(cierre)) return ["Falta la fecha y hora de cierre."];
+  if (cierre <= ahora) return ["El cierre nuevo ya pasó: la evaluación se programa a esa hora."];
+  if (cierre <= Date.parse(s.envio)) return ["El cierre tiene que ser después del envío."];
+  if (cierre > ahora + PROGRAMAR_HASTA_DIAS * DIA_MS) return [`El cierre está a más de ${PROGRAMAR_HASTA_DIAS} días.`];
+  return [];
+}
+
+/** Los dos trabajos reales que deja programados una instancia confirmada: [flujo, argumentos]. */
+export const trabajosAlConfirmar = (s) => [
+  ["tests.enviar", { instancia: s.numero, prueba: false, a_las: s.envio }],
+  ["tests.evaluar", { instancia: s.numero, prueba: false, a_las: s.cierre }],
+];
+
+/**
+ * Confirmar: guarda la fila como confirmada y programa el envío y la evaluación.
+ * `d` = { guardar(instancia, detalle), pedir(flujo, argumentos) -> id, cancelar(id) }.
+ * Si alguno no se pudo pedir, anula los que alcanzó a pedir, la deja en
+ * borrador y levanta el error. Devuelve los ids de los dos trabajos.
+ */
+export async function confirmarInstancia(s, d) {
+  const confirmada = { ...s, estado: "confirmada" };
+  await d.guardar(confirmada, `${nombreDe(s)}: quedó confirmada; envío ${textoFecha(s.envio)}, cierre ${textoFecha(s.cierre)}`);
+  const pedidos = [];
+  try {
+    for (const [flujo, argumentos] of trabajosAlConfirmar(confirmada)) pedidos.push(await d.pedir(flujo, argumentos));
+  } catch (e) {
+    for (const id of pedidos) await d.cancelar(id).catch(() => {});
+    await d.guardar({ ...s, estado: "borrador" }, `${nombreDe(s)}: volvió a borrador (no se pudo programar)`);
+    throw e;
+  }
+  return pedidos;
+}
+
+/**
+ * Volver a borrador, solo si todavía no se envía. Guarda el estado primero
+ * (así un envío que llegue a su hora entretanto encuentra el borrador y no
+ * manda nada) y después anula los trabajos programados de la instancia.
+ * `d` = { guardar, cancelar, trabajos() -> lista, enviados: número }.
+ * Devuelve { cancelados, fallaron: [trabajos que no se pudieron anular] }.
+ */
+export async function volverABorrador(s, d) {
+  const trabajos = await d.trabajos();
+  if (d.enviados > 0 || envioEmpezado(trabajos, s.numero)) {
+    throw new Error(`${nombreDe(s)} ya se envió: no puede volver a borrador.`);
+  }
+  await d.guardar({ ...s, estado: "borrador" }, `${nombreDe(s)}: volvió a borrador`);
+  const fallaron = [];
+  const pendientes = programadosDe(trabajos, s.numero);
+  for (const t of pendientes) {
+    try { await d.cancelar(t.id); } catch { fallaron.push(t); }
+  }
+  return { cancelados: pendientes.length - fallaron.length, fallaron };
+}
+
+/**
+ * Cambió el cierre de una instancia confirmada (enviada o no): se programa la
+ * evaluación a la hora nueva y después se anula la que esperaba la vieja. El
+ * envío no se toca. Devuelve el id del trabajo nuevo.
+ */
+export async function reprogramarCierre(s, d) {
+  const viejos = programadosDe(await d.trabajos(), s.numero, ["tests.evaluar"]);
+  const id = await d.pedir("tests.evaluar", { instancia: s.numero, prueba: false, a_las: s.cierre });
+  for (const t of viejos) await d.cancelar(t.id);
+  return id;
+}
+
+/**
+ * Para «Tabla completa»: lo que no se puede guardar porque toca una instancia
+ * ya enviada ([] si nada). Una enviada no se borra, no vuelve a borrador, y su
+ * Tipo, Numero y Tema quedan fijos: el asunto del feedback («Re: Control 2:
+ * tema»), el reconocimiento de las respuestas y el hilo de Gmail dependen de
+ * ellos. El formato antiguo no se revisa: se edita como siempre.
+ */
+export function cambiosProhibidos(antes, despues, enviados) {
+  if (!antes?.columnas?.length || esLegado(antes)) return [];
+  const problemas = [];
+  for (const n of idsDe(antes)) {
+    if (!(enviados.get(n) > 0)) continue;
+    const a = leerSemana(antes, n);
+    const d = columnaId(despues) === "Instancia" ? leerSemana(despues, n) : null;
+    if (!d) { problemas.push(`${nombreDe(a)} ya se envió: no se puede quitar.`); continue; }
+    if (nombreDe(d) !== nombreDe(a) || d.tema.trim() !== a.tema.trim()) {
+      problemas.push(`${nombreDe(a)} ya se envió: su tipo, número y tema quedan fijos, porque el asunto del feedback y `
+        + "el reconocimiento de las respuestas dependen de ellos.");
+    }
+    if (d.estado === "borrador" && a.estado !== "borrador") problemas.push(`${nombreDe(a)} ya se envió: no puede volver a borrador.`);
+  }
+  return problemas;
+}
+
+/** Lo que le pasa a la instancia, en pocas palabras, para la lista y el encabezado. */
+export function estadoInstancia(s, enviados = 0) {
+  if (enviados > 0) return { clase: "enviada", texto: `enviada a ${enviados}` };
+  if (s.estado === "borrador") return { clase: "borrador", texto: "borrador" };
+  const envio = new Date(s.envio);
+  return { clase: "programada",
+    texto: Number.isNaN(envio.getTime()) ? "confirmada" : `sale ${textoProgramado(envio)}` };
 }
 
 // ---------------------------------------------------------------- hablar con el sitio
@@ -321,31 +666,39 @@ function areaTexto(valor, alCambiar, attrs = {}) {
 }
 
 /**
- * El editor: la lista de semanas a la izquierda y la semana elegida a la
- * derecha. `alCambiarSemana(n)` avisa qué semana se está viendo (para la URL),
- * `alCambiar(hayCambios)` si hay algo sin guardar, y `alGuardar(destino)` corre
- * después de guardar.
+ * El editor: la lista de semanas (o instancias) a la izquierda y la elegida a
+ * la derecha. `alCambiarSemana(n)` avisa cuál se está viendo (para la URL),
+ * `alCambiar(hayCambios)` si hay algo sin guardar, `alGuardar(destino)` corre
+ * después de guardar y `alLeer({ legado })` dice en qué formato está el archivo.
+ * En el formato nuevo cada instancia nace en borrador y se confirma desde aquí.
  */
 export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
-  alCambiarSemana, alCambiar, alGuardar } = {}) {
+  alCambiarSemana, alCambiar, alGuardar, alLeer } = {}) {
   const raiz = el("div", { class: "editor-preguntas" }, el("p", { class: "cargando" }, "Cargando las preguntas…"));
   let datos = null; // el archivo como se ve ahora
-  let guardado = null; // el texto del archivo tal como está en la nube
+  let guardado = null; // el texto del archivo tal como está en la nube (null: todavía no existe)
   let etag = null;
-  let actual = null; // número de la semana elegida
-  let borrador = null; // esa semana, con lo que se ha editado
-  let original = null; // la misma semana al abrirla, para saber si hay cambios
+  let actual = null; // id de la instancia elegida
+  let borrador = null; // esa instancia, con lo que se ha editado
+  let original = null; // la misma instancia al abrirla, para saber si hay cambios
   let plantilla = null; // correo_pregunta.md, para la vista previa
+  let envios = { enviados: new Map(), items: [] }; // de notas.csv
+  let legado = true;
 
   const hayCambios = () => borrador !== null && JSON.stringify(borrador) !== original;
   const avisarCambio = () => alCambiar?.(hayCambios());
+  const enviadosDe = (n) => envios.enviados.get(n) || 0;
+  // «La semana 4» o «Control 2»: cómo se nombra la elegida en los mensajes.
+  const laElegida = () => (legado ? `La semana ${actual}` : nombreDe(borrador));
+  // Sin archivo, o vacío: un semestre nuevo, que empieza en el formato nuevo.
+  const releer = () => { datos = lleno(guardado) ? leerCsv(guardado) : archivoVacio(); };
 
   async function descartarSiHace() {
     if (!hayCambios()) return true;
-    if (!await confirmar(`La semana ${actual} tiene cambios sin guardar. ¿Descartarlos?`, "Descartar", "peligro")) {
+    if (!await confirmar(`${laElegida()} tiene cambios sin guardar. ¿Descartarlos?`, "Descartar", "peligro")) {
       return false;
     }
-    datos = leerCsv(guardado);
+    releer();
     return true;
   }
 
@@ -356,6 +709,36 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     alCambiarSemana?.(numero);
     avisarCambio();
     dibujar();
+  }
+
+  /** Escribe el archivo con su etag; si alguien lo cambió entretanto, falla en vez de pisarlo. */
+  async function guardarArchivo(nuevos, detalle) {
+    const texto = escribirCsv(nuevos);
+    await api(urlArchivo(semestre, RUTA), {
+      method: "PUT", body: texto,
+      headers: { "content-type": "text/csv; charset=utf-8", ...(etag ? { "if-match": etag } : { "if-none-match": "*" }),
+        ...conDetalle(detalle) },
+    });
+    datos = leerCsv(texto);
+    guardado = texto;
+    etag = await etagDe(semestre);
+  }
+
+  // Lo que necesitan confirmar, volver a borrador y cambiar el cierre (confirmarInstancia y compañía).
+  const sitio = {
+    guardar: (s, detalle) => guardarArchivo(escribirSemana(datos, s.numero, s), detalle),
+    pedir: (flujo, argumentos) => pedirTrabajo(semestre, flujo, argumentos),
+    cancelar: (id) => api(`/api/trabajos/${encodeURIComponent(id)}/cancelar`, { method: "POST" }),
+    trabajos: () => api(urlTrabajos(semestre, "tests.", 120)),
+  };
+
+  /** Después de una operación que guardó: la instancia vuelve a leerse del archivo. */
+  function tras(mensajeExito, tipo = "exito") {
+    borrador = leerSemana(datos, actual);
+    original = JSON.stringify(borrador);
+    dibujar();
+    mensaje.replaceChildren(caja(tipo, mensajeExito));
+    avisarCambio();
   }
 
   // ------------------------------------------------ buscar
@@ -383,6 +766,9 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     return el("span", { class: "extracto" }, `P${c.pregunta}${cual}: `, x.antes, el("mark", {}, x.encontrado), x.despues);
   }
 
+  /** Una pregunta vacía, para empezar una instancia o semana nueva. */
+  const preguntaVacia = () => ({ control: { texto: "", pauta: "" }, tratamiento: { texto: "", pauta: "" }, igual: true });
+
   // ------------------------------------------------ la lista de semanas
   function listaSemanas() {
     const consulta = buscador.value.trim();
@@ -391,27 +777,31 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     const semanas = semanasDe(datos).filter((s) => !hallados || hallados.has(s.numero));
     const agregar = el("button", { class: "agregar-semana", type: "button", onclick: async () => {
       if (!await descartarSiHace()) return;
-      const [nuevos, numero] = agregarSemana(datos);
+      const [nuevos, numero] = legado ? agregarSemana(datos) : agregarInstancia(datos, { itemsNotas: envios.items });
       datos = nuevos;
       actual = numero;
-      borrador = { ...leerSemana(datos, numero),
-        preguntas: [{ control: { texto: "", pauta: "" }, tratamiento: { texto: "", pauta: "" }, igual: true }] };
+      borrador = { ...leerSemana(datos, numero), preguntas: [preguntaVacia()] };
       original = null; // una semana nueva no existe hasta guardarla
       alCambiarSemana?.(numero);
       avisarCambio();
       dibujar();
-    } }, "+ Agregar semana");
+    } }, legado ? "+ Agregar semana" : "+ Nueva instancia");
     // En celular es una tira que se desliza: que se vea la semana elegida, no la 1.
-    const lista = el("nav", { class: "lista-semanas", "aria-label": "Semanas" },
+    const lista = el("nav", { class: "lista-semanas", "aria-label": legado ? "Semanas" : "Instancias" },
       hallados && !semanas.length ? el("p", { class: "nota-pie sin-resultados" }, "Sin resultados.") : null,
-      semanas.map((s) => el("button", {
-        type: "button", class: "item-semana", "aria-current": s.numero === actual ? "true" : null,
-        onclick: async () => { if (s.numero !== actual && await descartarSiHace()) elegir(s.numero); },
-      },
-      el("span", { class: "num-semana" }, `Semana ${s.numero}`),
-      el("span", { class: "tema-semana" }, lleno(s.tema) ? s.tema : "Sin tema"),
-      lineaHallada(hallados?.get(s.numero)?.[0], consulta),
-      s.avisos.length ? el("span", { class: "marcas" }, s.avisos.map((a) => el("span", { class: "marca" }, a))) : null)),
+      semanas.map((s) => {
+        const estado = legado ? null : estadoInstancia(s, enviadosDe(s.numero));
+        return el("button", {
+          type: "button", class: "item-semana", "aria-current": s.numero === actual ? "true" : null,
+          onclick: async () => { if (s.numero !== actual && await descartarSiHace()) elegir(s.numero); },
+        },
+        el("span", { class: "num-semana" }, s.nombre),
+        el("span", { class: "tema-semana" }, lleno(s.tema) ? s.tema : "Sin tema"),
+        lineaHallada(hallados?.get(s.numero)?.[0], consulta),
+        estado || s.avisos.length ? el("span", { class: "marcas" },
+          estado ? el("span", { class: `marca estado-instancia ${estado.clase}` }, estado.texto) : null,
+          s.avisos.map((a) => el("span", { class: "marca" }, a))) : null);
+      }),
       agregar);
     centrarSeleccion(lista);
     return lista;
@@ -487,7 +877,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
         }, `Como ${titulo(g)}`))) : "",
         el("p", { class: "asunto" }, el("span", { class: "tenue" }, "Asunto: "), asunto),
         // Sin permisos: el HTML del correo se muestra, pero no puede correr nada en el sitio.
-        el("iframe", { class: "correo", sandbox: "", srcdoc: html, title: `Correo de la semana ${borrador.numero}` }));
+        el("iframe", { class: "correo", sandbox: "", srcdoc: html,
+          title: legado ? `Correo de la semana ${borrador.numero}` : `Correo de ${nombreDe(borrador)}` }));
     };
     detalles.addEventListener("toggle", async () => {
       if (!detalles.open) return;
@@ -514,14 +905,14 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   let avisosPorTarjeta = [];
   let campoFecha = null;
   function pintarAvisos() {
-    const sinFecha = borrador.preguntas.length > 0 && !lleno(borrador.fecha);
+    const sinFecha = legado && borrador.preguntas.length > 0 && !lleno(borrador.fecha);
     avisoFecha.textContent = sinFecha ? "Falta la fecha: el correo diría «La fecha de entrega es:» y nada más." : "";
     campoFecha?.classList.toggle("falta", sinFecha);
     for (const { nodo, p, i } of avisosPorTarjeta) {
       nodo.replaceChildren(...avisosDePregunta(p, i).map((a) => el("p", { class: "aviso-campo" }, a)));
     }
     avisos.replaceChildren(borrador.preguntas.length ? ""
-      : caja("aviso", "La semana no tiene preguntas: no se puede enviar."));
+      : caja("aviso", legado ? "La semana no tiene preguntas: no se puede enviar." : "No tiene preguntas: no se puede enviar."));
   }
   const mensaje = el("div");
   const botonGuardar = el("button", { class: "primario", type: "button" });
@@ -539,8 +930,9 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   }
 
   botonDescartar.addEventListener("click", async () => {
-    if (!await confirmar(`¿Descartar los cambios de la semana ${actual}?`, "Descartar", "peligro")) return;
-    datos = leerCsv(guardado);
+    if (!await confirmar(legado ? `¿Descartar los cambios de la semana ${actual}?`
+      : `¿Descartar los cambios de ${nombreDe(borrador)}?`, "Descartar", "peligro")) return;
+    releer();
     const sigue = leerSemana(datos, actual) ? actual : semanasDe(datos)[0]?.numero ?? null;
     if (sigue === null) { borrador = null; dibujar(); return; }
     elegir(sigue);
@@ -548,54 +940,198 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
 
   botonGuardar.addEventListener("click", async () => {
     botonGuardar.disabled = true;
+    const antes = original ? JSON.parse(original) : null;
+    // Una instancia confirmada a la que le cambió el cierre: su evaluación se programa de nuevo.
+    const cambiaCierre = !legado && antes && borrador.estado === "confirmada" && antes.cierre !== borrador.cierre;
+    if (cambiaCierre) {
+      const problemas = problemasAlCambiarCierre(borrador);
+      if (problemas.length) {
+        botonGuardar.disabled = false;
+        mensaje.replaceChildren(caja("aviso", problemas.join(" ")));
+        return;
+      }
+    }
     try {
-      const nuevos = escribirSemana(datos, actual, borrador);
-      const texto = escribirCsv(nuevos);
-      await api(urlArchivo(semestre, RUTA), {
-        method: "PUT", body: texto,
-        headers: { "content-type": "text/csv; charset=utf-8", ...(etag ? { "if-match": etag } : { "if-none-match": "*" }),
-          ...conDetalle(cambiosSemana(actual, original ? JSON.parse(original) : null, borrador)) },
-      });
-      datos = leerCsv(texto);
-      guardado = texto;
-      etag = await etagDe(semestre);
+      await guardarArchivo(escribirSemana(datos, actual, borrador), cambiosSemana(actual, antes, borrador));
       borrador = leerSemana(datos, actual);
       original = JSON.stringify(borrador);
       dibujar();
-      mensaje.replaceChildren(caja("exito", `Semana ${actual} guardada.`));
+      mensaje.replaceChildren(caja("exito", legado ? `Semana ${actual} guardada.` : `${nombreDe(borrador)} guardada.`));
       avisarCambio();
       if (alGuardar) await alGuardar(mensaje);
     } catch (e) {
       botonGuardar.disabled = false;
       mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message} Tus cambios siguen en pantalla.`));
+      return;
+    }
+    if (cambiaCierre) {
+      try {
+        await reprogramarCierre(borrador, sitio);
+        mensaje.replaceChildren(caja("exito", `${nombreDe(borrador)} guardada. La evaluación quedó programada para `
+          + `${textoProgramado(new Date(borrador.cierre))}, el nuevo cierre.`));
+      } catch (e) {
+        mensaje.replaceChildren(caja("aviso", `Se guardó el cierre nuevo, pero no pude reprogramar la evaluación: `
+          + `${e.message} Revisa «Últimos trabajos» en Tests.`));
+      }
     }
   });
 
+  // ------------------------------------------------ confirmar, volver a borrador, eliminar
+  async function confirmarElegida({ enviarAhora = false } = {}) {
+    const s = { ...borrador, envio: enviarAhora ? isoAhora() : borrador.envio };
+    const problemas = problemasAlConfirmar(s, { enviarAhora });
+    if (problemas.length) { mensaje.replaceChildren(caja("aviso", problemas.join(" "))); return; }
+    const avisosAntes = avisosDe(s);
+    const sale = enviarAhora ? "sale ahora" : `sale ${textoProgramado(new Date(s.envio))}`;
+    if (!await confirmar(`Vas a confirmar ${nombreDe(s)}: la pregunta ${sale} a los alumnos que no la tienen, y se `
+      + `evalúa ${textoProgramado(new Date(s.cierre))}, al cierre, con el feedback por correo. Son correos reales.`
+      + `${avisosAntes.length ? `\n\nOjo: ${avisosAntes.join(" ")}` : ""}`
+      + `\n\n${enviarAhora ? "" : "Hasta el envío puedes volverla a borrador, y eso anula lo programado. "}¿Confirmas?`,
+    enviarAhora ? "Confirmar y enviar ahora" : "Confirmar", "real")) return;
+    let guardo = false;
+    try {
+      await confirmarInstancia(s, { ...sitio, guardar: async (...a) => { await sitio.guardar(...a); guardo = true; } });
+      tras(`${nombreDe(s)} quedó confirmada. La pregunta ${sale} y la evaluación queda programada para `
+        + `${textoProgramado(new Date(s.cierre))}. Lo programado se ve en «Últimos trabajos» de Tests.`);
+      if (alGuardar) await alGuardar(mensaje);
+    } catch (e) {
+      // Si alcanzó a guardar, el archivo la tiene en borrador con lo editado; si
+      // no, lo editado sigue solo en pantalla, como al fallar «Guardar».
+      if (guardo) tras(`No pude confirmar: ${e.message} Sigue en borrador.`, "aviso");
+      else mensaje.replaceChildren(caja("aviso", `No pude confirmar: ${e.message} Sigue en borrador y tus cambios siguen en pantalla.`));
+    }
+  }
+
+  async function volverElegida() {
+    if (hayCambios()) { mensaje.replaceChildren(caja("aviso", "Guarda o descarta los cambios antes.")); return; }
+    if (!await confirmar(`¿Volver ${nombreDe(borrador)} a borrador? Se anulan el envío y la evaluación programados, `
+      + "y no sale nada hasta que la confirmes de nuevo.", "Volver a borrador", "peligro")) return;
+    try {
+      const r = await volverABorrador(borrador, { ...sitio, enviados: enviadosDe(actual) });
+      tras(r.fallaron.length
+        ? `Volvió a borrador, pero no pude anular ${r.fallaron.length} trabajo(s) programado(s); igual no mandan `
+          + "nada mientras esté en borrador. Anúlalos en «Últimos trabajos» de Tests."
+        : `${nombreDe(borrador)} volvió a borrador${r.cancelados ? ` y se anularon ${r.cancelados} trabajo(s) programado(s)` : ""}.`,
+      r.fallaron.length ? "aviso" : "exito");
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude volverla a borrador: ${e.message}`));
+    }
+  }
+
+  async function eliminarElegida() {
+    if (!await confirmar(`¿Eliminar ${nombreDe(borrador)}? Es un borrador que no se ha enviado; se pierden sus preguntas.`,
+      "Eliminar", "peligro")) return;
+    const nombre = nombreDe(borrador);
+    try {
+      if (original !== null) await guardarArchivo(quitarInstancia(leerCsv(guardado), actual), `${nombre}: eliminada (borrador)`);
+      else releer();
+      const sigue = semanasDe(datos)[0]?.numero ?? null;
+      borrador = null;
+      original = null;
+      if (sigue === null) { actual = null; dibujar(); } else elegir(sigue);
+      mensaje.replaceChildren(caja("exito", `${nombre} se eliminó.`));
+      avisarCambio();
+    } catch (e) {
+      mensaje.replaceChildren(caja("aviso", `No pude eliminarla: ${e.message}`));
+    }
+  }
+
+  /** Tipo, envío y cierre de una instancia del formato nuevo, con lo que se puede cambiar según su estado. */
+  function camposInstancia() {
+    const enviados = enviadosDe(borrador.numero);
+    const enBorrador = borrador.estado === "borrador";
+    const sugerencias = el("datalist", { id: "tipos-instancia" },
+      [...new Set([...TIPOS, ...semanasDe(datos).map((s) => s.tipo)])].map((t) => el("option", { value: t })));
+    const tipo = el("input", { type: "text", value: borrador.tipo, list: "tipos-instancia", disabled: !enBorrador,
+      placeholder: "Control, Test, Evaluación…" });
+    tipo.addEventListener("change", () => {
+      const t = tipo.value.trim() || "Instancia";
+      borrador = conTipo(datos, borrador, t);
+      cambio();
+      dibujar();
+    });
+    const fechaHora = (valor, alCambiar, habilitado) => {
+      const campo = el("input", { type: "datetime-local", value: localSantiago(valor), disabled: !habilitado });
+      campo.addEventListener("change", () => { alCambiar(isoSantiago(campo.value)); cambio(); });
+      return campo;
+    };
+    const envio = fechaHora(borrador.envio, (v) => { borrador.envio = v; }, enBorrador);
+    // Lo que va a leer el alumno, al día con el campo.
+    const notaCierre = el("span", { class: "nota-campo" });
+    const pintarNotaCierre = () => {
+      notaCierre.textContent = lleno(borrador.cierre)
+        ? `El alumno lee: «La fecha de entrega es: ${textoFecha(borrador.cierre)}».`
+        : "Es la fecha de entrega que lee el alumno, y la hora en que se evalúa.";
+    };
+    pintarNotaCierre();
+    const cierre = fechaHora(borrador.cierre, (v) => { borrador.cierre = v; pintarNotaCierre(); }, true);
+    return [
+      el("label", { class: "campo" }, "Tipo", tipo, sugerencias,
+        el("span", { class: "nota-campo" }, enBorrador ? `Se llamará ${nombreDe(borrador)}.` : "Fijo desde que se confirmó.")),
+      el("label", { class: "campo" }, "Envío (hora de Santiago)", envio,
+        enBorrador ? null : el("span", { class: "nota-campo" },
+          enviados ? "Ya salió." : "Para cambiarlo, vuelve a borrador.")),
+      el("label", { class: "campo" }, "Cierre (hora de Santiago)", cierre, notaCierre),
+      enviados ? el("p", { class: "nota-pie congelado" }, `Ya se envió a ${enviados}: el nombre y el tema quedan fijos, `
+        + "porque el asunto del feedback y el reconocimiento de las respuestas dependen de ellos.") : null,
+    ];
+  }
+
+  function accionesInstancia() {
+    const enviados = enviadosDe(borrador.numero);
+    if (borrador.estado === "borrador") {
+      return el("div", { class: "acciones acciones-instancia" },
+        el("button", { class: "primario real", type: "button", onclick: () => confirmarElegida() }, "Confirmar"),
+        el("button", { class: "secundario", type: "button", onclick: () => confirmarElegida({ enviarAhora: true }) },
+          "Confirmar y enviar ahora"),
+        enviados ? null : el("button", { class: "enlace peligro", type: "button", onclick: eliminarElegida }, "Eliminar"),
+        el("p", { class: "nota-pie" }, "En borrador se puede editar y simular el envío, pero no sale nada. Al confirmar "
+          + "se programan el envío y la evaluación."));
+    }
+    if (!enviados) {
+      return el("div", { class: "acciones acciones-instancia" },
+        el("button", { class: "secundario", type: "button", onclick: volverElegida }, "Volver a borrador"),
+        el("p", { class: "nota-pie" }, `Confirmada: la pregunta sale ${textoProgramado(new Date(borrador.envio))} y se `
+          + `evalúa ${textoProgramado(new Date(borrador.cierre))}. Si cambias el cierre, la evaluación se programa de nuevo.`));
+    }
+    return el("p", { class: "nota-pie" }, `Ya se envió a ${enviados} alumnos; los cambios no les llegan. La pauta sí `
+      + "cuenta al corregir. Si cambias el cierre, la evaluación se programa de nuevo.");
+  }
+
   function panelSemana() {
     if (!borrador) {
-      return el("div", { class: "panel-semana" }, caja("info", "No hay semanas todavía. Agrega la primera."));
+      return el("div", { class: "panel-semana" }, caja("info", legado ? "No hay semanas todavía. Agrega la primera."
+        : "Todavía no hay instancias. Crea la primera con «+ Nueva instancia»."));
     }
-    const tema = el("input", { type: "text", value: borrador.tema, placeholder: "Ej. Extensions of Discrete Choice" });
+    const congelado = !legado && enviadosDe(borrador.numero) > 0;
+    const tema = el("input", { type: "text", value: borrador.tema, placeholder: "Ej. Extensions of Discrete Choice",
+      disabled: congelado });
     tema.addEventListener("input", () => { borrador.tema = tema.value; cambio(); });
     const fecha = el("input", { type: "text", value: borrador.fecha, placeholder: "Ej. lunes 19/10/2026, 10:15" });
     fecha.addEventListener("input", () => { borrador.fecha = fecha.value; cambio(); });
-    campoFecha = fecha;
+    campoFecha = legado ? fecha : null;
     avisosPorTarjeta = [];
     const agregarPregunta = borrador.preguntas.length < MAX_PREGUNTAS
       ? el("button", { class: "descarga", type: "button", onclick: () => {
-        borrador.preguntas.push({ control: { texto: "", pauta: "" }, tratamiento: { texto: "", pauta: "" }, igual: true });
+        borrador.preguntas.push(preguntaVacia());
         cambio();
         dibujar();
       } }, "+ Agregar pregunta")
-      : el("p", { class: "nota-pie" }, `Hasta ${MAX_PREGUNTAS} preguntas por semana.`);
+      : el("p", { class: "nota-pie" }, `Hasta ${MAX_PREGUNTAS} preguntas por ${legado ? "semana" : "instancia"}.`);
 
-    botonGuardar.textContent = `Guardar semana ${borrador.numero}`;
+    const nombre = legado ? `Semana ${borrador.numero}` : nombreDe(borrador);
+    botonGuardar.textContent = legado ? `Guardar semana ${borrador.numero}` : `Guardar ${nombre}`;
+    const estado = legado ? null : estadoInstancia(borrador, enviadosDe(borrador.numero));
     const panel = el("div", { class: "panel-semana" },
-      el("h3", {}, `Semana ${borrador.numero}`),
-      el("div", { class: "campos-semana" },
-        el("label", { class: "campo" }, "Tema", tema),
-        el("label", { class: "campo" }, "Fecha de entrega", fecha, avisoFecha)),
-      el("p", { class: "nota-pie" }, "Si la semana ya se envió, los cambios no se reenvían. La pauta sí cuenta al corregir."),
+      el("h3", {}, nombre, estado ? el("span", { class: `marca estado-instancia ${estado.clase}` }, estado.texto) : null),
+      legado
+        ? el("div", { class: "campos-semana" },
+          el("label", { class: "campo" }, "Tema", tema),
+          el("label", { class: "campo" }, "Fecha de entrega", fecha, avisoFecha))
+        : el("div", { class: "campos-semana campos-instancia" }, el("label", { class: "campo" }, "Tema", tema),
+          ...camposInstancia().filter(Boolean)),
+      legado ? el("p", { class: "nota-pie" }, "Si la semana ya se envió, los cambios no se reenvían. La pauta sí cuenta al corregir.")
+        : accionesInstancia(),
       el("h4", { class: "titulo-preguntas" }, `Preguntas (${borrador.preguntas.length})`),
       borrador.preguntas.map(tarjetaPregunta),
       el("div", { class: "acciones" }, agregarPregunta),
@@ -613,21 +1149,30 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   }
 
   (async () => {
+    let notas = "";
     try {
-      [guardado, etag] = await Promise.all([leerTexto(semestre, RUTA), etagDe(semestre)]);
+      [guardado, etag, notas] = await Promise.all([
+        leerTexto(semestre, RUTA).catch((e) => { if (e.message === "no existe") return null; throw e; }),
+        etagDe(semestre),
+        // Para saber qué instancias ya se enviaron y no repetir un id con notas.
+        leerTexto(semestre, "notas.csv").catch(() => "")]);
     } catch (e) {
-      raiz.replaceChildren(caja("aviso", e.message === "no existe"
-        ? "Este semestre todavía no tiene preguntas.csv. Súbelo desde «Tabla completa»."
-        : `No pude leer preguntas.csv: ${e.message}`));
+      raiz.replaceChildren(caja("aviso", `No pude leer preguntas.csv: ${e.message}`));
       return;
     }
-    datos = leerCsv(guardado);
+    envios = enviosDeNotas(notas);
+    // Un semestre sin preguntas.csv (o con solo la cabecera) empieza en el formato nuevo.
+    releer();
+    if (guardado === null) etag = null;
     const faltan = columnasFaltantes(datos);
     if (faltan.length) {
       raiz.replaceChildren(caja("aviso", `preguntas.csv no tiene las columnas que usa este editor (${faltan.join(", ")}). `
         + "Edítalo desde «Tabla completa»."));
       return;
     }
+    legado = esLegado(datos);
+    alLeer?.({ legado });
+    if (!legado) buscador.setAttribute("aria-label", "Buscar por enunciado, tema o nombre");
     const semanas = semanasDe(datos);
     const numero = semanas.some((s) => s.numero === inicial) ? inicial : semanas[0]?.numero;
     if (numero === undefined) { dibujar(); return; }
@@ -650,20 +1195,23 @@ export function resumenSemana(semestre, { usaGrupos = true } = {}) {
   function pintar(numero, { enviada = false } = {}) {
     const s = leerSemana(datos, numero);
     if (!s) {
-      nodo.replaceChildren(caja("aviso", `La semana ${numero} no está en preguntas.csv.`));
+      nodo.replaceChildren(caja("aviso", esLegado(datos) ? `La semana ${numero} no está en preguntas.csv.`
+        : "Esa instancia no está en preguntas.csv."));
       return;
     }
     const editar = el("a", { class: "enlace-editar", href: `/datos#datos/preguntas/${numero}` }, "Editar preguntas");
     const avisos = avisosDe(s);
     // Una fecha vencida en una semana por enviar suele venir copiada de otro semestre.
-    const entrega = fechaEntrega(s.fecha);
-    if (!enviada && entrega && entrega < new Date()) avisos.push(`La fecha de entrega (${s.fecha.trim()}) ya pasó.`);
+    const entrega = s.tipo && lleno(s.cierre) ? new Date(s.cierre) : fechaEntrega(s.fecha);
+    const textoEntrega = s.tipo && lleno(s.cierre) ? textoFecha(s.cierre) : s.fecha.trim();
+    if (!enviada && entrega && entrega < new Date()) avisos.push(`La fecha de entrega (${textoEntrega}) ya pasó.`);
+    if (s.tipo && s.estado === "borrador") avisos.push("Está en borrador: se puede simular, pero no sale hasta confirmarla.");
     const lista = (grupo) => el("ol", {}, s.preguntas.map((p) => el("li", {}, (p.igual ? p.control : p[grupo]).texto)));
     const distintas = usaGrupos && s.preguntas.some((p) => !p.igual);
     nodo.replaceChildren(el("div", { class: "tarjeta" },
       el("div", { class: "cabeza-resumen" },
-        el("strong", {}, `Semana ${numero}${lleno(s.tema) ? ` · ${s.tema}` : ""}`), editar),
-      el("p", { class: "nota-pie" }, lleno(s.fecha) ? `Entrega: ${s.fecha}` : "Sin fecha de entrega"),
+        el("strong", {}, `${nombreDe(s)}${lleno(s.tema) ? ` · ${s.tema}` : ""}`), editar),
+      el("p", { class: "nota-pie" }, lleno(textoEntrega) ? `Entrega: ${textoEntrega}` : "Sin fecha de entrega"),
       distintas
         ? el("div", { class: "dos-variantes" }, GRUPOS.map((g) => el("div", {},
           el("span", { class: `pildora ${g}` }, titulo(g)), lista(g))))

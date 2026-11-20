@@ -12,7 +12,7 @@ import {
   contarCambios, diffLineas, filasDelLog, huella, ordenarVersiones, textoUsos, usosPorHuella, versionesDe,
 } from "./historial-prompts.js";
 import { escribirCsv, leerCsv } from "./csv.js";
-import { editorPreguntas } from "./preguntas.js";
+import { cambiosProhibidos, editorPreguntas, enviosDeNotas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import { leerPrecios } from "./consumo.js";
 import {
@@ -147,7 +147,7 @@ async function recalcularReporteria(destino) {
  * quitan filas, y se guarda el archivo completo. Guardar sin tocar nada deja
  * el archivo igual, byte a byte (csv.js respeta su formato).
  */
-function editorCsv(ruta, { alGuardar } = {}) {
+function editorCsv(ruta, { alGuardar, revisar } = {}) {
   const contenedor = el("div", {}, el("p", { class: "cargando" }, "Cargando…"));
 
   function montar(datos, desdeArchivo) {
@@ -190,6 +190,13 @@ function editorCsv(ruta, { alGuardar } = {}) {
     guardar.addEventListener("click", async () => {
       guardar.disabled = true;
       try {
+        // `revisar(datos)` -> lo que impide guardar ([] si nada), contra lo que hay en la nube.
+        const problemas = revisar ? await revisar(datos) : [];
+        if (problemas.length) {
+          guardar.disabled = false;
+          mensaje.replaceChildren(caja("aviso", `No se guardó. ${problemas.join(" ")}`));
+          return;
+        }
         await guardarArchivo(ruta, escribirCsv(datos), "text/csv; charset=utf-8",
           `${nombre(ruta)}: ${resumenCsv(datos.columnas, base, datos.filas)}`);
         base = datos.filas.map((f) => [...f]);
@@ -1241,20 +1248,31 @@ function estadoDelSemestre() {
 
 // ---------------------------------------------------------------- preguntas
 
+/** En «Tabla completa»: no deja guardar cambios que rompan una instancia ya enviada (cambiosProhibidos). */
+async function revisarPreguntas(despues) {
+  const [antes, notas] = await Promise.all([existe(RUTAS.preguntas) ? leerTexto(RUTAS.preguntas) : "",
+    leerTexto("notas.csv").catch(() => "")]);
+  return antes.trim() ? cambiosProhibidos(leerCsv(antes), despues, enviosDeNotas(notas).enviados) : [];
+}
+
 function vistaPreguntas() {
   const modos = el("div", { class: "chips modos" }, [["semana", "Por semana"], ["tabla", "Tabla completa"]]
     .map(([id, texto]) => el("button", {
-      type: "button", class: "chip", "aria-pressed": String(id === modoPreguntas),
+      type: "button", class: "chip", "aria-pressed": String(id === modoPreguntas), "data-modo": id,
       onclick: async () => { if (id !== modoPreguntas && await descartarCambios()) { modoPreguntas = id; dibujar(); } },
     }, texto)));
   if (modoPreguntas === "tabla") {
     return [modos,
-      editorCsv(RUTAS.preguntas, { alGuardar: recalcularReporteria })];
+      editorCsv(RUTAS.preguntas, { alGuardar: recalcularReporteria, revisar: revisarPreguntas })];
   }
   return [modos,
     editorPreguntas({
       semestre, semana: semanaPreguntas,
       usaGrupos: valor("GRUPO_CONTROL_TRATAMIENTO") !== "false",
+      // En un semestre nuevo (preguntas.csv con Instancia) no hay semanas.
+      alLeer: ({ legado }) => {
+        if (!legado) modos.querySelector('[data-modo="semana"]').textContent = "Por instancia";
+      },
       alCambiarSemana: (n) => { semanaPreguntas = n; history.replaceState(null, "", `#datos/preguntas/${n}`); },
       alCambiar: (hay) => { sinGuardar = hay; },
       // La reportería no lee preguntas.csv: no hay nada que recalcular. Sí se
