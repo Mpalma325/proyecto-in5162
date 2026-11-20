@@ -11,9 +11,10 @@ Así también hay resumen de una instancia que todavía espera revisión.
 import sys
 
 from modulos import datos
+from modulos.escala import leer as leer_escala
 
 from . import config
-from .feedback import _normalizar_html_gpt
+from . import correccion as _correccion
 from .ia_prompts import generar_resumen
 from .preguntas import cargar_semana
 
@@ -33,7 +34,10 @@ def _correcciones(semana: int) -> dict[str, str]:
         # cae a lo que salió en el correo.
         if ev == "correccion" or previo is None or previo[0] == "evaluacion":
             ultima[correo] = (ev, texto)
-    return {c: _normalizar_html_gpt(t) for c, (_, t) in ultima.items()}
+    # El JSON del formato nuevo pasa a texto con puntajes y NOTA FINAL; el HTML
+    # viejo queda tal cual (sin el ```html).
+    escala = leer_escala()
+    return {c: _correccion.texto_docente(_correccion.leer(t, escala), escala) for c, (_, t) in ultima.items()}
 
 
 def main(semana: int) -> None:

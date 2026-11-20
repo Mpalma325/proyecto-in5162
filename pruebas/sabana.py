@@ -112,4 +112,34 @@ with semestre_desechable(sid="_tmp_sabana") as (sid, tmp):
     check("descartada: estado, marca y quién", fc["Estado"] == "descartada" and fc["RevisadoPor"] == "ayudante@x.cl",
           (fc["Estado"], fc["RevisadoPor"]))
 
+    titulo("7. la escala de la nota y el recálculo")
+    import contextlib
+    import io
+    import json
+
+    from modulos.datos import escala_trabajo
+    # b: la evaluación anota la escala en Versiones, como lo hace tests.feedback.
+    item_b = fb["Item"]
+    datos.log.registrar("evaluacion", datos.TESTS, item_b, b, sid, Nota="6,5", MessageId="<fb-b@x>",
+                        Versiones="evaluar_respuesta.md@1a2b3c4d; escala=4-7/1",
+                        EvaluacionIA="<p><b>NOTA FINAL:</b> 6,5</p>", Detalle="revisado por profe@x.cl")
+    datos.notas.registrar_nota(b, datos.TESTS, item_b, "6,5", "", sid, logro="0.8333")
+    filas = {(x["Correo"], x["Item"]): x for x in sabana.construir(sid) if x["Flujo"] == datos.TESTS}
+    f_b = filas[(b.lower(), item_b)]
+    check("la nota de una evaluación con escala: EscalaNota 4-7/1, sin recalcular",
+          (f_b["EscalaNota"], f_b["Recalculada"]) == ("4-7/1", "no"), (f_b["EscalaNota"], f_b["Recalculada"]))
+    check("la de 2026-2 (sin escala en Versiones) queda vacía",
+          filas[(a.lower(), item)]["EscalaNota"] == "" and filas[(a.lower(), item)]["Recalculada"] == "no")
+    with contextlib.redirect_stdout(io.StringIO()):
+        escala_trabajo.main(["--escala", json.dumps({"minima": 1.0}), "--por", "profe@x.cl"])
+    filas = {(x["Correo"], x["Item"]): x for x in sabana.construir(sid) if x["Flujo"] == datos.TESTS}
+    f_b = filas[(b.lower(), item_b)]
+    check("después de cambiar la escala: la nota nueva, recalculada, con su escala",
+          (f_b["Nota"], f_b["EscalaNota"], f_b["Recalculada"]) == (6.0, "1-7/1", "sí"),
+          {k: f_b[k] for k in ("Nota", "EscalaNota", "Recalculada")})
+    check("y NotaEnviada sigue diciendo lo que recibió el alumno", f_b["NotaEnviada"] == "6,5", f_b["NotaEnviada"])
+    check("un recálculo no es un ajuste manual", f_b["AjusteManual"] == "no", f_b["AjusteManual"])
+    sin = next(x for x in filas.values() if x["Nota"] == "")
+    check("una casilla sin nota no tiene escala", (sin["EscalaNota"], sin["Recalculada"]) == ("", "no"))
+
 sys.exit(resultado())

@@ -10,7 +10,7 @@ probable: una escritura cualquiera las agrega.
 Corre cada flujo que la página trata como simulación (SIMULABLES de
 web/public/comun.js, y tareas.segunda con paso "enviar") en modo prueba, con el
 mismo comando que arma el motor, sobre una copia del semestre, y compara la
-huella de las tres tablas antes y después. Un flujo nuevo en SIMULABLES sin
+huella de las tres tablas (y de escala_notas.json) antes y después. Un flujo nuevo en SIMULABLES sin
 caso acá hace fallar la prueba.
 
 tests.enviar asignaba los grupos que faltaban antes de mirar si era
@@ -123,6 +123,9 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
         "tareas.corregir": [({"tarea": tarea}, None)],
         "tareas.feedback": [({"tarea": tarea}, None)],
         "tareas.segunda": [({"tarea": tarea, "paso": "enviar"}, None)],
+        "datos.escala": [({"escala": {"tipo": "lineal", "minima": 1.0, "maxima": 7.0, "decimales": 1,
+                                      "aprobacion": None, "exigencia": None, "puntaje_maximo_pregunta": 3}},
+                          "Notas que el alumno ya vio con número")],
     }
 
     titulo("1. cada flujo simulable tiene su caso")
@@ -130,8 +133,9 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
     check("ninguno sin caso en esta prueba", not faltan, faltan)
     check("la lista de la página se leyó", len(simulables()) >= 8, simulables())
 
-    titulo("2. en modo prueba, ninguno toca alumnos.csv, notas.csv ni el log")
-    tablas = [tmp / "alumnos.csv", tmp / "notas.csv", tmp / "log_envios.csv"]
+    titulo("2. en modo prueba, ninguno toca alumnos.csv, notas.csv, el log ni la escala")
+    # escala_notas.json no existe en la copia: «Ver qué cambia» no puede crearlo.
+    tablas = [tmp / "alumnos.csv", tmp / "notas.csv", tmp / "log_envios.csv", tmp / "escala_notas.json"]
     with patch("modulos.mail.buscar_respuestas_semana", return_value=buzon_tests), \
          patch("modulos.mail.buscar_no_leidos", return_value=buzon), \
          patch("modulos.mail.buscar_respuestas", return_value={}), \
@@ -151,7 +155,7 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
                 except Exception as e:  # noqa: BLE001
                     check(f"{nombre}: corre", False, f"{type(e).__name__}: {e}")
                 cambiadas = [p.name for p, h in zip(tablas, antes) if huella(p) != h]
-                check(f"{nombre}: no escribe alumnos.csv, notas.csv ni el log", not cambiadas, cambiadas)
+                check(f"{nombre}: no escribe alumnos.csv, notas.csv, el log ni la escala", not cambiadas, cambiadas)
                 check(f"{nombre}: no manda correos", enviados == [], enviados)
                 check(f"{nombre}: sin temporales de escritura",
                       not [p for p in tablas if p.with_suffix(p.suffix + ".tmp").exists()])

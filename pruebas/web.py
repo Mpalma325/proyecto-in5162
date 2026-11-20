@@ -339,7 +339,7 @@ if shutil.which("node"):
     escritor.writerows([{c: f.get(c, "") for c in columnas} for f in filas])
 
     plantilla = ("<p>Hola {NOMBRE},</p><p>Videos de \"{TEMA}\". Entrega: <b>{FECHA_ENTREGA}</b>.</p>\n"
-                 "  {BLOQUE_PREGUNTAS}\n<p>Módulo {SEMANA}</p>")
+                 "  {BLOQUE_PREGUNTAS}\n<p>Módulo {SEMANA}. Nota de {ESCALA}.</p>")
     correos = {}
     for f in filas[:3]:
         info = _parsear_fila({c: f.get(c, "") for c in columnas}, int(f["Semana"]))
@@ -792,7 +792,8 @@ if shutil.which("node"):
                                "muestra": _configuracion.correo_muestra()})
 
     def _sin_originalidad(d):
-        return {"nota": d["nota"], "html": d["html"], "cambios": d["cambios"]}
+        # revision.juntar no devuelve la originalidad: la página la muestra aparte.
+        return {k: d[k] for k in ("nota", "html", "cambios", "puntajes", "logro", "problemas")}
 
     _esperado = {
         "juntar": [{"correccion": c, "decision": d, "sale": _sin_originalidad(_dec.juntar(c, d))} for c, d in _juntar],

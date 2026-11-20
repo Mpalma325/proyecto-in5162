@@ -5,14 +5,21 @@
 // devuelve la IA. Sin pantalla, para probarlo sin navegador
 // (web/scripts/probar-prompts.mjs).
 
+import { pideJson } from "./correccion.js";
+
 export const PROMPTS = {
   "tests_semanales/prompts/correo_pregunta.md": {
     titulo: "Correo con la pregunta de la semana",
-    variables: ["{NOMBRE}", "{TEMA}", "{FECHA_ENTREGA}", "{BLOQUE_PREGUNTAS}", "{SEMANA}"] },
+    uso: "{ESCALA} es el rango de la escala de notas del semestre, por ejemplo «4,0 a 7,0».",
+    variables: ["{NOMBRE}", "{TEMA}", "{FECHA_ENTREGA}", "{BLOQUE_PREGUNTAS}", "{SEMANA}", "{TITULO}", "{ESCALA}"] },
   "tests_semanales/prompts/evaluar_respuesta.md": {
     titulo: "Cómo corrige la IA cada respuesta",
-    uso: "Antes de cambiarlo, conviene probarlo en Configuración › La IA › Probar criterio.",
-    variables: ["{{PREGUNTAS}}", "{{PAUTAS}}"], obligatorias: ["NOTA FINAL:", "ORIGINALIDAD:"] },
+    uso: "Antes de cambiarlo, conviene probarlo en Configuración › La IA › Probar criterio. Puede pedir la "
+      + "salida en JSON, con «puntaje» por pregunta y «originalidad» (la nota la calcula la escala del semestre), "
+      + "o en HTML con NOTA FINAL y ORIGINALIDAD, como los semestres anteriores.",
+    variables: ["{{PREGUNTAS}}", "{{PAUTAS}}"],
+    // El formato lo decide el texto (correccion.pide_json): cada uno busca sus etiquetas.
+    obligatorias: (texto) => (pideJson(texto) ? ['"puntaje"', '"originalidad"'] : ["NOTA FINAL:", "ORIGINALIDAD:"]) },
   "tests_semanales/prompts/correo_correccion.md": {
     titulo: "Correo con la corrección",
     uso: "{EVALUACION} es lo que escribe la IA; lo demás sale igual para todos.",
@@ -46,7 +53,8 @@ export const PROMPTS = {
 /** Lo que haría fallar o dejaría sin nota a este prompt: lista de frases, vacía si está bien. */
 export function problemasDePrompt(info, texto) {
   const problemas = [];
-  for (const etiqueta of info?.obligatorias || []) {
+  const obligatorias = typeof info?.obligatorias === "function" ? info.obligatorias(texto) : info?.obligatorias || [];
+  for (const etiqueta of obligatorias) {
     if (!texto.includes(etiqueta)) {
       problemas.push(`Falta «${etiqueta}»: el sistema lo busca en lo que responde la IA para guardar la nota.`);
     }

@@ -130,6 +130,28 @@ for sem, filas in paneles.items():
         check(f"{sem}: la barra 6,5–7,0 y la lista que abre cuentan lo mismo",
               len(reportes.casillas(filas, tramo=6.5)) == barras[6.5], (len(reportes.casillas(filas, tramo=6.5)), barras[6.5]))
 
+# Los tramos siguen la escala del semestre (escala_notas.json), que la página
+# fija con usar_escala al cargar.
+from modulos.datos import agregaciones as _agregaciones  # noqa: E402
+
+check("el ancho de la barra sale de la escala: 4–7 → 0,5; 1–7 → 1; 0–100 → 10",
+      [_agregaciones.ancho_de_tramo(*e) for e in ((4, 7), (1, 7), (0, 100))] == [0.5, 1.0, 10.0])
+_agregaciones.usar_escala(1.0, 7.0)
+check("en 1–7: tramos de 1 y el 7,0 en 6–7",
+      reportes.distribucion_notas([{"Nota": 7.0}, {"Nota": 6.2}, {"Nota": 1.0}])
+      == [{"Tramo": 1.0, "Etiqueta": "1–2", "Alumnos": 1}, {"Tramo": 6.0, "Etiqueta": "6–7", "Alumnos": 2}])
+_agregaciones.usar_escala(0, 100)
+cien = [{"Nota": 100.0}, {"Nota": 83.0}, {"Nota": 5.0}, {"Nota": 95.0}]
+dist_cien = reportes.distribucion_notas(cien)
+check("en 0–100: tramos de 10 y el 100 en 90–100",
+      [(d["Etiqueta"], d["Alumnos"]) for d in dist_cien] == [("0–10", 1), ("80–90", 1), ("90–100", 2)], dist_cien)
+check("en 0–100 la barra 90–100 y su lista cuentan lo mismo",
+      len(reportes.casillas([{**f, "Correo": f"x{i}@x.cl", "Nombre": f"X{i}", "Item": "1"}
+                             for i, f in enumerate(cien)], tramo=90))
+      == 2)
+_agregaciones.usar_escala()
+check("usar_escala() vuelve a la de siempre", (_agregaciones.NOTA_MAXIMA, _agregaciones.ANCHO_TRAMO) == (7.0, 0.5))
+
 titulo("9. la originalidad se lee como escala ordenada")
 check("'Muy Baja' -> 1", reportes.nivel_originalidad("Muy Baja") == 1)
 check("'media' -> 3", reportes.nivel_originalidad("media") == 3)

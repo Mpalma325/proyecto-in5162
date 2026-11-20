@@ -149,6 +149,10 @@ class Escala:
         """Como se escribe en notas.csv y en el correo: "6,5", "83", "6,50"."""
         return str(self.redondear(nota)).replace(".", ",")
 
+    def rango(self) -> str:
+        """Para una persona: "4,0 a 7,0". Es lo que va en {ESCALA} del correo de la pregunta."""
+        return f"{self.texto(self.minima)} a {self.texto(self.maxima)}"
+
     def describir(self) -> str:
         """Una línea para el log: "4-7/1" o "1-7/1 4 al 60 %"."""
         base = f"{_num(self.minima)}-{_num(self.maxima)}/{self.decimales}"

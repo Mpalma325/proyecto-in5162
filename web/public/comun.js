@@ -2,6 +2,8 @@
 // API, la barra de navegación y cómo se muestra la salida de un trabajo.
 
 import { formatoUsd, leerConsumo, leerPrecios, notaMezcla, sumarConsumo, textoConsumo } from "./consumo.js";
+import { armarHtml, datosJson, leer as leerCorreccion } from "./correccion.js";
+import { POR_DEFECTO } from "./escala.js";
 
 export function el(tag, attrs = {}, ...hijos) {
   const n = document.createElement(tag);
@@ -269,9 +271,12 @@ export const respuestaLegible = (texto) =>
 /**
  * Una corrección guardada como texto (las recuperadas del buzón) vuelta al
  * formato del correo: "RESPUESTA:" sola en su línea y el contenido abajo era
- * <b>RESPUESTA:</b> contenido en el original.
+ * <b>RESPUESTA:</b> contenido en el original. Una corrección del formato
+ * nuevo (JSON con puntajes) se arma como el correo con la nota a la vista;
+ * `escala` es la del semestre (sin ella, 4,0–7,0).
  */
-export function evaluacionDeTexto(texto) {
+export function evaluacionDeTexto(texto, escala = POR_DEFECTO) {
+  if (datosJson(texto)) return armarHtml(leerCorreccion(texto, escala), "nota", escala);
   const lineas = desenvolver(texto).split("\n");
   const parrafos = [];
   let actual = [];
@@ -452,6 +457,7 @@ const NOMBRE_FLUJO = {
   "tareas.recolectar": "Recolectar respuestas", "tareas.corregir": "Corregir", "tareas.segunda": "Segunda oportunidad",
   "tareas.feedback": "Mandar correcciones",
   "datos.ajustar": "Ajustar nota", "datos.sabana": "Armar la sábana", "datos.panel": "Actualizar los resultados",
+  "datos.escala": "Cambiar la escala",
 };
 
 export function nombreFlujo(t) {
@@ -499,8 +505,9 @@ export function resumenCsv(columnas, antes, despues) {
 // notas. Los demás (resumen, generar, recolectar, preparar...) quedan con
 // prueba = 1 porque nadie lo pide en falso, pero sí llaman al modelo o
 // escriben archivos: de ellos no se puede decir "no se hizo nada".
+// datos.escala está: su prueba es «Ver qué cambia», que no escribe nada.
 const SIMULABLES = new Set(["tests.enviar", "tests.evaluar", "tests.feedback", "tests.tutoria", "tests.experimento",
-  "tareas.enviar", "tareas.corregir", "tareas.feedback"]);
+  "tareas.enviar", "tareas.corregir", "tareas.feedback", "datos.escala"]);
 const simula = (t) => (t.flujo === "tareas.segunda" ? t.argumentos?.paso === "enviar" : SIMULABLES.has(t.flujo));
 
 /** Si el trabajo fue una simulación: no mandó correos ni guardó notas. */
@@ -563,7 +570,8 @@ function inicioDe(t) {
  */
 function mandaCorreos(t) {
   if (t.flujo === "datos.ajustar") return !t.prueba && t.argumentos?.avisar === true;
-  if (t.prueba || !simula(t) || t.flujo === "tests.experimento") return false;
+  // Cambiar la escala reescribe notas, pero no le escribe a nadie.
+  if (t.prueba || !simula(t) || t.flujo === "tests.experimento" || t.flujo === "datos.escala") return false;
   return !(t.flujo === "tareas.corregir" && t.argumentos?.no_enviar);
 }
 
@@ -662,8 +670,12 @@ export function progresoDe(salida) {
   return { hechos: Number(hechos), total: Number(total), unidad: unidad || "" };
 }
 
-/** La salida sin las líneas de avance, que no son para leer: la línea entera, con su salto. */
-export const sinProgreso = (salida) => String(salida || "").replace(/^@@progreso [^\n]*(?:\n|$)/gm, "");
+/**
+ * La salida sin las líneas para la página, que no son para leer: la línea
+ * entera, con su salto. Son el avance y el resumen de datos.escala ("@@escala
+ * {…}", que lee la confirmación de Configuración › Semestre).
+ */
+export const sinProgreso = (salida) => String(salida || "").replace(/^@@(?:progreso|escala) [^\n]*(?:\n|$)/gm, "");
 
 /**
  * La barra: cuántos van de cuántos. Queda a la vista al terminar, también en una

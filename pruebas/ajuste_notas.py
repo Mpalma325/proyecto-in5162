@@ -101,4 +101,42 @@ with semestre_desechable(sid="_tmp_ajuste") as (sid, tmp), sin_red():
         except ValueError:
             check("tareas con aviso se rechaza", True)
 
+    titulo("8. en Tests la nota se valida con la escala del semestre y guarda su logro")
+    import json
+
+    from modulos import escala as _escala
+    r = ajustar.ajustar(datos.TESTS, item, correo, "6,5", "", "profe@x.cl", sid)
+    fila = datos.notas.estado(correo, datos.TESTS, item, sid)
+    ev = [e for e in datos.log.leer(sid, evento="ajuste") if e["Correo"] == correo.lower()][-1]
+    check("dentro de 4–7: el logro es la inversa (6,5 → 0.8333), en notas.csv y en el log",
+          (fila["Logro"], ev["Logro"]) == ("0.8333", "0.8333"), (fila["Logro"], ev["Logro"]))
+    r = ajustar.ajustar(datos.TESTS, item, correo, "3,0", "copia comprobada", "profe@x.cl", sid)
+    fila = datos.notas.estado(correo, datos.TESTS, item, sid)
+    ev = [e for e in datos.log.leer(sid, evento="ajuste") if e["Correo"] == correo.lower()][-1]
+    check("bajo la mínima (3,0 en 4–7) se acepta, sin logro: queda fija",
+          (r["despues"], fila["Logro"], ev["Logro"]) == ("3,0", "", ""), (r, fila["Logro"], ev["Logro"]))
+    for nombre, nota in (("bajo 1,0 en una escala de 4 a 7", "0,5"), ("dos decimales en una escala de uno", "6,55"),
+                         ("sobre la máxima", "7,1")):
+        try:
+            ajustar.ajustar(datos.TESTS, item, correo, nota, "", "profe@x.cl", sid)
+            check(f"se rechaza: {nombre}", False)
+        except ValueError:
+            check(f"se rechaza: {nombre}", True)
+    (tmp / _escala.ARCHIVO).write_text(json.dumps({"tipo": "lineal", "minima": 0, "maxima": 100, "decimales": 0}),
+                                       encoding="utf-8")
+    r = ajustar.ajustar(datos.TESTS, item, correo, "83", "", "profe@x.cl", sid)
+    fila = datos.notas.estado(correo, datos.TESTS, item, sid)
+    check("con una escala de 0 a 100 vale 83, sin decimales, y su logro", (r["despues"], fila["Logro"]) == ("83", "0.8300"),
+          (r, fila["Logro"]))
+    try:
+        ajustar.ajustar(datos.TESTS, item, correo, "83,5", "", "profe@x.cl", sid)
+        check("y rechaza 83,5 (la escala no tiene decimales)", False)
+    except ValueError:
+        check("y rechaza 83,5 (la escala no tiene decimales)", True)
+    if tarea:
+        r = ajustar.ajustar(datos.TAREAS, tarea["Item"], tarea["Correo"], "5,0", "", "profe@x.cl", sid)
+        check("Tareas no usa la escala de Tests: sigue de 1,0 a 7,0 y sin logro",
+              datos.notas.estado(tarea["Correo"], datos.TAREAS, tarea["Item"], sid)["Logro"] == "", r)
+    (tmp / _escala.ARCHIVO).unlink()
+
 sys.exit(resultado())

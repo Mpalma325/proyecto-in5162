@@ -17,6 +17,13 @@ import {
   vistaCorreo,
 } from "./comun.js";
 import { leerCsv } from "./csv.js";
+import {
+  aplicar, armarHtml, datosJson, desdeDecision, leer as leerCorreccion, NOTA, ORIGINALIDADES, pideJson, quitarNumeros,
+  valoresRubrica,
+} from "./correccion.js";
+import { leerConfiguracion } from "./configuracion.js";
+import * as E from "./escala.js";
+import { POR_DEFECTO } from "./escala.js";
 import { asuntoDe, leerSemana } from "./preguntas.js";
 
 export const TESTS = "test";
@@ -116,15 +123,29 @@ export const reescribirNotaFinal = (html, nota) => String(html).replace(NOTA_FIN
 
 const vacio = (v) => v === undefined || v === null || v === "";
 
+/** Si la corrección es del formato nuevo (JSON con puntajes), o la hizo el docente con puntajes (decisiones.es_formato_nuevo). */
+export const esFormatoNuevo = (correccion, decision) => datosJson(correccion?.EvaluacionIA) !== null
+  || (esDelDocente(correccion) && Array.isArray(decision?.puntajes));
+
 /**
  * Lo que sale en el correo: la corrección con lo que el docente cambió encima
- * (decisiones.juntar, sin la originalidad). { nota, html, cambios }.
+ * (decisiones.juntar, sin la originalidad). { nota, html, cambios, puntajes,
+ * logro, problemas }. En el formato nuevo la nota sale de los puntajes con la
+ * `escala` del semestre y el bloque muestra lo que diga `muestra`.
  */
-export function juntar(correccion, decision) {
+export function juntar(correccion, decision, { escala = POR_DEFECTO, muestra = NOTA } = {}) {
+  const d = decision || {};
+  if (esFormatoNuevo(correccion, d)) {
+    let c;
+    let cambios = [];
+    if (esDelDocente(correccion)) c = desdeDecision(d, (d.puntajes || []).length, escala);
+    else ({ correccion: c, cambios } = aplicar(leerCorreccion(correccion?.EvaluacionIA, escala), d, escala));
+    return { nota: c.nota, html: armarHtml(c, muestra, escala), cambios, puntajes: c.puntajes, logro: c.logro,
+      problemas: c.problemas };
+  }
   let html = correccion?.EvaluacionIA || "";
   let nota = String(correccion?.Nota || "").trim();
   const cambios = [];
-  const d = decision || {};
   const htmlNuevo = d.html_legado;
   if (typeof htmlNuevo === "string" && htmlNuevo.trim() && htmlNuevo !== html) {
     html = htmlNuevo;
@@ -138,13 +159,17 @@ export function juntar(correccion, decision) {
     }
     html = reescribirNotaFinal(html, nota);
   }
-  return { nota, html, cambios };
+  let logro = null;
+  try { logro = nota ? E.logro(escala, nota) : null; } catch { logro = null; }
+  return { nota, html: quitarNumeros(html, muestra), cambios, puntajes: "", logro: logro ? E.textoLogro(logro) : "",
+    problemas: [] };
 }
 
 /** Qué le falta a una corrección hecha a mano para poder salir; "" si está completa (decisiones.faltante_manual). */
-export function faltanteManual(decision) {
+export function faltanteManual(decision, escala = POR_DEFECTO) {
   const d = decision || {};
   if (d.estado !== ENVIAR) return "falta que el docente la apruebe";
+  if (Array.isArray(d.puntajes)) return desdeDecision(d, 0, escala).problemas.length ? "falta el puntaje de cada pregunta" : "";
   if (!/^\d{1,2}([.,]\d)?$/.test(String(d.nota_legado || "").trim())) return "falta la nota";
   if (!String(d.html_legado || "").trim()) return "falta el texto de la corrección";
   return "";
@@ -272,15 +297,35 @@ export function decisionAl(estado, caso, { nota, html } = {}, ahora = new Date()
   return d;
 }
 
-/** «6,5» o «6.5» entre 1 y 7 con un decimal; "" si está bien, o qué tiene. */
-export function problemaNota(texto) {
-  const t = String(texto ?? "").trim();
-  if (!t) return "Falta la nota.";
-  if (!/^\d{1,2}([.,]\d)?$/.test(t)) return "La nota se escribe con un decimal, como 6,5.";
-  const n = Number(t.replace(",", "."));
-  if (n < 1 || n > 7) return "La nota va de 1,0 a 7,0.";
-  return "";
+/**
+ * La decisión que se guarda al aprobar una corrección del formato nuevo: los
+ * puntajes, justificaciones, originalidad y retroalimentación solo si el
+ * docente los cambió (en una corrección a mano, todo). `editado` es lo que hay
+ * en el editor: { puntajes: [...], justificaciones: [...], originalidad, retroalimentacion }.
+ */
+export function decisionNueva(estado, caso, editado = {}, ahora = new Date(), escala = POR_DEFECTO) {
+  const d = { estado, base: baseDe(caso.correccion) };
+  const modelo = caso.manual ? null : leerCorreccion(caso.correccion?.EvaluacionIA, escala);
+  const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (Array.isArray(editado.puntajes)) {
+    const puntajes = editado.puntajes.map((p) => (vacio(p) ? null : Number(String(p).replace(",", "."))));
+    if (caso.manual || !igual(puntajes, modelo.preguntas.map((p) => Number(p.puntaje)))) d.puntajes = puntajes;
+  }
+  if (Array.isArray(editado.justificaciones)) {
+    const js = editado.justificaciones.map((j) => String(j ?? "").trim());
+    if (caso.manual || !igual(js, modelo.preguntas.map((p) => p.justificacion))) d.justificaciones = js;
+  }
+  for (const campo of ["originalidad", "retroalimentacion"]) {
+    const v = String(editado[campo] ?? "").trim();
+    if (v && (caso.manual || v !== modelo[campo])) d[campo] = v;
+  }
+  if (caso.manual) d.manual = true;
+  d.cuando = ahora.toISOString();
+  return d;
 }
+
+/** Una nota escrita a mano para esta escala: "" si está bien, o qué tiene (de min(1, mínima) a la máxima). */
+export const problemaNota = (texto, escala = POR_DEFECTO) => E.problemaNota(escala, texto);
 
 // ---------------------------------------------------------------- la pestaña
 
@@ -340,10 +385,14 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
   const resultado = el("div", { class: "resultado-revision" });
 
   async function cargar() {
-    const [log, notas, alumnos, plantilla, archivos] = await Promise.all([
+    const [log, notas, alumnos, plantilla, archivos, escala, configuracion, prompt] = await Promise.all([
       leerTexto(semestre, "log_envios.csv"), leerTexto(semestre, "notas.csv"), leerTexto(semestre, "alumnos.csv"),
       leerTexto(semestre, "tests_semanales/prompts/correo_correccion.md"),
       api(`/api/archivos/${encodeURIComponent(semestre)}?prefijo=${encodeURIComponent("tests_semanales/revision/")}`),
+      // La escala calcula la nota de los puntajes; correo_muestra dice qué números
+      // ve el alumno; el prompt dice en qué formato corrige el docente a mano.
+      leerTexto(semestre, E.ARCHIVO), leerTexto(semestre, "configuracion.json"),
+      leerTexto(semestre, "tests_semanales/prompts/evaluar_respuesta.md"),
     ]);
     const decisionesPorId = new Map();
     const archivosPorId = new Map();
@@ -355,11 +404,27 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
       decisionesPorId.set(Number(m[1]), d.decisiones);
       archivosPorId.set(Number(m[1]), { ...d, etag: leido.etag });
     }));
+    const filasAlumnos = objetosCsv(alumnos.texto);
+    const escalaLeida = E.leerEscala(escala.texto);
     datos = {
       log: objetosCsv(log.texto), notas: objetosCsv(notas.texto), plantilla: plantilla.texto,
-      nombres: new Map(objetosCsv(alumnos.texto).map((a) => [String(a.Correo || "").trim().toLowerCase(), a.Nombre || ""])),
+      nombres: new Map(filasAlumnos.map((a) => [String(a.Correo || "").trim().toLowerCase(), a.Nombre || ""])),
+      // El grupo no se muestra: solo dice cuántas preguntas tuvo cada alumno.
+      grupos: new Map(filasAlumnos.map((a) => [String(a.Correo || "").trim().toLowerCase(),
+        String(a.Grupo || "control").trim().toLowerCase()])),
       decisionesPorId, archivosPorId,
+      escala: escalaLeida.escala, errorEscala: escalaLeida.error,
+      muestra: leerConfiguracion(configuracion.texto).muestra,
+      formatoNuevo: pideJson(prompt.texto),
     };
+  }
+
+  /** Cuántas preguntas no vacías tuvo el alumno en esa instancia (las de su grupo), o null si no se sabe. */
+  function nPreguntasDe(correo, n) {
+    const inst = ciclo?.preguntas ? leerSemana(ciclo.preguntas, n) : null;
+    if (!inst?.preguntas) return null;
+    const g = datos.grupos.get(correo) === "tratamiento" ? "tratamiento" : "control";
+    return inst.preguntas.map((p) => (p.igual ? p.control : p[g])?.texto?.trim()).filter(Boolean).length || null;
   }
 
   const decisionesDe = (n) => datos.decisionesPorId.get(n) || {};
@@ -441,12 +506,12 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
 
   // ---------------------------------------------------------------- una tarjeta
 
-  function tarjeta(n, caso, asunto) {
-    const nombreAlumno = datos.nombres.get(caso.correo) || caso.correo;
-    const llegada = caso.fila.Respondio || caso.respuesta?.Timestamp || "";
-    const editable = ["por_revisar", "aprobada"].includes(caso.estado);
-    const previo = caso.decision || {};
-    const base = juntar(caso.correccion, previo);
+  /**
+   * El editor de una corrección del formato viejo: la nota y el HTML completo.
+   * { editor, borrador(), aprobada(estado, editado) → decisión | { falta } }.
+   */
+  function editorLegado(caso, previo, editable) {
+    const base = juntar(caso.correccion, previo, opciones());
     const nota = el("input", { type: "text", inputmode: "decimal", size: "4",
       value: caso.manual && vacio(previo.nota_legado) ? "" : base.nota });
     const html = el("textarea", { class: "html-correccion", rows: "12", spellcheck: "false",
@@ -459,7 +524,88 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         ? "La corriges tú: la nota y el texto son lo que recibe el alumno. Escribe «NOTA FINAL: 6,0» en el texto "
           + "si quieres que vea la nota."
         : "La nota reemplaza la de la línea «NOTA FINAL» del texto."));
-    const borrador = () => ({ nota_legado: nota.value, html_legado: html.value });
+    return {
+      editor, base, campos: [nota, html],
+      borrador: () => ({ nota_legado: nota.value, html_legado: html.value }),
+      notaModelo: String(caso.correccion.Nota || "").trim(),
+      aprobada: (estado, editado) => {
+        const falta = editado || caso.manual ? problemaNota(nota.value, datos.escala) : "";
+        if (falta || (caso.manual && !html.value.trim())) return { falta: falta || "Falta el texto de la corrección." };
+        return decisionAl(estado, caso, editado ? { nota: nota.value, html: html.value }
+          : { nota: previo.nota_legado, html: previo.html_legado });
+      },
+    };
+  }
+
+  /**
+   * El editor de una corrección del formato nuevo: el puntaje y la
+   * justificación de cada pregunta, la originalidad y la retroalimentación.
+   * La nota no se escribe: la calcula la escala del semestre con los puntajes.
+   */
+  function editorNuevo(caso, previo, editable, nPreguntas) {
+    const escala = datos.escala;
+    const modelo = caso.manual ? null : leerCorreccion(caso.correccion.EvaluacionIA, escala, nPreguntas);
+    const inicial = caso.manual ? desdeDecision(previo, nPreguntas || 1, escala) : aplicar(modelo, previo, escala).correccion;
+    const valores = valoresRubrica(escala);
+    const filas = inicial.preguntas.map((p) => {
+      const puntaje = el("select", { "aria-label": `Puntaje de ${p.rotulo}` },
+        el("option", { value: "" }, "—"),
+        valores.map((v) => el("option", { value: v.valor, selected: String(p.puntaje) === v.valor }, v.texto)));
+      const justificacion = el("textarea", { rows: "2", "aria-label": `Justificación de ${p.rotulo}` });
+      justificacion.value = p.justificacion;
+      return { p, puntaje, justificacion };
+    });
+    const actual = inicial.originalidad;
+    const originalidad = el("select", { "aria-label": "Originalidad" },
+      el("option", { value: "" }, "—"),
+      [...new Set([...ORIGINALIDADES, ...(actual ? [actual] : [])])].map((o) =>
+        el("option", { value: o, selected: o === actual }, o)));
+    const retro = el("textarea", { rows: "4", "aria-label": "Retroalimentación" });
+    retro.value = inicial.retroalimentacion;
+    const leido = () => ({
+      puntajes: filas.map((f) => (f.puntaje.value === "" ? null : f.puntaje.value)),
+      justificaciones: filas.map((f) => f.justificacion.value),
+      originalidad: originalidad.value, retroalimentacion: retro.value,
+    });
+    const editor = el("div", { class: "editor-correccion editor-puntajes", hidden: !caso.manual || !editable },
+      filas.map((f) => el("fieldset", { class: "pregunta-revision" },
+        el("legend", {}, f.p.rotulo),
+        el("label", {}, `Puntaje (de 0 a ${valores.at(-1)?.texto ?? "3"})`, f.puntaje),
+        el("label", {}, "Justificación", f.justificacion))),
+      el("label", {}, "Originalidad", originalidad),
+      el("label", {}, "Retroalimentación", retro),
+      el("p", { class: "nota-pie" }, caso.manual
+        ? "La corriges tú: pon el puntaje de cada pregunta y la nota sale de la escala del semestre."
+        : "La nota se recalcula con la escala del semestre al cambiar un puntaje."));
+    const decision = (estado) => decisionNueva(estado, caso, leido(), new Date(), escala);
+    return {
+      editor, base: juntar(caso.correccion, previo, opciones()),
+      campos: [...filas.flatMap((f) => [f.puntaje, f.justificacion]), originalidad, retro],
+      borrador: () => decision(previo.estado || APROBADA),
+      notaModelo: caso.manual ? "" : modelo.nota,
+      avisos: caso.manual ? [] : [...modelo.problemas, ...modelo.avisos],
+      aprobada: (estado) => {
+        const d = decision(estado);
+        const j = juntar(caso.correccion, d, opciones());
+        if (j.problemas.length) return { falta: caso.manual ? "Falta el puntaje de cada pregunta." : j.problemas.join(" ") };
+        return d;
+      },
+    };
+  }
+
+  const opciones = () => ({ escala: datos.escala, muestra: datos.muestra });
+
+  function tarjeta(n, caso, asunto) {
+    const nombreAlumno = datos.nombres.get(caso.correo) || caso.correo;
+    const llegada = caso.fila.Respondio || caso.respuesta?.Timestamp || "";
+    const editable = ["por_revisar", "aprobada"].includes(caso.estado);
+    // Un descarte guarda el motivo en `retroalimentacion`: no es una edición de la corrección.
+    const previo = caso.decision && caso.decision.estado !== DESCARTADA ? caso.decision : {};
+    const nuevo = caso.manual ? datos.formatoNuevo || Array.isArray(previo.puntajes)
+      : esFormatoNuevo(caso.correccion, previo);
+    const ed = nuevo ? editorNuevo(caso, previo, editable, nPreguntasDe(caso.correo, n))
+      : editorLegado(caso, previo, editable);
+    const { editor } = ed;
     const zonaCorreo = el("div", { class: "correo-propuesto" });
     const problema = el("p", { class: "aviso-correo", hidden: true });
 
@@ -472,11 +618,12 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         aviso = `Se envió con nota ${caso.cierre.Nota || caso.fila.Nota || "?"}`
           + (caso.cierre.Detalle && caso.cierre.Detalle !== "auto" ? ` · ${caso.cierre.Detalle}` : " · automática");
       } else {
-        const j = editable && !editor.hidden ? juntar(caso.correccion, borrador()) : base;
+        const j = editable && !editor.hidden ? juntar(caso.correccion, ed.borrador(), opciones()) : ed.base;
         cuerpoHtml = j.html;
-        const notaModelo = String(caso.correccion.Nota || "").trim();
+        const notaModelo = ed.notaModelo;
         aviso = caso.manual ? `Corrección a mano · nota ${j.nota || "sin escribir"}`
-          : `Nota del modelo ${notaModelo || "?"}${j.nota !== notaModelo ? ` → ${j.nota}` : ""}`;
+          : `Nota del modelo ${notaModelo || "?"}${j.nota !== notaModelo ? ` → ${j.nota || "sin nota"}` : ""}`;
+        if (datos.muestra !== NOTA) aviso += ` · el alumno no ve ${datos.muestra === "nada" ? "ningún número" : "la nota"}`;
       }
       zonaCorreo.replaceChildren(vistaCorreo({
         asunto, para: caso.correo, nombre: nombreAlumno, html: true,
@@ -489,11 +636,11 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
       espera = setTimeout(pintarCorreo, 300);
       problema.hidden = true;
     };
-    nota.addEventListener("input", alEditar);
-    html.addEventListener("input", alEditar);
+    for (const campo of ed.campos) campo.addEventListener(campo.tagName === "SELECT" ? "change" : "input", alEditar);
     pintarCorreo();
 
     const avisos = [];
+    if (editable) for (const a of ed.avisos || []) avisos.push(caja("aviso", a));
     if (caso.vieja) avisos.push(caja("aviso", "La IA volvió a corregir después de tu decisión: revisa otra vez."));
     if (caso.automatica && caso.estado === "por_revisar") {
       avisos.push(caja("info", "Se corrigió en modo automático y el feedback no salió. Ahora espera tu revisión."));
@@ -529,16 +676,14 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
      * había editado); null si falta algo, y lo dice.
      */
     const aprobada = (estado) => {
-      const editado = !editor.hidden;
-      const falta = editado || caso.manual ? problemaNota(nota.value) : "";
-      if (falta || (caso.manual && !html.value.trim())) {
-        problema.textContent = falta || "Falta el texto de la corrección.";
+      const d = ed.aprobada(estado, !editor.hidden);
+      if (d.falta) {
+        problema.textContent = d.falta;
         problema.hidden = false;
         editor.hidden = false;
         return null;
       }
-      return decisionAl(estado, caso, editado ? { nota: nota.value, html: html.value }
-        : { nota: previo.nota_legado, html: previo.html_legado });
+      return d;
     };
 
     const botones = [];
@@ -576,7 +721,8 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
       }));
     }
     if (["aprobada", "pedida", "descarte"].includes(caso.estado)) {
-      const conCambios = caso.decision && (caso.decision.html_legado !== undefined || caso.decision.nota_legado !== undefined);
+      const conCambios = caso.decision && ["html_legado", "nota_legado", "puntajes", "justificaciones", "originalidad"]
+        .some((k) => caso.decision[k] !== undefined);
       botones.push(accion(conCambios && !caso.manual ? "Volver a lo de la IA" : "Volver a revisar", "secundario", async () => {
         await guardar(n, ponerDecision(caso.correo, null), `Volvió a revisar la corrección de ${caso.correo} (${nombre(n)})`);
         dibujar();

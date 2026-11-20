@@ -100,8 +100,10 @@ def _ajuste(a: dict) -> list[str]:
     correo = str(a.get("correo", ""))
     if not re.fullmatch(r"[^@\s,]+@[^@\s,]+\.[^@\s,]+", correo):
         raise ValueError(f"Correo inválido: {correo!r}")
+    # La forma; el rango lo valida ajustar.py con la escala del semestre (en
+    # Tests, de min(1, mínima) a la máxima; con 4–7, de 1,0 a 7,0).
     nota = str(a.get("nota", ""))
-    if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota):
+    if not re.fullmatch(r"\d{1,4}([.,]\d{1,2})?", nota):
         raise ValueError(f"Nota inválida: {nota!r}")
     # El motivo es opcional; si viene, a lo más 500 caracteres.
     motivo = " ".join(str(a.get("motivo", "")).split())
@@ -119,6 +121,38 @@ def _ajuste(a: dict) -> list[str]:
     return ["-m", "modulos.datos.ajustar", "--flujo", flujo, "--item", item, "--correo", correo,
             "--nota", nota, "--motivo", motivo, "--por", a.get("_pedido_por") or "desconocido",
             *(["--avisar"] if avisar else [])]
+
+
+_CLAVES_ESCALA = ("tipo", "minima", "maxima", "decimales", "aprobacion", "exigencia", "puntaje_maximo_pregunta")
+
+
+def _escala(a: dict) -> list[str]:
+    """Cambiar la escala de notas de Tests. En prueba («Ver qué cambia») no escribe nada.
+
+    Valida lo que el diseño pide (0 ≤ mínima < máxima ≤ 1000, decimales de 0 a
+    2; en dos tramos, mínima < aprobación < máxima y 0 < exigencia < 1) con la
+    misma escala.py que usa el script, y le pasa el JSON ya normalizado.
+    """
+    from modulos import escala as _esc
+
+    e = a.get("escala")
+    if not isinstance(e, dict) or set(e) - set(_CLAVES_ESCALA):
+        raise ValueError("'escala' tiene que ser un objeto con: " + ", ".join(_CLAVES_ESCALA))
+    if e.get("tipo") not in (_esc.LINEAL, _esc.DOS_TRAMOS):
+        raise ValueError(f"Tipo de escala inválido: {e.get('tipo')!r}")
+    for k in _CLAVES_ESCALA[1:]:
+        v = e.get(k)
+        if v is None and k in ("aprobacion", "exigencia"):
+            continue
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))):
+            raise ValueError(f"'{k}' tiene que ser un número: {v!r}")
+    if not isinstance(e.get("decimales", 1), int):
+        raise ValueError(f"'decimales' tiene que ser 0, 1 o 2: {e.get('decimales')!r}")
+    escala = _esc.desde_dict(e)  # levanta ValueError con lo que está mal
+    if escala.tipo == _esc.LINEAL:
+        escala = _esc.desde_dict({**escala.como_dict(), "aprobacion": None, "exigencia": None})
+    return ["-m", "modulos.datos.escala_trabajo", "--escala", json.dumps(escala.como_dict()),
+            "--por", a.get("_pedido_por") or "desconocido", *_prueba(a)]
 
 
 def _sin_modelo(a: dict) -> list[str]:
@@ -236,6 +270,9 @@ FLUJOS = {
     "datos.sabana": ("sabana", lambda a: ["-m", "modulos.sabana"]),
     # Cambiar una nota a mano, con motivo. No manda correos.
     "datos.ajustar": ("tests", _ajuste),
+    # Cambiar la escala de Tests: escribe escala_notas.json y recalcula notas.csv.
+    # No llama al modelo ni manda correos; en prueba solo dice qué cambiaría.
+    "datos.escala": ("tests", _escala),
 
     # No llama al modelo: lee las entregas y deja el resultado para la página.
     "tareas.chequeo": ("tareas", lambda a: ["-c", _CHEQUEO, _tarea(a)]),

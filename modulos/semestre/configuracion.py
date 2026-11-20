@@ -5,9 +5,10 @@ La configuración de un semestre: `configuracion.json`, en su raíz.
 
 - `revision`: `auto` (corregir y mandar el feedback en el mismo trabajo) o
   `revisar` (corregir y dejar la corrección para que el docente la revise).
-- `correo_muestra`: qué números ve el alumno en el correo de Tests. Por ahora
-  solo `nota` (puntajes y nota, como siempre); los otros llegan con el formato
-  nuevo de corrección.
+- `correo_muestra`: qué números ve el alumno en el correo de Tests: `nota`
+  (el puntaje de cada pregunta, el total y la NOTA FINAL), `puntajes` (sin el
+  total ni la nota) o `nada` (solo los comentarios). La nota se calcula y se
+  registra igual; esto decide solo el correo (modulos/tests/correccion.py).
 
 La escribe solo la página (Configuración › Semestre). Un semestre sin el
 archivo (2026-2 y anteriores) sigue como siempre: `auto` y `nota`. Los

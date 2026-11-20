@@ -35,17 +35,14 @@ from modulos.mail import enviar_correo
 from modulos.mail.vista import mostrar_correo
 from modulos.ia import versiones
 from modulos.progreso import avanzar
+from modulos import escala as _escala
 from modulos.escala import leer as _leer_escala, texto_logro as _texto_logro
 from modulos.semestre import configuracion as _configuracion
 
 from . import config
 from . import decisiones as _decisiones
+from .correccion import _normalizar_html_gpt  # noqa: F401  (resumen y tutoría lo importaban de aquí)
 from .preguntas import asunto as _asunto, cargar_semana, SemanaInfo
-
-
-def _normalizar_html_gpt(html: str) -> str:
-    from .evaluar import _normalizar_html_gpt as normalizar
-    return normalizar(html)
 
 
 # --------------------------------------------------------------- armado
@@ -101,15 +98,25 @@ def _logro_de(nota: str) -> str:
 
 def enviar_una(info: SemanaInfo, correo: str, nombre: str, correccion: dict,
                decision: dict | None, plantilla: Plantilla, *, in_reply_to: str | None,
-               prueba: bool = False, por: str = "") -> str | None:
+               prueba: bool = False, por: str = "", escala: _escala.Escala | None = None,
+               muestra: str | None = None) -> str | None:
     """Manda el feedback de un alumno y lo registra. Devuelve el Message-ID, o None si no salió.
 
     `correccion` es la fila `correccion` del log (o la misma, armada en
     memoria por evaluar en modo automático). Solo si el envío funciona se
     agrega `evaluacion` al log y, después, la Nota en notas.csv.
+
+    En el formato nuevo la nota sale de los puntajes con `escala` (la del
+    semestre si no se pasa), y el bloque muestra los números que diga
+    `muestra` (correo_muestra de configuracion.json).
     """
     item = info.semana
-    final = _decisiones.juntar(correccion, decision)
+    escala = escala or _leer_escala()
+    muestra = muestra or _configuracion.correo_muestra()
+    final = _decisiones.juntar(correccion, decision, escala=escala, muestra=muestra)
+    if final["problemas"]:
+        print(f"⋯ {nombre or correo}: no sale, la corrección no tiene nota ({' '.join(final['problemas'])})")
+        return None
     asunto = _construir_asunto_respuesta(info)
     cuerpo = _construir_cuerpo_correccion(plantilla.texto, final["html"], nombre)
 
@@ -135,9 +142,10 @@ def enviar_una(info: SemanaInfo, correo: str, nombre: str, correccion: dict,
         _datos.log.registrar("evaluacion", _datos.TESTS, item, correo,
                              Ronda=0, MessageId=message_id or "",
                              Modelo=correccion.get("Modelo", ""),
-                             Versiones=versiones.juntar(correccion.get("Versiones"), plantilla.version),
+                             Versiones=versiones.juntar(correccion.get("Versiones"), plantilla.version,
+                                                        f"escala={escala.describir()}"),
                              Nota=final["nota"], Originalidad=final["originalidad"],
-                             Logro=_logro_de(final["nota"]),
+                             Puntajes=final["puntajes"], Logro=final["logro"],
                              EvaluacionIA=final["html"], Detalle=detalle)
     except Exception as e:  # noqa: BLE001
         # El correo ya salió: no se corta el lote. La Nota de abajo es lo que
@@ -145,7 +153,7 @@ def enviar_una(info: SemanaInfo, correo: str, nombre: str, correccion: dict,
         print(f"     ⚠ el correo a {nombre or correo} salió, pero no pude anotarlo en el log: {e}")
     try:
         _datos.notas.registrar_nota(correo, _datos.TESTS, item, final["nota"], final["originalidad"],
-                                    logro=_logro_de(final["nota"]))
+                                    logro=final["logro"])
     except Exception as e:  # noqa: BLE001
         print(f"     ⚠ el correo salió y quedó en el log, pero no pude escribir notas.csv: {e}")
     return message_id or ""
@@ -161,13 +169,15 @@ def registrar_descarte(item: int, correo: str, decision: dict, por: str = "") ->
 # --------------------------------------------------------------- selección
 
 def seleccionar(item: int, modo: str, *, solo_automaticas: bool = False,
-                semestre_id: str | None = None) -> dict:
+                semestre_id: str | None = None, escala: _escala.Escala | None = None) -> dict:
     """Qué hacer con cada corrección pendiente de la instancia.
 
     Devuelve {"enviar": [...], "descartar": [...], "saltadas": [(correo, motivo)],
     "esperando": n}. Cada elemento de enviar/descartar es
-    {"correo", "correccion", "decision", "respuesta"}.
+    {"correo", "correccion", "decision", "respuesta"}. Una corrección del
+    formato nuevo con un puntaje fuera de la rúbrica no tiene nota: se salta.
     """
+    escala = escala or _leer_escala(semestre_id)
     # Las decisiones se leen siempre: con solo_automaticas (el reintento que hace
     # evaluar) una corrección que el docente ya tocó en Revisar no sale sola.
     decisiones = _decisiones.leer(item, semestre_id)
@@ -197,19 +207,30 @@ def seleccionar(item: int, modo: str, *, solo_automaticas: bool = False,
             caso["decision"] = decision
             if decision["estado"] == _decisiones.DESCARTADA:
                 salida["descartar"].append(caso)
-            elif _decisiones.es_del_docente(correccion) and _decisiones.faltante_manual(decision):
-                salida["saltadas"].append((correo, f"corrección a mano: {_decisiones.faltante_manual(decision)}"))
+            elif _decisiones.es_del_docente(correccion) and _decisiones.faltante_manual(decision, escala):
+                salida["saltadas"].append((correo, f"corrección a mano: "
+                                                   f"{_decisiones.faltante_manual(decision, escala)}"))
+            elif _sin_nota(correccion, decision, escala):
+                salida["saltadas"].append((correo, _sin_nota(correccion, decision, escala)))
             else:
                 salida["enviar"].append(caso)
             continue
 
         automatica = (_decisiones.modo_de(correccion) == _configuracion.AUTO
                       and not _decisiones.es_del_docente(correccion))
-        if automatica and modo == _configuracion.AUTO:
+        if automatica and modo == _configuracion.AUTO and not _sin_nota(correccion, None, escala):
             salida["enviar"].append(caso)
         else:
             salida["esperando"] += 1
     return salida
+
+
+def _sin_nota(correccion: dict, decision: dict | None, escala) -> str:
+    """Por qué una corrección del formato nuevo no tiene nota (un puntaje fuera de la rúbrica); vacío si la tiene."""
+    if not _decisiones.es_formato_nuevo(correccion, decision):
+        return ""
+    problemas = _decisiones.juntar(correccion, decision, escala=escala)["problemas"]
+    return f"sin nota: {' '.join(problemas)}" if problemas else ""
 
 
 def _nombres() -> dict[str, str]:
@@ -217,9 +238,12 @@ def _nombres() -> dict[str, str]:
 
 
 def enviar_pendientes(info: SemanaInfo, modo: str, *, prueba: bool = False, por: str = "",
-                      solo_automaticas: bool = False, plantilla: Plantilla | None = None) -> dict:
+                      solo_automaticas: bool = False, plantilla: Plantilla | None = None,
+                      escala: _escala.Escala | None = None, muestra: str | None = None) -> dict:
     """Manda lo que `seleccionar` elige y registra los descartes. Devuelve los conteos."""
-    seleccion = seleccionar(info.semana, modo, solo_automaticas=solo_automaticas)
+    escala = escala or _leer_escala()
+    muestra = muestra or _configuracion.correo_muestra()
+    seleccion = seleccionar(info.semana, modo, solo_automaticas=solo_automaticas, escala=escala)
     plantilla = plantilla or Plantilla(prueba)
     nombres = _nombres()
     cuenta = {"enviados": 0, "fallidos": 0, "descartes": 0,
@@ -243,7 +267,8 @@ def enviar_pendientes(info: SemanaInfo, modo: str, *, prueba: bool = False, por:
         nombre = nombres.get(correo) or ""
         respuesta = caso.get("respuesta") or {}
         message_id = enviar_una(info, correo, nombre, caso["correccion"], caso["decision"], plantilla,
-                                in_reply_to=respuesta.get("RespondeA") or None, prueba=prueba, por=por)
+                                in_reply_to=respuesta.get("RespondeA") or None, prueba=prueba, por=por,
+                                escala=escala, muestra=muestra)
         if prueba:
             cuenta["enviados"] += 1
             continue
@@ -251,7 +276,7 @@ def enviar_pendientes(info: SemanaInfo, modo: str, *, prueba: bool = False, por:
             cuenta["fallidos"] += 1
         else:
             cuenta["enviados"] += 1
-            nota = _decisiones.juntar(caso["correccion"], caso["decision"])["nota"]
+            nota = _decisiones.juntar(caso["correccion"], caso["decision"], escala=escala)["nota"]
             print(f"✓ {nombre or correo}: feedback enviado, nota {nota or '?'}")
     return cuenta
 

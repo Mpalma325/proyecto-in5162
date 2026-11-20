@@ -18,7 +18,7 @@ const GRUPOS = [
   ["Evaluación", ["FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad", "Modelo", "Versiones",
     "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML", "AjusteManual", "MotivoAjuste"]],
   ["Revisión", ["Logro", "NotaEnviada", "Editada", "RevisadoPor", "CorregidoPor", "ModoRevision", "FechaFeedback",
-    "Descartada"]],
+    "Descartada", "EscalaNota", "Recalculada"]],
   ["Tutoría", ["Repreguntas", "Tutorias"]],
 ];
 // Qué trae cada columna, al pasar el mouse por su nombre (sale de modulos/sabana.py).
@@ -67,6 +67,9 @@ export const DESCRIPCION = {
   ModoRevision: "Con qué modo se corrigió: auto (sale sola) o revisar (espera al docente)",
   FechaFeedback: "Cuándo salió el correo con la corrección; desde ahí cuenta la nota",
   Descartada: "Si el docente decidió no mandar feedback (sí/no); la casilla queda cerrada sin nota",
+  EscalaNota: "Con qué escala se calculó la nota vigente (tests), como 4-7/1 (4,0 a 7,0, un decimal) o "
+    + "1-7/1 4 al 60 %; vacía si la nota se puso a mano o es de antes de la escala",
+  Recalculada: "Si la nota vigente la dejó un cambio de escala (sí/no); por eso puede no ser la que recibió el alumno",
   Repreguntas: "Cuántas dudas mandó sobre la corrección",
   Tutorias: "Cuántas respuestas a dudas recibió",
 };
