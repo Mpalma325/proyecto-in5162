@@ -29,7 +29,7 @@ Cuando alguien aprieta "Evaluar", el Worker anota el trabajo y le avisa al motor
 - **Desde la página solo se escriben los archivos que se editan a mano**: las listas de alumnos, las preguntas, los prompts, las entregas y la asignación de preguntas de tareas (`EDITABLES` en el Worker). Una entrega ya subida no se reemplaza. Los demás archivos solo los escriben los trabajos.
 - **Toda escritura desde la página tiene que venir de la página.** El Worker rechaza cualquier pedido que no sea de lectura si su `Origin` no es el sitio: así una página ajena, abierta por alguien con sesión, no puede pedir un trabajo a su nombre. La cookie de Access va además con `SameSite=Lax`.
 - **Nada se pisa sin saberlo.** Cada escritura lleva la versión que se leyó (`If-Match`); si en la nube cambió mientras tanto, el Worker responde 409 en vez de reemplazarla. Vale para el motor, la página y `subir`.
-- **Historial.** Antes de reemplazar un archivo, el Worker guarda la versión anterior en R2 (`historial/`) y anota quién la cambió en la tabla `ediciones`. Se ve en Datos y Configuración → Historial.
+- **Historial.** Antes de reemplazar un archivo, el Worker guarda la versión anterior en R2 (`historial/`) y anota quién la cambió en la tabla `ediciones`. Se ve en Configuración › Registro › Historial.
 - **Dos tokens con lo mínimo.** `TOKEN_MOTOR` lo usa el motor para leer y escribir archivos y trabajos; no sirve para ver la reportería ni para pedir trabajos. `TOKEN_WEB` lo usa el Worker para avisarle al motor.
 
 ## En el PC, para desarrollar

@@ -76,7 +76,7 @@ con los correos de ese grupo a recolectar y a corregir (este último con
 ## Parámetros
 
 Modelo, temperatura, tokens, escala de notas, tarea por defecto y grupos se
-editan en la página (Datos y Configuración → Parámetros) y quedan en D1. Antes
+editan en la página (Configuración › La IA › Parámetros) y quedan en D1. Antes
 de cada trabajo el motor los lee y se los pasa al script como variables de
 entorno, que `config.py` prefiere sobre el `.env`. Solo pasan las claves de
 `PARAMETROS`: si la tabla trajera otra cosa, como una clave de API, no llega.
