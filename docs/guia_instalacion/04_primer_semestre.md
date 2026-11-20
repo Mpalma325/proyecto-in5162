@@ -1,17 +1,15 @@
 # 4. Primer semestre
 
-Todo lo de esta página se hace en el sitio, con la sesión iniciada (página 3, sección 3.8). La página «Configuración» tiene arriba el semestre activo y, debajo, pestañas agrupadas: «Tests semanales» (Alumnos, Preguntas), «Tareas» (Entregas, Feedback, Contexto), «La IA» (Prompts, Probar criterio, Parámetros) y «Registro» (Historial).
-
-El instalador y su documentación llaman a esta página «Datos y Configuración»; en el menú del sitio aparece como «Configuración».
+Todo lo de esta página se hace en el sitio, con la sesión iniciada (página 3, sección 3.8). La página «Configuración» tiene arriba el semestre activo y, debajo, pestañas agrupadas: «Tests semanales» (Alumnos, Preguntas), «Tareas» (Entregas, Feedback, Contexto), «La IA» (Prompts, Probar criterio, Parámetros) y «Registro» (Historial). El instalador y esta guía nombran cada pestaña con esa ruta, por ejemplo Configuración › La IA › Parámetros.
 
 ## 4.1 Revisar los parámetros
 
 Los parámetros valen para todos los semestres. Conviene fijarlos antes del primer envío, incluso del primer envío simulado.
 
 1. Abre «Configuración» y la pestaña «Parámetros» (grupo «La IA»).
-2. **Grupos Control y Tratamiento.** El interruptor «Usar dos grupos (Control y Tratamiento)» viene prendido. Con él, cada alumno queda en uno de dos grupos al azar y recibe la versión de la pregunta de su grupo. Si el curso va a mandar la misma pregunta a todos, apágalo y haz clic en «Guardar» de esa sección. Decídelo ahora: el primer envío, simulado o real, asigna los grupos, y el grupo de un alumno no cambia después.
+2. **Grupos Control y Tratamiento.** El interruptor «Usar dos grupos (Control y Tratamiento)» viene prendido. Con él, cada alumno queda en uno de dos grupos al azar y recibe la versión de la pregunta de su grupo. Si el curso va a mandar la misma pregunta a todos, apágalo y haz clic en «Guardar» de esa sección. Decídelo ahora: el primer envío real asigna los grupos, y el grupo de un alumno no cambia después. La simulación solo dice a cuántos alumnos les asignaría grupo.
 3. **Tutoría automática.** El interruptor «Responder dudas todos los días a las 18:00» viene apagado. Prendido, cada día a las 18:00 (hora de Santiago) el sistema responde por correo las dudas de los alumnos sobre su corrección. Déjalo apagado hasta terminar la sección 4.8.
-4. **Modelo.** Por defecto, `gpt-5.4-mini`. El campo sugiere una lista de modelos conocidos. Si el instalador avisó que tu clave no ve ese modelo, elige o escribe otro que tu cuenta de OpenAI tenga disponible y haz clic en «Guardar».
+4. **Modelo.** Por defecto, `gpt-5.4-mini`. El campo sugiere una lista de modelos conocidos. Si el instalador avisó que la cuenta no tiene ese modelo, elige o escribe otro que tu cuenta de OpenAI tenga disponible y haz clic en «Guardar».
 5. **Precios de la API.** Sin precios, la página Inicio muestra el consumo en tokens. Para verlo en dólares, escribe los precios del modelo en US$ por millón de tokens, como los publica OpenAI, y haz clic en «Guardar».
 
 ## 4.2 Crear el semestre
@@ -27,7 +25,7 @@ Para probar el sistema sin tocar el semestre real, puedes crear antes un semestr
 
 ### El archivo
 
-La lista es un archivo `alumnos.csv`: la primera fila tiene los nombres de las columnas, `Nombre` y `Correo`, escritos así, y después va un alumno por fila. Las columnas van separadas por coma.
+La lista es un archivo `alumnos.csv`: la primera fila tiene los nombres de las columnas, `Nombre` y `Correo`, escritos así, y después va un alumno por fila. Las columnas pueden ir separadas por coma o por punto y coma.
 
 ```
 Nombre,Correo
@@ -36,14 +34,14 @@ Bruno Díaz Rojas,bruno.diaz@ejemplo.cl
 Carla Muñoz Vega,carla.munoz@ejemplo.cl
 ```
 
-Hay dos columnas opcionales. `Grupo` no hace falta: con los grupos prendidos, el sistema la llena con `control` o `tratamiento` en el primer envío. `CorreosAlternativos` sirve para alumnos que responden desde otra cuenta; lleva esas otras direcciones separadas por punto y coma.
+Hay dos columnas opcionales. `Grupo` no hace falta: con los grupos prendidos, el sistema la llena con `control` o `tratamiento` en el primer envío real. `CorreosAlternativos` sirve para alumnos que responden desde otra cuenta; lleva esas otras direcciones separadas por punto y coma.
 
-La forma más segura de armar el archivo es con Google Sheets:
+Ármalo en Excel o en Google Sheets:
 
 1. En una hoja nueva, escribe `Nombre` en A1 y `Correo` en B1, y pega debajo la lista del curso.
-2. Descárgala con «Archivo», «Descargar», «Valores separados por comas (.csv)».
+2. Guárdala como CSV. En Excel: «Archivo», «Guardar como» y, en el tipo de archivo, «CSV UTF-8 (delimitado por comas)» o «CSV (delimitado por comas)». En Google Sheets: «Archivo», «Descargar», «Valores separados por comas (.csv)».
 
-Excel en español suele guardar los CSV separados por punto y coma. El sitio los muestra bien, pero el motor solo lee comas, y con punto y coma no encuentra a ningún alumno al enviar. Antes de subir un archivo hecho en Excel, ábrelo con el Bloc de notas: la primera línea tiene que ser exactamente `Nombre,Correo`.
+Excel en español guarda el CSV separado por punto y coma, y el tipo «CSV (delimitado por comas)» lo guarda con la codificación antigua de Windows. El sitio y el motor leen las dos formas y conservan las tildes y las eñes.
 
 ### Subirlo
 
@@ -83,7 +81,7 @@ Usa una de estas dos vías:
 
 Las semanas del ejemplo que no uses se quitan desde «Tabla completa», con la × de su fila y «Guardar cambios».
 
-Si prefieres armar el archivo completo en una planilla, estas son sus 15 columnas, en este orden: `Semana`, `Tema`, `Fecha de Entrega`, `Control P1`, `Control P2`, `Control P3`, `Control Pauta P1`, `Control Pauta P2`, `Control Pauta P3`, `Tratamiento P1`, `Tratamiento P2`, `Tratamiento P3`, `Tratamiento Pauta P1`, `Tratamiento Pauta P2`, `Tratamiento Pauta P3`. Va separado por comas, igual que la lista de alumnos.
+Si prefieres armar el archivo completo en una planilla, estas son sus 15 columnas, en este orden: `Semana`, `Tema`, `Fecha de Entrega`, `Control P1`, `Control P2`, `Control P3`, `Control Pauta P1`, `Control Pauta P2`, `Control Pauta P3`, `Tratamiento P1`, `Tratamiento P2`, `Tratamiento P3`, `Tratamiento Pauta P1`, `Tratamiento Pauta P2`, `Tratamiento Pauta P3`. Puede ir separado por coma o por punto y coma, igual que la lista de alumnos.
 
 Con alumnos y preguntas cargados, el aviso de arriba cambia a «✓ Alumnos y preguntas cargados».
 
@@ -105,9 +103,9 @@ Si editas `evaluar_respuesta.md`, deja las etiquetas `NOTA FINAL:` y `ORIGINALID
 4. Haz clic en «Simular envío». El trabajo corre en el motor y su salida aparece en la página: las preguntas de cada grupo, un correo de ejemplo por grupo con el destinatario, y al final `Se enviaría a N alumno(s).`
 5. Comprueba que N sea la cantidad de alumnos del curso y que el correo de ejemplo se vea como quieres.
 
-La simulación no manda ningún correo. Sí deja asignados los grupos de los alumnos, si los grupos están prendidos.
+La simulación no manda ningún correo ni cambia la lista de alumnos. Con los grupos prendidos, la salida incluye `Asignaría grupo a N alumno(s) nuevo(s); la simulación no lo guarda.`: el envío real de la sección 4.7 los asigna.
 
-Si la salida dice `Nada por enviar.`, el motor no encontró alumnos pendientes: revisa que la lista use comas (sección 4.3).
+Si la salida dice `Nada por enviar.`, el motor no encontró alumnos pendientes: revisa en Configuración › Tests semanales › Alumnos que la tabla tenga las columnas Nombre y Correo y una fila por alumno (sección 4.3).
 
 ## 4.7 El primer envío real
 
@@ -130,6 +128,6 @@ Después de la fecha de entrega:
 2. Con «Solo simular» marcado, haz clic en «Simular evaluación». La salida empieza con `Módulo N — X respuesta(s) encontrada(s)` y muestra qué haría con cada una, sin llamar al modelo, sin mandar correos y sin marcar nada como leído. Al terminar, el sitio permite elegir qué respuestas evaluar de verdad.
 3. Para evaluar de verdad, desmarca «Solo simular». El botón cambia a «Evaluar y mandar feedback». Haz clic y confirma. El modelo corrige cada respuesta, la nota queda guardada y cada alumno recibe su corrección por correo.
 
-La pestaña «3 · Resumen semana» genera, con el modelo, un resumen de la semana para el equipo docente; no manda correos. La pestaña «Responder dudas» responde a mano las dudas de los alumnos sobre su corrección, con el mismo modo de simulación. Cuando el ciclo te deje conforme, puedes prender la tutoría automática en Parámetros (sección 4.1).
+La pestaña «3 · Resumen semana» genera, con el modelo, un resumen de la semana para el equipo docente; no manda correos. La pestaña «Responder dudas» responde a mano las dudas de los alumnos sobre su corrección, con el mismo modo de simulación. Cuando el ciclo te deje conforme, puedes prender la tutoría automática en Configuración › La IA › Parámetros (sección 4.1).
 
 La página «Resultados» muestra las notas, la tasa de respuesta y la comparación entre grupos del semestre. Las tareas grupales se operan desde la página «Tareas».

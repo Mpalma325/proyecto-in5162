@@ -28,7 +28,7 @@ Gmail solo entrega contraseñas de aplicación a cuentas con verificación en do
 3. Google muestra una contraseña de 16 letras en cuatro grupos, por ejemplo `abcd efgh ijkl mnop`. Cópiala en la hoja de datos. Los espacios no importan: el instalador los quita.
 4. Haz clic en «Listo». Google no vuelve a mostrar esa contraseña; si la pierdes, crea otra y borra la anterior desde la misma página.
 
-Si `myaccount.google.com/apppasswords` dice que la opción no está disponible para tu cuenta, hay dos causas posibles: la verificación en dos pasos no quedó activada (vuelve a la sección anterior), o la cuenta pertenece a una organización, como una universidad, que desactivó las contraseñas de aplicación. En el segundo caso usa una cuenta @gmail.com.
+Si `myaccount.google.com/apppasswords` dice que la opción no está disponible para tu cuenta, hay dos causas posibles: la verificación en dos pasos no quedó activada (vuelve a la sección anterior), o la cuenta pertenece a una organización, como una universidad, que desactivó las contraseñas de aplicación. En el segundo caso usa una cuenta @gmail.com. Lo mismo vale si la organización desactivó IMAP, el acceso con que el sistema lee las respuestas de los alumnos: el instalador lo prueba en la página 3.
 
 Google anula todas las contraseñas de aplicación cuando se cambia la contraseña de la cuenta. Si algún día la cambias, crea una contraseña de aplicación nueva y cárgala como dice la página 5.
 
@@ -50,7 +50,7 @@ Google anula todas las contraseñas de aplicación cuando se cambia la contrase�
 3. En «Name» escribe `ABC123 curso`. Deja «Project» en el proyecto por defecto y «Permissions» en «All».
 4. Haz clic en «Create secret key» y luego en «Copy». La clave empieza con `sk-`. OpenAI no la vuelve a mostrar.
 
-El instalador comprueba que la clave funciona, pero esa prueba no gasta saldo y no detecta si el saldo está en cero. Carga el saldo antes de la página 4.
+El instalador prueba la clave con una respuesta de 1 token del modelo, así que la cuenta necesita saldo: si está en cero, la prueba falla y el instalador espera a que lo cargues. Carga el saldo antes de la página 3.
 
 **Copia en la hoja de datos:** la clave de OpenAI.
 

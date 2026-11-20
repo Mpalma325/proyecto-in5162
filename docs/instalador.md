@@ -1,12 +1,13 @@
 # Instalador en la nube (nota para quien mantiene el código)
 
-`instalar.py` monta una copia del sistema para otro curso en las cuentas de Cloudflare y Google Cloud de quien lo corre. Está pensado para Google Cloud Shell, que ya trae `gcloud` con la sesión iniciada, Python 3, Node y git. Esta nota explica cómo está armado; la guía para el profesor está pendiente.
+`instalar.py` monta una copia del sistema para otro curso en las cuentas de Cloudflare y Google Cloud de quien lo corre. Está pensado para Google Cloud Shell, que ya trae `gcloud` con la sesión iniciada, Python 3, Node y git. Esta nota explica cómo está armado; la guía para el profesor está en `docs/guia_instalacion/`.
 
 ```
 python3 instalar.py                  # instalar (o retomar una instalación a medias)
 python3 instalar.py actualizar       # git pull, migraciones, motor y sitio
 python3 instalar.py estado           # qué hay y qué falta, sin cambiar nada
 python3 instalar.py credenciales     # cambiar la clave del correo, de OpenAI o el token de Cloudflare
+python3 instalar.py acceso           # cambiar los correos del equipo que entran al sitio
 python3 instalar.py --simular        # cualquiera de los anteriores, mostrando lo que haría
 ```
 
@@ -20,19 +21,19 @@ python3 instalar.py --simular        # cualquiera de los anteriores, mostrando l
 | `instalador/cloudflare.py` | Subdominio de workers.dev, D1, R2, `wrangler.<curso>.toml`, migraciones, publicación, Access y subida de la plantilla. |
 | `instalador/gcp.py` | Lo mismo que `motor/desplegar.ps1`, en Python. |
 | `instalador/plantilla.py` | Arma la plantilla de `semestres/_template` con las marcas `«CURSO»`, `«NOMBRE_CURSO»` y `«PROFESOR»` llenas. |
-| `instalador/principal.py` | Las preguntas, el orden de los pasos y los cuatro comandos. |
+| `instalador/principal.py` | Las preguntas, el orden de los pasos y los cinco comandos. |
 
-Como todo pasa por el `Ejecutor`, `--simular` imprime cada comando y cada pedido en vez de hacerlo, y `pruebas/instalador.py` reemplaza `subprocess.run`, `urlopen` y `smtplib.SMTP` por dobles. En simulación las consultas también se imprimen: el instalador supone que nada existe y muestra el camino completo.
+Como todo pasa por el `Ejecutor`, `--simular` imprime cada comando y cada pedido en vez de hacerlo, y `pruebas/instalador.py` reemplaza `subprocess.run`, `urlopen`, `smtplib.SMTP` e `imaplib.IMAP4_SSL` por dobles. En simulación las consultas también se imprimen: el instalador supone que nada existe y muestra el camino completo.
 
 El estado vive en el `.env` de la raíz, el mismo que usan la app y el motor. Cada paso anota ahí lo que obtuvo (`CLOUDFLARE_D1_ID`, `WEB_URL`, `MOTOR_URL`, `ACCESO_AUD`, etc.), y antes de crear algo pregunta si ya existe. Si una instalación se corta, se vuelve a correr `python3 instalar.py`: las preguntas ya contestadas se saltan y lo creado no se duplica.
 
 ## Qué pregunta y cómo lo comprueba
 
-| Dato | Prueba (sin efectos) |
+| Dato | Prueba (sin efectos, salvo el token de OpenAI) |
 |---|---|
 | Código, nombre del curso y profesor | Formato. Rechaza `in5162`, que ya está montado a mano. |
-| Gmail y contraseña de aplicación | SMTP a `smtp.gmail.com:587`, STARTTLS, login y QUIT. No manda nada. |
-| Clave de OpenAI | `GET /v1/models`; avisa si no aparece el modelo por defecto. |
+| Gmail y contraseña de aplicación | SMTP a `smtp.gmail.com:587`, STARTTLS, login y QUIT; después IMAP a `imap.gmail.com:993` con SSL, login y LOGOUT. No manda ni lee nada. El mensaje dice cuál de los dos falló: un Workspace puede aceptar SMTP con IMAP desactivado. |
+| Clave de OpenAI | `POST /v1/chat/completions` al modelo por defecto con `max_completion_tokens: 1`. `GET /v1/models` responde 200 aunque la cuenta no tenga saldo; esta llamada no. Traduce `insufficient_quota` y `billing_not_active`, 401, permisos restringidos, 429, `model_not_found` y 403 a qué hacer. |
 | Account ID y token de Cloudflare | `GET /user/tokens/verify` (o el de tokens de cuenta) y un GET por permiso: Workers Scripts, D1, R2, Access Apps y Access Organizations, todos Edit. Detecta R2 o Zero Trust sin activar. |
 | Proyecto de Google Cloud y región | `gcloud projects describe` y `gcloud billing projects describe`. Región por defecto `us-central1`. |
 | Correos del equipo | Formato. |
@@ -64,9 +65,13 @@ Al final muestra, sin correrlos, los comandos para quitarle a la cuenta de servi
 
 Para IN5162 cambian dos cosas. Crear un semestre desde la app del PC pide ahora `NOMBRE_CURSO` y `PROFESOR` en el `.env`. Y `subir --archivos --forzar` reemplazaría la plantilla que IN5162 tiene en R2, con su texto de siempre, por la neutra llena con esos datos; sin `--forzar` no la toca.
 
-**`TUTORIA_AUTOMATICA`.** Si el parámetro no existe, la tutoría de las 18:00 corre como siempre, así IN5162 no cambia. Los cursos nuevos parten con `false`. Se prende y apaga en Datos y Configuración › Parámetros. Lo leen `programado()` en `web/src/index.ts` y la lista de parámetros del motor y de `modulos/config.py`, para que la prueba de coherencia entre ambos siga pasando.
+**`TUTORIA_AUTOMATICA`.** Si el parámetro no existe, la tutoría de las 18:00 corre como siempre, así IN5162 no cambia. Los cursos nuevos parten con `false`. Se prende y apaga en Configuración › La IA › Parámetros. Lo leen `programado()` en `web/src/index.ts` y la lista de parámetros del motor y de `modulos/config.py`, para que la prueba de coherencia entre ambos siga pasando.
 
 **Cambiar credenciales.** La página de Parámetros decía que bastaba editar el `.env`, pero el motor lee los secretos de Secret Manager. `python3 instalar.py credenciales` prueba la clave nueva, crea una versión del secreto, destruye la anterior y saca una revisión nueva del motor sin reconstruirlo.
+
+**Cambiar quién entra.** Antes había que editar `ACCESO_CORREOS` en el `.env` y correr `instalar` completo, que además reconstruía el motor. `python3 instalar.py acceso` pide la lista (con la actual por defecto), corre `acceso.mjs` con ella y solo entonces guarda `ACCESO_CORREOS`: si `acceso.mjs` falla, el `.env` queda como estaba. La política nueva rige en Access sin publicar el sitio; el sitio se publica de nuevo solo si cambiaron `ACCESO_EQUIPO` o `ACCESO_AUD`, con los que el Worker verifica la sesión.
+
+**`estado`.** Las filas del motor (`GET /salud`) y de la plantilla muestran el código HTTP. Si no es 200, agregan un extracto del cuerpo de hasta 100 caracteres, sin etiquetas, estilos ni scripts, para que una página de error de Google se lea en una línea. `INSTALADO` se arma sin repetidos, porque `WEB_TOKEN` y `TOKEN_WEB` también vienen en `gcp.SECRETOS`.
 
 **`desplegar.ps1` sigue igual.** IN5162 lo puede seguir usando. La sección 7 de `pruebas/instalador.py` compara ambos: variables de entorno, secretos, colas y recursos de Cloud Run.
 
@@ -89,7 +94,7 @@ El último comando debe responder que no hay migraciones pendientes. Si se olvid
 
 ## Pruebas
 
-`pruebas/instalador.py` (en `pruebas/todas.py`) corre sin red ni nube y con nombres inventados. Cubre la validación de cada credencial, que volver a correr no cree lo que existe, el recorrido completo con `--simular`, `actualizar`, `estado`, `credenciales`, la configuración por curso, la plantilla y la coherencia con `desplegar.ps1`. `web/scripts/probar-programado.mjs`, que corre desde `pruebas/web.py`, prueba el interruptor de la tutoría.
+`pruebas/instalador.py` (en `pruebas/todas.py`) corre sin red ni nube y con nombres inventados. Cubre la validación de cada credencial, que volver a correr no cree lo que existe, el recorrido completo con `--simular`, `actualizar`, `estado`, `credenciales`, `acceso` (con y sin cambio de AUD, y con `acceso.mjs` fallando), la configuración por curso, la plantilla y la coherencia con `desplegar.ps1`. `web/scripts/probar-programado.mjs`, que corre desde `pruebas/web.py`, prueba el interruptor de la tutoría.
 
 ## Lo que no se probó contra servicios reales
 
@@ -101,5 +106,7 @@ Nada de esto se corrió contra cuentas reales. Pendiente de una primera instalac
 - `gcloud billing projects describe` en un proyecto recién creado, sin el rol de facturación.
 - Una organización con *Domain Restricted Sharing* impide `--allow-unauthenticated`. Las cuentas universitarias de Google Workspace pueden tenerla.
 - La espera de 15 segundos después de crear la cuenta de servicio, y los permisos por secreto y por cola hechos antes del primer `run deploy`.
-- El inicio de sesión SMTP con una contraseña de aplicación real, y el `PUT` de la plantilla contra un sitio recién publicado (se reintenta seis veces cada 20 segundos mientras Access y el Worker se propagan).
+- La prueba de OpenAI contra la API real: que `gpt-5.4-mini` acepte `max_completion_tokens: 1` sin responder 400 (un 400 hoy cae en «no pude comprobarlo»), y qué código devuelve una cuenta sin saldo (se espera `insufficient_quota` con 429).
+- `acceso` contra Cloudflare: que `acceso.mjs` conserve el AUD al actualizar la aplicación, y cuánto sigue entrando alguien que sale de la lista con la sesión abierta (la aplicación tiene `session_duration: "24h"`).
+- El inicio de sesión SMTP e IMAP con una contraseña de aplicación real, y el `PUT` de la plantilla contra un sitio recién publicado (se reintenta seis veces cada 20 segundos mientras Access y el Worker se propagan).
 - La política de limpieza de Artifact Registry compartida por todos los servicios del proyecto.

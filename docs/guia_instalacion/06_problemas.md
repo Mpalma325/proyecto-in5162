@@ -56,15 +56,32 @@ Esta página sigue el orden de la instalación. Busca el mensaje con Ctrl+F.
 
 **`No parece un correo (nombre@dominio.cl).`** Revisa que el correo esté completo, sin espacios.
 
-**`Gmail rechazó el correo o la contraseña de aplicación. Revisa que la cuenta tenga verificación en dos pasos y que la contraseña sea una de aplicación (myaccount.google.com/apppasswords), no la de siempre.`** Las causas posibles son cuatro: pegaste la contraseña normal de la cuenta, la verificación en dos pasos no está activa, la contraseña de aplicación se borró o se anuló (Google las anula al cambiar la contraseña de la cuenta), o el correo tiene un error. Crea una contraseña de aplicación nueva (página 2, sección 2.1) y pégala cuando el instalador la pida de nuevo.
+El instalador inicia sesión primero en el servidor de envío (SMTP, `smtp.gmail.com`) y después en el de lectura del buzón (IMAP, `imap.gmail.com`). Cada mensaje dice cuál de los dos falló.
 
-**`No pude conectarme a smtp.gmail.com:587 (...). ¿Hay conexión?`** o **`El servidor de correo cortó la conexión (...).`** Gmail no respondió. Presiona Enter para reintentar. Si sigue igual después de unos minutos y estás seguro de la contraseña, responde `s`.
+**`Gmail rechazó el correo o la contraseña de aplicación al iniciar sesión para enviar (SMTP, smtp.gmail.com). Revisa que la cuenta tenga verificación en dos pasos y que la contraseña sea una de aplicación (myaccount.google.com/apppasswords), no la de siempre.`** Las causas posibles son cuatro: pegaste la contraseña normal de la cuenta, la verificación en dos pasos no está activa, la contraseña de aplicación se borró o se anuló (Google las anula al cambiar la contraseña de la cuenta), o el correo tiene un error. Crea una contraseña de aplicación nueva (página 2, sección 2.1) y pégala cuando el instalador la pida de nuevo.
+
+**`Gmail aceptó la contraseña para enviar (SMTP), pero rechazó el inicio de sesión para leer el buzón (IMAP, imap.gmail.com): ...`** El correo y la contraseña están bien, pero la cuenta no deja leer el buzón por IMAP, que es como el sistema recibe las respuestas de los alumnos. Después de los dos puntos viene el motivo que dio Gmail.
+
+- Si el correo es de Google Workspace (por ejemplo, de una universidad), el administrador desactivó IMAP. Usa una cuenta @gmail.com: activa en ella la verificación en dos pasos, crea una contraseña de aplicación (página 2, sección 2.1) y escribe ese correo y esa contraseña cuando el instalador los pida de nuevo.
+- **No verificado.** Con una cuenta @gmail.com no debería pasar. Si pasa, abre Gmail con esa cuenta, haz clic en el engranaje, «Ver todos los ajustes», pestaña «Reenvío y correo POP/IMAP», y revisa que el acceso IMAP esté habilitado. Guarda los cambios, vuelve a la terminal y presiona Enter dos veces: el instalador deja el mismo correo y la misma contraseña y los prueba de nuevo.
+
+**`No pude conectarme a smtp.gmail.com:587, el servidor de envío (SMTP) (...). ¿Hay conexión?`**, **`El envío (SMTP) funcionó, pero no pude conectarme a imap.gmail.com:993, el servidor de lectura (IMAP) (...). ¿Hay conexión?`** o **`El servidor de envío (SMTP, smtp.gmail.com) cortó la conexión (...).`** (o lo mismo con el de lectura). Gmail no respondió. Presiona Enter para reintentar. Si sigue igual después de unos minutos y estás seguro de la contraseña, responde `s`.
 
 ## OpenAI
 
-**`OpenAI rechazó la clave. Cópiala de nuevo desde platform.openai.com/api-keys.`** La clave se copió incompleta o se borró. Como OpenAI no vuelve a mostrar una clave, crea otra (página 2, sección 2.2) y pégala.
+El instalador prueba la clave pidiéndole al modelo una respuesta de 1 token. Así sabe si la clave sirve y si la cuenta tiene saldo.
 
-**`La clave sirve, pero no ve el modelo gpt-5.4-mini, que es el que se usa por defecto. Se puede cambiar después en Parámetros.`** No detiene la instalación. Después de instalar, en el sitio, «Configuración», «Parámetros», cambia el modelo por uno que tu cuenta de OpenAI tenga disponible.
+**`La clave sirve, pero la cuenta de OpenAI no tiene saldo (insufficient_quota). Carga saldo en platform.openai.com/settings/organization/billing y presiona Enter para probar de nuevo; ...`** La cuenta no tiene saldo o no tiene un medio de pago registrado. Carga saldo como dice la página 2, sección 2.2, vuelve a la terminal y presiona Enter: el instalador deja la misma clave y la prueba de nuevo. Un pago recién hecho puede tardar unos minutos en verse; si el mensaje se repite, espera y presiona Enter otra vez.
+
+**`OpenAI rechazó la clave (401). Se copió incompleta o se borró: crea otra en platform.openai.com/api-keys y pégala.`** Como OpenAI no vuelve a mostrar una clave, crea otra (página 2, sección 2.2) y pégala.
+
+**`La clave no tiene permiso para usar los modelos (...). Crea otra en platform.openai.com/api-keys con «Permissions» en «All» y pégala.`** La clave se creó con permisos restringidos. Crea otra como dice la página 2, sección 2.2, con «Permissions» en «All», y pégala. La clave anterior se puede borrar en la misma página.
+
+**`OpenAI respondió 429: demasiadas llamadas seguidas con esta clave. Espera un minuto y presiona Enter dos veces: ...`** OpenAI limita cuántas llamadas por minuto acepta de cada cuenta. Espera un minuto y presiona Enter dos veces: la primera responde que no a `¿Sigo de todos modos?` y la segunda deja la misma clave, que se prueba de nuevo.
+
+**`OpenAI no deja usar esta clave (403: ...). Revisa en platform.openai.com que la cuenta y el proyecto de la clave estén activos.`** Después de «403:» viene el motivo que dio OpenAI. Entra a `platform.openai.com` con la cuenta del curso y resuelve el aviso que muestre sobre la cuenta. Si el proyecto de la clave fue archivado, crea una clave nueva en el proyecto por defecto (página 2, sección 2.2) y pégala.
+
+**`La clave sirve, pero la cuenta no tiene el modelo gpt-5.4-mini, que es el que se usa por defecto, así que no pude comprobar el saldo. ...`** No detiene la instalación. Después de instalar, en el sitio, abre Configuración › La IA › Parámetros y cambia el modelo por uno que tu cuenta de OpenAI tenga disponible (página 4, sección 4.1). Revisa también el saldo en `platform.openai.com/settings/organization/billing`: esta prueba no alcanzó a comprobarlo.
 
 **`No pude conectarme a OpenAI (...)`** o **`OpenAI respondió ...: ...`** OpenAI no respondió bien. Presiona Enter para reintentar; si después del número viene un mensaje de OpenAI, ese mensaje dice la causa.
 
@@ -110,7 +127,7 @@ Esta página sigue el orden de la instalación. Busca el mensaje con Ctrl+F.
 
 ## Quién entra
 
-**`Escribe al menos un correo.`** o **`No parecen correos: ...`** Revisa los correos que nombra el mensaje. Se separan con coma.
+**`Escribe al menos un correo.`** o **`No parecen correos: ...`** Revisa los correos que nombra el mensaje. Se separan con coma. Los mismos mensajes aparecen en `python3 instalar.py acceso`, que vuelve a preguntar la lista.
 
 ## Cloudflare: sitio, base y archivos
 
@@ -152,11 +169,11 @@ Esta página sigue el orden de la instalación. Busca el mensaje con Ctrl+F.
 
 ## El motor no responde
 
-Se detecta porque `python3 instalar.py estado` muestra `✗ motor responde`, o porque en el sitio los trabajos quedan en espera sin empezar.
+Se detecta porque `python3 instalar.py estado` muestra `✗ motor responde`, o porque en el sitio los trabajos quedan en espera sin empezar. Entre paréntesis, esa línea muestra el código HTTP y el comienzo de lo que respondió el motor, por ejemplo `✗ motor responde  (HTTP 403: 403 Forbidden Error: Forbidden Your client does not have permission to get URL /salud from this serv…)`, o `sin respuesta: ...` si no respondió.
 
 1. Corre `python3 instalar.py estado`. Si alguna línea del motor (colas, cuenta, secretos, `motor desplegado`) tiene `✗`, corre `python3 instalar.py` para que la cree.
-2. Si todo está con `✓` salvo `motor responde`, abre en el navegador la dirección del motor que aparece en la línea `motor desplegado`, agregándole `/salud` al final (por ejemplo `https://abc123-motor-xxxxxxxxxx-uc.a.run.app/salud`). Si muestra un texto que empieza con `{"ok": true`, el motor está bien y el problema era pasajero: vuelve a consultar el estado en unos minutos.
-3. Si muestra `Error: Forbidden` y un texto de que no tienes permiso para ver esa dirección, el proyecto está bajo una organización que no deja publicar servicios con acceso abierto (*Domain Restricted Sharing*). **No verificado:** puede pasar con cuentas universitarias de Google Workspace.
+2. Si todo está con `✓` salvo `motor responde`, mira lo que dice esa línea. Con `HTTP 403` y `Forbidden`, sigue en el paso 3. Con otro código o con `sin respuesta`, abre en el navegador la dirección del motor que aparece en la línea `motor desplegado`, agregándole `/salud` al final (por ejemplo `https://abc123-motor-xxxxxxxxxx-uc.a.run.app/salud`). Si muestra un texto que empieza con `{"ok": true`, el motor está bien y el problema era pasajero: vuelve a consultar el estado en unos minutos. Si sigue fallando, manda la línea `motor responde` completa a quien mantiene el sistema.
+3. Si la línea `motor responde` o el navegador muestran `Error: Forbidden` y un texto de que no tienes permiso para ver esa dirección, el proyecto está bajo una organización que no deja publicar servicios con acceso abierto (*Domain Restricted Sharing*). **No verificado:** puede pasar con cuentas universitarias de Google Workspace.
 
 Para resolver el caso `Forbidden`, el motor tiene que ir en un proyecto sin organización:
 
@@ -166,9 +183,13 @@ Para resolver el caso `Forbidden`, el motor tiene que ir en un proyecto sin orga
 
 En los dos casos, el instalador despliega el motor en el proyecto nuevo y vuelve a publicar el sitio con la dirección nueva del motor.
 
-## Actualizar y credenciales
+## Actualizar, credenciales, estado y acceso
 
 **`Al .env le falta ... ¿Se terminó la instalación? Corre: python3 instalar.py`** Estás en otra carpeta o la instalación no terminó. Revisa la carpeta (página 5, sección 5.1). Si estás en la correcta, corre `python3 instalar.py` para completarla.
+
+**`python3 instalar.py estado` muestra `✗ plantilla de semestre en el sitio`.** Con `HTTP 200, 0 archivos`, la plantilla no se subió. Con `HTTP 401` o `HTTP 403`, el sitio no aceptó el token del motor. En los dos casos corre `python3 instalar.py`: sube los archivos que faltan y vuelve a publicar el sitio con sus tokens.
+
+**`Falló: node scripts/acceso.mjs ...` al correr `python3 instalar.py acceso`.** El `.env` queda con la lista anterior y Access no cambió. Lee las últimas líneas y sigue lo que dice «Access, publicación y plantilla»; después corre de nuevo `python3 instalar.py acceso`.
 
 **`Hay archivos del repositorio cambiados en este equipo; git no puede traer la versión nueva encima:`** seguido de una lista de archivos. Alguien editó archivos del sistema en Cloud Shell. Si no fue a propósito, descarta esos cambios con `git checkout -- .` y corre de nuevo `python3 instalar.py actualizar`. Esto no toca el `.env`.
 
@@ -176,7 +197,7 @@ En los dos casos, el instalador despliega el motor en el proyecto nuevo y vuelve
 
 ## En el sitio
 
-**No llega el código para entrar.** Revisa la carpeta de spam. El correo tiene que estar escrito igual que en la lista del equipo (la línea `ACCESO_CORREOS` del `.env`); si falta, agrégalo (página 5, sección 5.5).
+**No llega el código para entrar.** Revisa la carpeta de spam. El correo tiene que estar escrito igual que en la lista del equipo. Para ver la lista, corre `python3 instalar.py acceso` en Cloud Shell: la muestra en la línea `Hoy entran:`. Si el correo falta o está mal escrito, escribe la lista corregida (página 5, sección 5.5); si está bien, presiona Ctrl+C para salir sin cambiar nada.
 
 **La página carga pero no muestra datos, o dice `No pude cargar la página: ...`.** Corre `python3 instalar.py estado`. Si `Access configurado` o `sitio publicado` tienen `✗`, corre `python3 instalar.py`.
 
@@ -186,7 +207,7 @@ En los dos casos, el instalador despliega el motor en el proyecto nuevo y vuelve
 
 **Al crear un semestre: `El semestre ... ya existe: elígelo en la lista de arriba.`** Ya está creado. Elígelo en «Semestre activo».
 
-**La simulación del envío dice `Nada por enviar.`** El motor no encontró alumnos pendientes para esa semana. Si todavía no mandaste esa semana, la lista de alumnos no se leyó: revisa que esté separada por comas y que la primera línea sea `Nombre,Correo` (página 4, sección 4.3), y súbela de nuevo con «Reemplazar con un CSV…».
+**La simulación del envío dice `Nada por enviar.`** El motor no encontró alumnos pendientes para esa semana. Si todavía no mandaste esa semana, la lista de alumnos no se leyó: revisa en Configuración › Tests semanales › Alumnos que la tabla tenga las columnas `Nombre` y `Correo`, escritas así, y una fila por alumno (página 4, sección 4.3). Si no las tiene, corrige el archivo y súbelo de nuevo con «Reemplazar con un CSV…».
 
 **La evaluación encuentra 0 respuestas.** El sistema solo toma correos sin leer de la bandeja de entrada del correo del curso. Revisa en Gmail si las respuestas están marcadas como leídas, archivadas o en spam; márcalas como no leídas y devuélvelas a la bandeja de entrada. Revisa también que la fecha de entrega haya pasado y que los alumnos hayan respondido al correo de la pregunta.
 

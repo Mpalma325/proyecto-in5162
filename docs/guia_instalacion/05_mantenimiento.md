@@ -1,12 +1,13 @@
 # 5. Mantenimiento
 
-Todo lo de esta página, salvo la última sección, se hace en Cloud Shell, desde la carpeta del sistema. El instalador tiene cuatro comandos:
+Todo lo de esta página, salvo la última sección, se hace en Cloud Shell, desde la carpeta del sistema. El instalador tiene cinco comandos:
 
 ```
 python3 instalar.py                  # instala, o completa lo que falte
 python3 instalar.py actualizar       # trae la versión nueva y vuelve a publicar
 python3 instalar.py estado           # qué existe y qué falta, sin cambiar nada
 python3 instalar.py credenciales     # cambia la clave del correo, la de OpenAI o el token de Cloudflare
+python3 instalar.py acceso           # cambia los correos del equipo que entran al sitio
 ```
 
 ## 5.1 Volver a la carpeta del sistema
@@ -84,30 +85,54 @@ python3 instalar.py estado
 
 Solo consulta. Muestra una línea por cada pieza: `✓` si está, `✗` si falta y `?` si no se pudo saber (Cloudflare no respondió). La lista completa de una instalación sana está en la página 3, sección 3.7. Si algo aparece con `✗`, `python3 instalar.py` lo crea sin tocar lo que ya existe.
 
-Úsalo cuando el sitio no responde o un trabajo queda sin avanzar: la línea `motor responde` dice si el motor está en pie.
+Úsalo cuando el sitio no responde o un trabajo queda sin avanzar: la línea `motor responde` dice si el motor está en pie. Esa línea y la de `plantilla de semestre en el sitio` muestran el código HTTP de la respuesta: `HTTP 200` si está bien y, si no, el código y el comienzo del texto que devolvió el servidor. La página 6, «El motor no responde», dice qué hacer con cada caso.
 
 ## 5.5 Cambiar quién entra al sitio
 
-La lista de correos quedó guardada en el archivo `.env`, en la línea `ACCESO_CORREOS`. El instalador no la vuelve a preguntar, así que se cambia editando esa línea.
+Para agregar o quitar a alguien del equipo docente:
 
-1. En Cloud Shell, desde la carpeta del sistema, abre el archivo:
-
-   ```
-   nano .env
-   ```
-
-2. Con las flechas del teclado, baja hasta la línea que empieza con `ACCESO_CORREOS=`.
-3. Deja después del `=` la lista completa de quienes deben entrar, separados por coma y sin espacios, por ejemplo `ACCESO_CORREOS=profesor@ejemplo.cl,ayudante@ejemplo.cl,nuevo@ejemplo.cl`. La lista reemplaza a la anterior: quien no esté en ella deja de entrar.
-4. Guarda con Ctrl+O y Enter, y sal con Ctrl+X.
-5. Corre el instalador:
+1. En Cloud Shell, desde la carpeta del sistema:
 
    ```
-   python3 instalar.py
+   python3 instalar.py acceso
    ```
 
-   Muestra las respuestas guardadas, vuelve a comprobar las credenciales y repite las etapas sin duplicar nada. En la etapa de Access dice `Actualizada: ABC123 sitio (...)` y `Pueden entrar:` con la lista nueva. Como también vuelve a construir el motor, tarda unos minutos.
+2. El instalador revisa los programas y muestra la lista actual:
 
-Las personas también se pueden cambiar en el panel de Cloudflare (`one.dash.cloudflare.com`, Access, Applications, la aplicación «ABC123 sitio», Policies). Ese cambio dura hasta la próxima vez que corras `python3 instalar.py`, que deja la lista del `.env`. `actualizar` no toca Access.
+   ```
+   === Cambiar quién entra al sitio
+     Hoy entran: profesor@ejemplo.cl, ayudante@ejemplo.cl
+     La lista nueva reemplaza a la actual: quien no esté en ella deja de entrar.
+   Correos del equipo docente, separados por coma [profesor@ejemplo.cl,ayudante@ejemplo.cl]:
+   ```
+
+3. Escribe la lista completa de quienes deben entrar, separados por coma, incluido tu correo: `profesor@ejemplo.cl, ayudante@ejemplo.cl, nuevo@ejemplo.cl`. Si presionas Enter sin escribir nada, la lista queda como está. Si un correo está mal escrito, el instalador lo dice y vuelve a preguntar.
+4. El instalador cambia la lista en Cloudflare Access y la guarda en el `.env`. Termina así:
+
+   ```
+   === Cloudflare Access: quién puede entrar
+   Equipo de Access: abc123-curso.cloudflareaccess.com
+   Actualizada: ABC123 sitio (abc123.abc123-cursos.workers.dev)
+   Actualizada: ABC123 motor (abc123.abc123-cursos.workers.dev/api/motor)
+   Actualizada: ABC123 subir (abc123.abc123-cursos.workers.dev/api/subir)
+
+   Pueden entrar: profesor@ejemplo.cl, ayudante@ejemplo.cl, nuevo@ejemplo.cl
+   wrangler.abc123.toml actualizado. Falta publicar el sitio.
+     ✓ el sitio no necesita publicarse de nuevo: Access mantuvo la misma aplicación
+
+   === Listo
+   Entran:  profesor@ejemplo.cl, ayudante@ejemplo.cl, nuevo@ejemplo.cl
+   Quien salió de la lista y tenía la sesión abierta puede seguir entrando hasta que
+   venza su sesión (24 horas).
+   ```
+
+   La línea `Falta publicar el sitio.` la escribe el paso de Access; la línea con `✓` que viene después confirma que no hace falta. Si en su lugar aparece `Access cambió los datos con que el sitio verifica la sesión: lo publico de nuevo.`, el instalador publica el sitio con los datos nuevos y después termina igual.
+
+Quien está en la lista nueva puede entrar apenas termina el comando. Quien salió y tenía la sesión abierta sigue entrando hasta que venza esa sesión, que dura 24 horas. **No verificado.** Para cortarla antes, en `one.dash.cloudflare.com` abre Access, Applications, la aplicación «ABC123 sitio» y usa la opción para revocar las sesiones abiertas («Revoke existing tokens»).
+
+Para ver lo que haría sin cambiar nada, corre `python3 instalar.py acceso --simular`.
+
+Cambia la lista con este comando y no en el panel de Cloudflare. Un cambio hecho en el panel dura hasta la próxima vez que corras `python3 instalar.py` o `python3 instalar.py acceso`, que dejan la lista guardada en el `.env`. `actualizar` no toca Access.
 
 ## 5.6 Si se pierde la carpeta de Cloud Shell
 

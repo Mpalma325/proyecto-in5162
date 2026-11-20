@@ -116,13 +116,13 @@ Correo del curso (Gmail o Google Workspace):
 Contraseña de aplicación de ese correo (las 16 letras; los espacios no importan):
 ```
 
-Escribe el correo y pega la contraseña de aplicación. El instalador inicia sesión en el servidor de Gmail y sale, sin mandar ningún correo. Si funciona, responde:
+Escribe el correo y pega la contraseña de aplicación. El instalador inicia sesión en los dos servidores de Gmail que usa el sistema, el de envío (SMTP) y el de lectura del buzón (IMAP), y sale sin mandar ni leer ningún correo. Si funciona, responde:
 
 ```
-  ✓ curso.abc123@gmail.com inició sesión en smtp.gmail.com.
+  ✓ curso.abc123@gmail.com inició sesión en smtp.gmail.com (envío) y en imap.gmail.com (lectura).
 ```
 
-Si Gmail rechaza los datos, el instalador lo dice y pregunta otra vez los dos datos. El correo aparece entre corchetes (Enter lo deja igual) y la contraseña dice `(Enter para dejarla igual)`.
+Si Gmail rechaza los datos, el instalador dice en cuál de los dos servidores falló y pregunta otra vez los dos datos. El correo aparece entre corchetes (Enter lo deja igual) y la contraseña dice `(Enter para dejarla igual)`. La página 6, «El correo», dice qué hacer con cada mensaje.
 
 ### OpenAI
 
@@ -131,13 +131,15 @@ Si Gmail rechaza los datos, el instalador lo dice y pregunta otra vez los dos da
 Clave de la API de OpenAI (sk-...):
 ```
 
-Pega la clave. El instalador pide a OpenAI la lista de modelos, lo que no gasta saldo. Si funciona, responde:
+Pega la clave. El instalador le pide al modelo una respuesta de 1 token, que gasta una fracción de centavo del saldo. Así comprueba que la clave sirve y que la cuenta tiene saldo. Si funciona, responde:
 
 ```
-  ✓ La clave de OpenAI sirve.
+  ✓ La clave de OpenAI sirve y la cuenta tiene saldo (una respuesta de 1 token de gpt-5.4-mini).
 ```
 
-También puede responder `✓ La clave sirve, pero no ve el modelo gpt-5.4-mini, que es el que se usa por defecto. Se puede cambiar después en Parámetros.` La instalación sigue igual; en la página 4 se cambia el modelo.
+Si responde `✗ La clave sirve, pero la cuenta de OpenAI no tiene saldo (insufficient_quota)...`, carga saldo como dice la página 2 (2.2), vuelve a la terminal y presiona Enter: el instalador deja la misma clave y la prueba de nuevo. Un pago recién hecho puede tardar unos minutos en verse; si el mensaje se repite, espera y presiona Enter otra vez. Los demás mensajes de OpenAI están en la página 6.
+
+También puede responder `✓ La clave sirve, pero la cuenta no tiene el modelo gpt-5.4-mini, que es el que se usa por defecto, así que no pude comprobar el saldo...`. La instalación sigue igual. En la página 4 se elige otro modelo; revisa el saldo en `platform.openai.com/settings/organization/billing`.
 
 ### Cloudflare
 
@@ -238,10 +240,10 @@ Presiona Enter para aceptar `abc123-cursos` o escribe otro nombre. El subdominio
 Crea las tablas del sitio. Termina con:
 
 ```
-  ✓ tutoría automática apagada (se prende en Datos y Configuración › Parámetros)
+  ✓ tutoría automática apagada (se prende en Configuración › La IA › Parámetros)
 ```
 
-La tutoría automática responde por correo, todos los días a las 18:00, las dudas de los alumnos sobre su corrección. Queda apagada para que el sistema no mande correos reales antes de que lo pruebes. En el sitio, el interruptor está en Configuración › Parámetros (la página 4 lo explica).
+La tutoría automática responde por correo, todos los días a las 18:00, las dudas de los alumnos sobre su corrección. Queda apagada para que el sistema no mande correos reales antes de que lo pruebes. En el sitio, el interruptor está en Configuración › La IA › Parámetros (la página 4 lo explica).
 
 ### El motor en Google Cloud
 
@@ -343,11 +345,13 @@ Solo consulta; no crea ni cambia nada. Con la instalación completa responde:
   ✓ secreto abc123-token-motor
   ✓ secreto abc123-token-web
   ✓ motor desplegado  (https://abc123-motor-xxxxxxxxxx-uc.a.run.app)
-  ✓ motor responde  ({'ok': True, ...})
-  ✓ plantilla de semestre en el sitio  (17 archivos)
+  ✓ motor responde  (HTTP 200)
+  ✓ plantilla de semestre en el sitio  (HTTP 200, 17 archivos)
 
 Todo en su lugar.
 ```
+
+Las dos últimas líneas muestran el código HTTP con que respondieron el motor y el sitio. Si alguna falla, la línea muestra el código y el comienzo del texto de la respuesta, por ejemplo `✗ motor responde  (HTTP 403: 403 Forbidden Error: Forbidden Your client does not have permission to get URL /salud from this serv…)`; la página 6, «El motor no responde», dice qué hacer.
 
 Si alguna línea tiene `✗`, corre de nuevo `python3 instalar.py`: crea lo que falta sin tocar lo que ya existe. Una línea con `?` significa que Cloudflare no respondió al consultar; espera unos minutos y vuelve a consultar.
 
