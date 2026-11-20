@@ -14,8 +14,10 @@ posteriores, y sin Nota ni Descartada:
 
 - decisión `enviar` sobre esa corrección: se manda;
 - decisión `descartada` sobre esa corrección: se registra el descarte;
-- sin decisión, corregida en `modo=auto` por el modelo, y el semestre sigue en
-  automático: se manda (es un envío que falló en una corrida anterior);
+- sin decisión, corregida en `modo=auto` por el modelo, y la instancia sigue en
+  automático: se manda (es un envío que falló en una corrida anterior). Lo
+  que se corrigió en `modo=revisar` sigue esperando aunque la instancia haya
+  pasado a automático: el modo vale para lo que se corrige desde el cambio;
 - una corrección del docente («Las corrijo yo») sale solo con `enviar` y la
   nota y el texto completos.
 
@@ -286,10 +288,15 @@ def enviar_pendientes(info: SemanaInfo, modo: str, *, prueba: bool = False, por:
 def main(item: int, prueba: bool = False, por: str = "") -> int:
     from modulos import semestre as _sem
     sid = _sem.activo_o_error()
-    modo = _configuracion.modo_revision()
+    avisos_preguntas: list[str] = []
+    info = cargar_semana(item, avisos=avisos_preguntas)
+    # El modo de la instancia, al correr: decide solo si sale el reintento de
+    # una automática cuyo envío falló. Lo aprobado sale en los dos modos.
+    modo = _configuracion.modo_de(info.revision)
     print(_configuracion.describir(modo))
     print(f"[FEEDBACK] semestre {sid}")
-    info = cargar_semana(item)
+    for aviso in avisos_preguntas:
+        print(aviso)
     print(f"{f'Módulo {item}' if info.legado else info.nombre} — feedback{' (simulación)' if prueba else ''}")
 
     if not prueba:

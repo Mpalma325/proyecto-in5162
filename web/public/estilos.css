@@ -163,6 +163,16 @@ details.casilla .orig { grid-row: 1 / span 2; grid-column: 3; }
 }
 .interruptor { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
 .interruptor input { width: 18px; height: 18px; accent-color: var(--acento); }
+/* El interruptor de revisión de una instancia (Tests › Evaluar y Revisar, Configuración › Preguntas). */
+.interruptor-revision {
+  margin: 10px 0; padding: 10px 12px; background: var(--caja); border: 1px solid var(--linea); border-radius: 8px;
+}
+.interruptor-revision .interruptor { display: flex; font-weight: 600; }
+.interruptor-revision .nota-pie { margin: 4px 0 0 26px; }
+/* Revisar: qué hace cada botón y «Aprobar todas». */
+.ayuda-aprobar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 8px 0; }
+.ayuda-aprobar .acciones { margin: 0; }
+.franja-modo { font-size: 13px; color: var(--tenue); }
 button.primario {
   /* Tono fijo: el acento del modo oscuro es claro y con texto blanco no se lee. */
   font: inherit; font-weight: 600; background: #1f5f9e; color: #fff; border: 0;

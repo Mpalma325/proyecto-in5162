@@ -914,3 +914,13 @@ La 3.13 suma tres cosas:
 - **R17.** La rama del instalador reescribe prompts de la plantilla y mueve `web/schema.sql` a `web/migrations/0001_inicial.sql`. Por eso los `ALTER TABLE` de la fase 1 pasan a ser una migración.
 - **R7 cambia.** El costo de cada trabajo sale de la línea «Consumo de API» de su salida (`consumo.js:13`). Solo la sábana lee tokens del log.
 - **Orden de publicación.** La fase 3 tiene que estar publicada antes de la primera tarea del semestre nuevo.
+
+## Nota 20/11: el modo de revisión se elige en cada instancia
+
+El usuario lo pidió así: una instancia puede ir en automático y la siguiente revisada, y con un modo por semestre había que cambiar `configuracion.json` entre una y otra. Esta nota reemplaza el punto 24 de la sección 10, la radio de Tests › Evaluar de la sección 6 y lo que 1.2, 2.2, 2.3 y el anexo del 19/11 dicen del modo «del semestre». Lo demás del diseño se queda.
+
+- `preguntas.csv` tiene la columna `Revision` (`revisar` o `auto`), después de `Cierre`. Una fila sin valor toma `revision` de `configuracion.json`, y sin ese archivo es automático. Un valor que no se entiende cuenta como `revisar`. La plantilla sigue con `"revision": "revisar"`, que pasa a ser el respaldo de las filas sin valor. Python lo resuelve con `configuracion.modo_de` y la página con `modoInstancia`; `pruebas/web.py` compara las dos.
+- `tests.evaluar`, `tests.feedback`, el reintento automático y `tests.chequeo` leen el modo de la instancia al correr, también el evaluar programado al Cierre. Donde 2.2 y 2.3 dicen «si el semestre pasó a `revisar`», ahora se lee «si la instancia pasó a `revisar`». Una corrección hecha en `revisar` sigue esperando si la instancia pasa a `auto`, porque el reintento solo manda las de `modo=auto`.
+- El interruptor «Revisar las correcciones antes de enviarlas» está en el editor de cada instancia (Configuración › Tests › Preguntas) y en Tests › Evaluar y Tests › Revisar. Configuración › Semestre pierde el control del modo y queda con «qué muestra el correo» y la escala, bajo el nombre «Notas y correo».
+- Una instancia nueva parte con el modo de la última creada, y la primera del semestre en `revisar` (R13 sigue igual). Pasar a automático pregunta antes y dice cuántas correcciones esperan en Revisar; para esas, Revisar suma «Aprobar todas».
+- 2026-2 no cambia: no tiene la columna ni `configuracion.json`, así que todo es automático y los correos son los mismos.

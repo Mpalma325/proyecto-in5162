@@ -14,7 +14,7 @@ import {
 } from "./historial-prompts.js";
 import { escribirCsv, leerCsv, textoDeArchivo } from "./csv.js";
 import { cambiosProhibidos, editorPreguntas, enviosDeNotas } from "./preguntas.js";
-import { AUTO, cargarConfiguracion, describirModo, REVISAR, RUTA_CONFIGURACION } from "./configuracion.js";
+import { cargarConfiguracion, RUTA_CONFIGURACION } from "./configuracion.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import {
   ARCHIVO as ARCHIVO_ESCALA, confirmacionEscala, DOS_TRAMOS, escalaDelFormulario, fr, fraccion, idConfirmado, leerEscala,
@@ -828,7 +828,7 @@ function vistaHistorial() {
 let promptElegido = null;
 
 function vistaPrompts() {
-  const grupos = [["Tests Semanales", "tests_semanales/prompts/"], ["Tareas", "tareas/prompts/"]]
+  const grupos = [["Tests", "tests_semanales/prompts/"], ["Tareas", "tareas/prompts/"]]
     .map(([proyecto, carpeta]) => [proyecto, archivos.map((a) => a.ruta)
       .filter((r) => r.startsWith(carpeta) && /^[A-Za-z0-9_-]+\.md$/.test(r.slice(carpeta.length))).sort()])
     .filter(([, mds]) => mds.length);
@@ -1434,10 +1434,12 @@ function seccionEscala() {
 }
 
 /**
- * configuracion.json: qué pasa después de corregir y qué muestra el correo.
- * Un semestre sin el archivo (2026-2 y anteriores) usa la configuración de
- * antes y no se le ofrece cambiarla: así ningún semestre en curso cambia por
- * un clic.
+ * configuracion.json: qué muestra el correo, más la escala de notas. Si las
+ * correcciones se revisan antes de enviarlas se elige en cada instancia
+ * (Configuración › Preguntas, o Tests › Evaluar y Revisar); la clave
+ * `revision` del archivo queda de respaldo y se guarda tal cual. Un semestre
+ * sin el archivo (2026-2 y anteriores) usa la configuración de antes y no se
+ * le ofrece cambiarla: así ningún semestre en curso cambia por un clic.
  */
 function vistaSemestre() {
   const nodo = el("div", {}, el("p", { class: "cargando" }, "Leyendo configuracion.json…"));
@@ -1446,41 +1448,30 @@ function vistaSemestre() {
       nodo.replaceChildren(
         el("p", {}, `${semestre} usa la configuración de antes: cada corrección de Tests se le manda al alumno `
           + "apenas queda lista, con puntajes y nota."),
-        el("p", { class: "nota-pie" }, "Los semestres nuevos traen configuracion.json desde la plantilla, en modo "
-          + "revisión, y ahí se cambia."));
+        el("p", { class: "nota-pie" }, "Los semestres nuevos traen configuracion.json desde la plantilla, y ahí se "
+          + "elige qué muestra el correo y la escala de notas."));
       return;
     }
     const datos = conf.datos || {};
-    const radios = [[AUTO, "Enviar el feedback automáticamente"], [REVISAR, "Revisar antes de enviar"]].map(([v, t]) =>
-      el("label", { class: "interruptor" }, el("input", { type: "radio", name: "modo-revision", value: v,
-        checked: conf.modo === v }), t));
     const muestra = el("select", {}, MUESTRAS.map(([v, t]) => el("option", { value: v, selected: conf.muestra === v }, t)));
     const guardar = el("button", { class: "primario", type: "button", disabled: true }, "Guardar");
     const mensaje = el("div");
-    const modoElegido = () => radios.map((r) => r.querySelector("input")).find((r) => r.checked)?.value;
     const cambio = () => {
-      const hay = modoElegido() !== conf.modo || muestra.value !== conf.muestra || conf.ilegible;
+      const hay = muestra.value !== conf.muestra || conf.ilegible;
       guardar.disabled = !hay;
       sinGuardar = Boolean(hay);
     };
-    nodo.addEventListener("change", cambio);
+    muestra.addEventListener("change", cambio);
     guardar.addEventListener("click", async () => {
-      const modo = modoElegido();
-      const efecto = modo === AUTO
-        ? "Desde ahora cada corrección nueva se le manda al alumno apenas queda lista. Las que ya están por "
-          + "revisar siguen esperando tu decisión."
-        : "Desde ahora las correcciones esperan en Tests › Revisar y el alumno no recibe nada hasta que las "
-          + "apruebes. Las automáticas cuyo feedback no salió también quedan esperando.";
-      if (modo !== conf.modo && !await confirmar(`${efecto}\n\nLa evaluación programada al cierre usa el modo que haya `
-        + "cuando corra. ¿Guardar?", "Guardar")) return;
       guardar.disabled = true;
       try {
-        const nuevo = { ...datos, revision: modo, correo_muestra: muestra.value };
+        // Las demás claves (también `revision`, el respaldo de las instancias) se guardan como estaban.
+        const nuevo = { ...datos, ...(conf.ilegible ? { revision: conf.modo } : {}), correo_muestra: muestra.value };
         await guardarArchivo(RUTA_CONFIGURACION, `${JSON.stringify(nuevo, null, 2)}\n`, "application/json; charset=utf-8",
-          `Configuración del semestre: ${modo === AUTO ? "feedback automático" : "revisar antes de enviar"}`);
+          `Configuración del semestre: el correo muestra ${MUESTRAS.find(([v]) => v === muestra.value)?.[1] ?? muestra.value}`);
         sinGuardar = false;
-        Object.assign(conf, { modo, muestra: muestra.value, ilegible: false });
-        mensaje.replaceChildren(caja("exito", `Guardado: ${describirModo(modo)}.`));
+        Object.assign(conf, { muestra: muestra.value, ilegible: false });
+        mensaje.replaceChildren(caja("exito", "Guardado."));
       } catch (e) {
         mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
         guardar.disabled = false;
@@ -1488,11 +1479,10 @@ function vistaSemestre() {
     });
     // replaceChildren escribe un null como el texto "null": se filtra.
     nodo.replaceChildren(...[
-      conf.ilegible ? caja("aviso", "configuracion.json no se puede leer: los trabajos están en modo revisión. "
-        + "Guardar lo reemplaza.") : null,
-      el("h4", {}, "Después de la corrección de la IA"),
-      el("div", { class: "opciones-modo" }, radios),
-      el("p", { class: "nota-pie" }, "Vale para Tests. Una corrección que hiciste a mano siempre espera tu revisión."),
+      conf.ilegible ? caja("aviso", "configuracion.json no se puede leer: las instancias que no dicen si se revisan "
+        + "esperan revisión. Guardar lo reemplaza.") : null,
+      el("p", { class: "nota-pie" }, "Si las correcciones de Tests se revisan antes de enviarlas se elige en cada "
+        + "instancia, en Configuración › Preguntas o en Tests › Evaluar."),
       el("h4", {}, "En el correo de corrección, mostrar"),
       el("label", { class: "campo" }, muestra),
       el("p", { class: "nota-pie" }, "La nota se calcula y se guarda igual. Con «Solo puntajes» el correo trae el "
@@ -1509,7 +1499,7 @@ function vistaSemestre() {
 // Las pestañas, agrupadas por para qué se usan. Los ids son los de siempre:
 // van en la dirección (#datos/<id>) y otras páginas enlazan a ellos.
 const SECCIONES = [
-  ["Tests semanales", [
+  ["Tests", [
     ["alumnos", "Alumnos", () => [editorCsv(RUTAS.alumnos, { alGuardar: recalcularReporteria })]],
     ["preguntas", "Preguntas", vistaPreguntas],
   ]],
@@ -1524,7 +1514,7 @@ const SECCIONES = [
     ["parametros", "Parámetros", vistaParametros],
   ]],
   ["Semestre", [
-    ["semestre", "Revisión y correo", vistaSemestre],
+    ["semestre", "Notas y correo", vistaSemestre],
   ]],
   ["Registro", [
     ["historial", "Historial", vistaHistorial],

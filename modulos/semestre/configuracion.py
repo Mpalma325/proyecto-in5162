@@ -3,16 +3,20 @@ La configuración de un semestre: `configuracion.json`, en su raíz.
 
     {"revision": "revisar", "correo_muestra": "nota"}
 
-- `revision`: `auto` (corregir y mandar el feedback en el mismo trabajo) o
-  `revisar` (corregir y dejar la corrección para que el docente la revise).
+- `revision`: el modo de respaldo de Tests, para las instancias que no dicen
+  el suyo. Cada instancia lo elige en la columna `Revision` de preguntas.csv
+  (`auto`: corregir y mandar el feedback en el mismo trabajo; `revisar`:
+  corregir y dejar la corrección para que el docente la revise). Ver
+  `modo_instancia`.
 - `correo_muestra`: qué números ve el alumno en el correo de Tests: `nota`
   (el puntaje de cada pregunta, el total y la NOTA FINAL), `puntajes` (sin el
   total ni la nota) o `nada` (solo los comentarios). La nota se calcula y se
   registra igual; esto decide solo el correo (modulos/tests/correccion.py).
 
-La escribe solo la página (Configuración › Semestre). Un semestre sin el
-archivo (2026-2 y anteriores) sigue como siempre: `auto` y `nota`. Los
-semestres nuevos lo traen de la plantilla, en `revisar`.
+La escribe solo la página (Configuración › Semestre, que ya no muestra el
+modo: se elige en cada instancia). Un semestre sin el archivo (2026-2 y
+anteriores) sigue como siempre: `auto` y `nota`. Los semestres nuevos lo
+traen de la plantilla, con `revisar` de respaldo.
 """
 
 import json
@@ -48,9 +52,11 @@ def leer(semestre_id: str | None = None) -> dict | None:
 
 
 def modo_revision(semestre_id: str | None = None) -> str:
-    """`auto` o `revisar`. Sin archivo, `auto` (como siempre, así 2026-2 no
-    cambia). Con archivo pero sin la clave, `revisar`: ante la duda, nada sale
-    sin que el docente lo vea."""
+    """El modo de respaldo del semestre: `auto` o `revisar`.
+
+    Sin archivo, `auto` (como siempre, así 2026-2 no cambia). Con archivo pero
+    sin la clave, `revisar`: ante la duda, nada sale sin que el docente lo vea.
+    """
     datos = leer(semestre_id)
     if datos is None:
         return AUTO
@@ -59,6 +65,36 @@ def modo_revision(semestre_id: str | None = None) -> str:
         print(f"⚠ {ARCHIVO}: revision «{valor}» no se entiende (auto o revisar): se trabaja en modo revisión.")
         return REVISAR
     return valor
+
+
+def modo_instancia(valor: str | None, respaldo: str) -> str:
+    """El modo de una instancia de Tests a partir de su columna `Revision`.
+
+    Orden: la columna (`auto` o `revisar`, sin importar mayúsculas ni espacios)
+    y, si está vacía, `respaldo` (el de configuracion.json; sin archivo,
+    `auto`). Un valor que no se entiende cuenta como `revisar`: ante la duda,
+    nada sale sin que el docente lo vea.
+
+    Gemela: `modoInstancia` en web/public/configuracion.js; pruebas/web.py
+    compara las dos.
+    """
+    texto = " ".join(str(valor or "").split()).lower()
+    if not texto:
+        return respaldo
+    if texto in MODOS:
+        return texto
+    print(f"⚠ preguntas.csv: Revision «{texto}» no se entiende (auto o revisar): se trabaja en modo revisión.")
+    return REVISAR
+
+
+def modo_de(revision: str | None, semestre_id: str | None = None) -> str:
+    """El modo con que se corrige una instancia, leído al correr.
+
+    `revision` es la columna `Revision` de su fila (SemanaInfo.revision).
+    configuracion.json se lee solo si hace falta el respaldo.
+    """
+    respaldo = REVISAR if str(revision or "").strip() else modo_revision(semestre_id)
+    return modo_instancia(revision, respaldo)
 
 
 def correo_muestra(semestre_id: str | None = None) -> str:

@@ -9,7 +9,9 @@ El archivo viene en dos formatos, y se distinguen por la columna del id:
 - `Instancia` (semestres nuevos, lo escribe la página): un id entero que el
   docente no ve, más `Tipo` y `Numero` («Control 2»), `Estado` (borrador o
   confirmada), `Envio` y `Cierre` (fecha y hora ISO con zona). El asunto es
-  «Control 2: tema».
+  «Control 2: tema». La columna opcional `Revision` (`auto` o `revisar`) dice
+  si las correcciones de esa instancia salen solas o esperan al docente;
+  vacía o ausente, manda configuracion.json (configuracion.modo_de).
 
 Con las dos columnas a la vez el archivo es un error: no se sabe cuál manda.
 El id es el `Item` de notas.csv, del log y del panel en los dos formatos.
@@ -59,6 +61,7 @@ class SemanaInfo:
     envio: str = ""
     cierre: str = ""
     legado: bool = True
+    revision: str = ""      # la columna Revision tal cual; vacía: el respaldo del semestre
 
     def __post_init__(self):
         if self.numero is None:
@@ -215,11 +218,18 @@ def instancias(ruta: Path | None = None, avisar: bool = False) -> dict[int, "Sem
     return salida
 
 
-def cargar_semana(semana: int) -> SemanaInfo:
-    """La instancia con ese id. Levanta PreguntasError (un ValueError) si no se puede usar."""
+def cargar_semana(semana: int, avisos: list[str] | None = None) -> SemanaInfo:
+    """La instancia con ese id. Levanta PreguntasError (un ValueError) si no se puede usar.
+
+    Los problemas del archivo se imprimen; con `avisos` (una lista) se agregan
+    ahí, para que quien llama los imprima después de su primera línea.
+    """
     archivo = leer_archivo()
     for p in archivo.problemas:
-        print(f"  ⚠ preguntas.csv: {p}")
+        if avisos is None:
+            print(f"  ⚠ preguntas.csv: {p}")
+        else:
+            avisos.append(f"  ⚠ preguntas.csv: {p}")
     if semana in archivo.repetidos:
         raise PreguntasError(f"El id {semana} está repetido en preguntas.csv: no sé cuál fila usar.")
     if semana not in archivo.filas:
@@ -295,4 +305,5 @@ def _parsear_fila(fila: dict, semana: int, legado: bool | None = None) -> Semana
         envio=fila_limpia.get("Envio", ""),
         cierre=cierre,
         legado=False,
+        revision=fila_limpia.get("Revision", ""),
     )

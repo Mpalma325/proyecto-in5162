@@ -49,13 +49,29 @@ Un semestre con el prompt viejo sigue igual que siempre.
 `nota`, `puntajes` o `nada`. La nota se registra igual en los tres casos.
 El equipo docente ve siempre la corrección completa (`texto_docente`).
 
-La escala se cambia desde Configuración › Semestre, con el trabajo
+La escala se cambia desde Configuración › Semestre › Notas y correo, con el trabajo
 `datos.escala` (modulos/datos/DATOS.md). Las notas de Tests ya registradas se
 recalculan con la escala nueva; cada evaluación queda con la escala con que se
 calculó (`escala=` en Versiones).
 
 `web/public/correccion.js` es la gemela para la página y
 `pruebas/correccion.py` compara las dos sobre los mismos casos.
+
+## Revisar antes de enviar
+
+Cada instancia dice si sus correcciones esperan al docente: la columna
+`Revision` de `preguntas.csv`, con `revisar` o `auto`. Una fila sin valor toma
+la clave `revision` de `configuracion.json`, y sin ese archivo es automático
+(2026-2 no tiene la columna). Un valor que no se entiende cuenta como
+`revisar`. Lo resuelve `configuracion.modo_de` (`modulos/semestre`).
+
+`evaluar.py`, `feedback.py` y `chequeo.py` leen el modo de la instancia al
+correr, también el evaluar programado al cierre, que no lleva modo en sus
+argumentos. En `revisar` la corrección queda con `modo=revisar` y sin nota
+hasta que el docente la aprueba y sale el correo; en `auto` la nota cuenta
+cuando sale el correo. Si la instancia pasa a automático, lo que se corrija
+desde entonces sale solo. Lo corregido antes sigue esperando en Revisar, y el
+reintento automático no lo manda.
 
 ## Cómo se ejecuta
 

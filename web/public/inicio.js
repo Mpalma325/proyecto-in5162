@@ -6,6 +6,7 @@ import {
   preciosApi, seguirTrabajo, sobreQue,
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
+import { AUTO } from "./configuracion.js";
 import { leerCsv } from "./csv.js";
 import { formatoUsd, leerConsumo, notaMezcla, sumarConsumo } from "./consumo.js";
 
@@ -29,12 +30,20 @@ function tarjetaSemana(c) {
   const sobre = legado ? (p.paso === "enviar" ? "Próxima semana" : "Semana en curso")
     : p.paso === "enviar" ? "Próxima instancia"
       : p.abiertas > 1 ? `Abierta, y ${p.abiertas - 1} más` : "Abierta";
+  // El interruptor de revisión de esa instancia, dicho en pocas palabras (se cambia en Tests › Evaluar).
+  const modo = legado ? null : c.modoDe?.(p.semana);
   return el("section", { class: "franja-semana", "aria-label": legado ? "Semana en curso" : "Instancia en curso" },
     el("div", { class: "franja-cabeza" },
       el("div", {},
         el("div", { class: "franja-sobre" }, sobre),
-        el("div", { class: "franja-titulo" }, legado ? `Semana ${p.semana}` : c.nombre(p.semana)))),
+        el("div", { class: "franja-titulo" }, legado ? `Semana ${p.semana}` : c.nombre(p.semana)),
+        modo ? el("div", { class: "franja-modo" }, textoModoInicio(modo)) : null)),
     flechasCiclo(c, enlaceTests));
+}
+
+/** El modo de la instancia en curso, para Inicio. */
+export function textoModoInicio(modo) {
+  return modo === AUTO ? "El feedback sale solo, sin revisión." : "Revisas las correcciones antes de que salgan.";
 }
 
 // ---------------------------------------------------------------- requiere atención
@@ -47,8 +56,8 @@ function atencion(c, trabajos, consumo, precios) {
     items.push(el("li", {}, `${sinNota} ${sinNota === 1 ? "respuesta" : "respuestas"} sin nota. `,
       el("a", { href: "/resultados#Pendientes" }, "Ver")));
   }
-  // Las correcciones que esperan al docente: no salen solas (ni en automático
-  // si el semestre pasó a revisión). Las descartadas ya están cerradas.
+  // Las correcciones que esperan al docente: no salen solas, aunque después
+  // la instancia haya pasado a automático. Las descartadas ya están cerradas.
   for (const [n, cuantas] of c.porRevisar ? c.porRevisar() : []) {
     items.push(el("li", {}, avisoPorRevisar(cuantas, c.nombre(n)), " ",
       el("a", { href: `/tests#revisar/${n}` }, "Revisar")));

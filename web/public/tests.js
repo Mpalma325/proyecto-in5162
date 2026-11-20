@@ -8,17 +8,20 @@
 // elige la instancia por su nombre («Control 2») y el trabajo lleva
 // `instancia`; en uno antiguo, el número de semana y `semana`, como siempre.
 //
-// Qué pasa después de corregir lo dice configuracion.json: en automático el
-// feedback sale en el mismo trabajo; en revisión, las correcciones esperan en
-// la pestaña Revisar (revision.js). Sin el archivo rige lo de antes.
+// Qué pasa después de corregir lo dice cada instancia, con su interruptor
+// «Revisar las correcciones antes de enviarlas» (columna Revision de
+// preguntas.csv; vacía, configuracion.json): apagado, el feedback sale en el
+// mismo trabajo; encendido, las correcciones esperan en la pestaña Revisar
+// (revision.js). El interruptor está en Evaluar y en Revisar, y en
+// Configuración › Preguntas. Sin columna ni archivo rige lo de antes.
 
 import {
   api, barraPestanas, caja, chipSemestre, confirmar, el, elegirCandidatos, enCuanto, fechaCorta, historialTrabajos,
   idDe, navegacion, nombreInstancia, pedirTrabajo, seguirTrabajo,
 } from "./comun.js";
 import { diaMes, leerCiclo } from "./ciclo.js";
-import { cargarConfiguracion, describirModo, REVISAR } from "./configuracion.js";
-import { leerSemana, resumenSemana, semanasDe } from "./preguntas.js";
+import { describirModo, REVISAR } from "./configuracion.js";
+import { interruptorDeInstancia, leerSemana, resumenSemana, semanasDe } from "./preguntas.js";
 import { pestanaRevisar } from "./revision.js";
 
 document.getElementById("nav").replaceWith(navegacion());
@@ -34,10 +37,15 @@ let trabajos = [];
 let estadoCurso;
 // La pestaña abierta vuelve a mirar sus avisos cuando cambian los datos.
 let alCambiarDatos = () => {};
-// configuracion.json del semestre (configuracion.js); null mientras no se lea.
-let configuracion = null;
-const enRevision = () => configuracion?.modo === REVISAR;
-// Un texto de PESTANAS puede depender del modo: entonces es una función.
+// El modo de revisión de una instancia (ciclo.js, modoDe): `auto`, `revisar`,
+// o null mientras no se lea.
+const modoDe = (n) => (estadoCurso ? estadoCurso.modoDe(n) : null);
+// Sin saber el modo, los textos avisan que el correo sale: si se equivocan, que sea hacia el lado seguro.
+const enRevision = (n) => modoDe(n) === REVISAR;
+// Si alguna instancia del semestre se revisa antes de enviar (para «Nada pendiente» en Revisar).
+const algunaEnRevision = () => Boolean(estadoCurso?.preguntas)
+  && (legado() ? enRevision(1) : semanasDe(estadoCurso.preguntas).some((s) => enRevision(s.numero)));
+// Un texto de PESTANAS puede depender del modo de la instancia elegida: entonces es una función de su id.
 const segunModo = (v, ...a) => (typeof v === "function" ? v(...a) : v);
 
 // Formato antiguo (columna Semana) mientras no se sepa otra cosa.
@@ -67,12 +75,12 @@ const PESTANAS = [
     id: "evaluar", titulo: "2 · Evaluar respuestas", flujo: "tests.evaluar",
     prueba: "Solo simular",
     botonPrueba: "Simular evaluación",
-    botonReal: () => (enRevision() ? "Corregir y dejar para revisión" : "Evaluar y mandar feedback"),
-    alerta: () => (enRevision()
+    botonReal: (n) => (enRevision(n) ? "Corregir y dejar para revisión" : "Evaluar y mandar feedback"),
+    alerta: (n) => (enRevision(n)
       ? "Se llama al modelo y cada corrección queda esperando en Revisar. El alumno no recibe nada todavía, salvo "
         + "el correo de duplicado si respondió dos veces."
       : "Se llama al modelo, la nota queda guardada y cada alumno recibe su feedback por correo."),
-    confirmar: (a) => (enRevision()
+    confirmar: (a) => (enRevision(idDe(a))
       ? `Vas a corregir las respuestas de ${mencion(idDe(a))}. Las correcciones quedan esperando tu revisión en `
         + "Tests › Revisar: el alumno no recibe nada todavía, salvo el correo de duplicado a quien respondió dos veces."
       : `Vas a evaluar las respuestas de ${mencion(idDe(a))} y mandarle el feedback a cada `
@@ -82,7 +90,8 @@ const PESTANAS = [
   { id: "revisar", titulo: "3 · Revisar", revisar: true },
   {
     id: "resumen", titulo: "4 · Resumen semana", flujo: "tests.resumen",
-    texto: "Resumen de la semana para el equipo docente, a partir de las evaluaciones.",
+    texto: () => `Resumen de ${legado() ? "la semana" : "la instancia"} para el equipo docente, a partir de las `
+      + "evaluaciones.",
     info: "Llama al modelo. No manda correos.",
     boton: "Generar resumen",
     descarga: (a) => `tests_semanales/data/resumen_semana_${idDe(a)}.txt`,
@@ -195,7 +204,9 @@ function lineaEstado() {
   const porRevisar = ultima ? estadoDe(ultima).porRevisar : 0;
   return el("p", { class: "estado-curso" },
     ultima ? [el("strong", {}, `${nombre(ultima)}: `), `evaluada, ${estadoDe(ultima).evaluadas} con nota`,
-      porRevisar ? [" y ", irEn(`${porRevisar} por revisar`, "revisar", ultima)] : "", ". "] : "",
+      // «Sin enviar» y no «por revisar»: la cuenta sale de notas.csv, que no
+      // distingue las que el docente ya aprobó (eso lo dice la pestaña Revisar).
+      porRevisar ? [" y ", irEn(`${porRevisar} sin enviar`, "revisar", ultima)] : "", ". "] : "",
     "Lo próximo es ", irEn(`enviar ${mencion(p.semana)}`, "enviar", p.semana), cuando);
 }
 
@@ -208,7 +219,7 @@ function pestanasDeTests() {
   const ultimaCorregida = enviadas.filter((n) => estadoDe(n).corregidas).at(-1);
   const porRevisar = totalPorRevisar();
   const detalle = { enviar: null, evaluar: null, resumen: "Opcional",
-    revisar: porRevisar ? `${porRevisar} por revisar` : enRevision() ? "Nada pendiente" : null };
+    revisar: porRevisar ? `${porRevisar} sin enviar` : algunaEnRevision() ? "Nada pendiente" : null };
   const hecho = { enviar: false, evaluar: false, resumen: false };
   if (estadoCurso) {
     if (prox?.paso === "enviar") {
@@ -234,7 +245,7 @@ function pestanasDeTests() {
     }
   }
   return barraPestanas({
-    etiqueta: "Tests Semanales", actual: pestana.id, alElegir: (id) => irA(id), flujo: true,
+    etiqueta: "Tests", actual: pestana.id, alElegir: (id) => irA(id), flujo: true,
     grupos: [
       { rotulo: legado() ? "Cada semana" : "Cada instancia", flechas: true, pestanas: [
         { id: "enviar", numero: 1, titulo: "Enviar preguntas", detalle: detalle.enviar, hecho: hecho.enviar,
@@ -260,11 +271,11 @@ function pintarCabecera() {
 
 /** Vuelve a leer el historial y notas.csv (al entrar y cuando termina un trabajo). */
 async function refrescarEstado() {
-  const [lista, estado, conf] = await Promise.allSettled([
-    api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`), leerCiclo(semestre), cargarConfiguracion(semestre)]);
+  const [lista, estado] = await Promise.allSettled([
+    api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`), leerCiclo(semestre)]);
   if (lista.status === "fulfilled") trabajos = lista.value;
+  // El ciclo trae también el modo de cada instancia (preguntas.csv y configuracion.json).
   estadoCurso = estado.status === "fulfilled" ? estado.value : false;
-  if (conf.status === "fulfilled") configuracion = conf.value;
   columnaHistorial[0] = legado() ? "Semana" : "Instancia";
   pintarCabecera();
   alCambiarDatos();
@@ -299,7 +310,7 @@ function estadoParaPestana(id, n) {
   }
   if (id === "evaluar") {
     if (s.corregidas) {
-      const partes = [s.evaluadas ? `${s.evaluadas} con nota` : "", s.porRevisar ? `${s.porRevisar} por revisar` : "",
+      const partes = [s.evaluadas ? `${s.evaluadas} con nota` : "", s.porRevisar ? `${s.porRevisar} sin enviar` : "",
         s.descartadas ? `${s.descartadas} descartadas` : ""].filter(Boolean);
       return `${Mencion(n)} ya tiene ${s.corregidas} respuestas corregidas (${partes.join(", ")}). Si la corres de `
         + "nuevo, solo se corrigen las respuestas nuevas.";
@@ -308,7 +319,7 @@ function estadoParaPestana(id, n) {
     if (fecha && fecha > new Date()) {
       return `La entrega de ${mencion(n)} cierra el ${fechaCorta(fecha)} (${enCuanto(fecha)}). Si evalúas antes, `
         + "las respuestas que lleguen después quedan para otra corrida."
-        + (info?.estado !== "confirmada" ? "" : enRevision()
+        + (info?.estado !== "confirmada" ? "" : enRevision(n)
           ? " Al cierre se corrige sola y las correcciones quedan esperando en Revisar."
           : " Al cierre se evalúa sola.");
     }
@@ -331,8 +342,8 @@ function descarga(t) {
     // El semestre y la lista son los de esta revisión, no los del selector.
     const semana = idDe(t.argumentos);
     const clave = t.argumentos.instancia ? "instancia" : "semana";
-    // En revisión no sale feedback: los textos lo dicen y se puede corregir a mano.
-    const revisar = enRevision();
+    // Si esa instancia se revisa, no sale feedback: los textos lo dicen y se puede corregir a mano.
+    const revisar = enRevision(Number(semana));
     return elegirCandidatos({
       semestre: t.semestre, ruta: `tests_semanales/cache/candidatos_${semana}_${t.id}.json`,
       verbo: revisar ? "Corregir con IA" : "Evaluar", mandaFeedback: !revisar, aMano: revisar,
@@ -379,6 +390,9 @@ function formulario(p, destino) {
   const boton = el("button", { class: "primario", type: "button" }, p.boton || p.botonPrueba);
   const campoSemana = el("label", {}, legado() ? "Número de semana" : "Instancia", semana);
   const estadoSemana = el("p", { class: "estado-semana" });
+  // En Evaluar, el interruptor de revisión de la instancia elegida.
+  const zonaModo = p.id === "evaluar" ? el("div", { class: "zona-modo" }) : null;
+  const pintarModo = () => zonaModo?.replaceChildren(...bloqueModo(Number(semana.value)));
 
   // Solo textos y avisos: qué se manda al pedir el trabajo se decide en el clic.
   const actualizar = () => {
@@ -393,7 +407,7 @@ function formulario(p, destino) {
     const bloqueado = real && !todas?.checked && enBorrador(Number(semana.value));
     alerta.replaceChildren(bloqueado ? caja("aviso", `${Mencion(Number(semana.value))} está en borrador. Confírmala en `
       + "Configuración › Preguntas antes de mandarla de verdad; en borrador solo se puede simular.")
-      : real ? el("div", { class: "nota-real" }, el("strong", {}, segunModo(p.alerta)),
+      : real ? el("div", { class: "nota-real" }, el("strong", {}, segunModo(p.alerta, Number(semana.value))),
         sinSimular ? el("p", { class: "precondicion" },
           `No simulaste ${legado() ? "esta semana" : "esta instancia"}: no verás antes qué respuestas se evaluarán.`)
           : null) : "");
@@ -401,7 +415,7 @@ function formulario(p, destino) {
     if (bloqueado || boton.classList.contains("bloqueado")) boton.disabled = Boolean(bloqueado);
     boton.classList.toggle("bloqueado", Boolean(bloqueado));
     boton.classList.toggle("real", Boolean(real));
-    if (prueba) boton.textContent = real ? segunModo(p.botonReal) : p.botonPrueba;
+    if (prueba) boton.textContent = real ? segunModo(p.botonReal, Number(semana.value)) : p.botonPrueba;
     estadoSemana.textContent = todas?.checked ? "" : estadoParaPestana(p.id, Number(semana.value));
   };
   todas?.addEventListener("change", actualizar);
@@ -417,6 +431,7 @@ function formulario(p, destino) {
       semanaElegida = n;
       resumen?.mostrar(n, { enviada: estadoDe(n).enviados > 0 });
     }
+    pintarModo();
     actualizar();
   });
 
@@ -434,7 +449,8 @@ function formulario(p, destino) {
     if (p.confirmar && prueba && !prueba.checked) {
       // Desde el celular es fácil tocar sin querer, y el costo del error es
       // mandarle correos a todo el curso. El modo prueba no pide confirmación.
-      if (!await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, segunModo(p.botonReal), "real")) return;
+      if (!await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, segunModo(p.botonReal, idDe(argumentos)),
+        "real")) return;
     }
     boton.disabled = true;
     try {
@@ -449,17 +465,18 @@ function formulario(p, destino) {
     }
   });
 
+  pintarModo();
   actualizar();
   return [
-    p.texto ? el("p", {}, p.texto) : null,
+    p.texto ? el("p", {}, segunModo(p.texto)) : null,
     p.info ? caja("info", p.info) : null,
     p.nota ? el("p", { class: "nota-pie" }, p.nota) : null,
-    p.id === "evaluar" ? lineaModo() : null,
     el("div", { class: "form-trabajo" },
       todas ? el("label", { class: "interruptor" }, todas, legado() ? "Todas las semanas" : "Todas") : null,
       campoSemana,
       prueba ? el("label", { class: "interruptor" }, prueba, p.prueba) : null,
       boton),
+    zonaModo,
     estadoSemana,
     alerta,
     resumen?.nodo,
@@ -484,16 +501,28 @@ const historial = historialTrabajos({
 
 // ---------------------------------------------------------------- pantalla
 
-/** Qué pasa después de corregir, según configuracion.json. Se cambia en Configuración › Semestre. */
-function lineaModo() {
-  if (!configuracion) return null;
-  const cambiar = el("a", { href: "/datos#datos/semestre" }, "Configuración › Semestre");
-  if (!configuracion.existe) {
-    return el("p", { class: "nota-pie" }, "Este semestre usa la configuración de antes: cada corrección se le manda "
-      + "al alumno apenas queda lista.");
+/**
+ * Qué pasa después de corregir la instancia `n`: su interruptor «Revisar las
+ * correcciones antes de enviarlas», que se guarda apenas se aprieta. En el
+ * formato antiguo (semanas) no hay interruptor: se dice lo que rige.
+ */
+function bloqueModo(n) {
+  if (!estadoCurso) return [];
+  if (legado()) {
+    // Sin configuracion.json, lo de antes; si no se pudo leer, el trabajo revisa (configuracion.py).
+    const conf = estadoCurso.configuracion;
+    return [el("p", { class: "nota-pie" }, conf && !conf.existe
+      ? "Este semestre usa la configuración de antes: cada corrección se le manda al alumno apenas queda lista."
+      : `Después de corregir, ${describirModo(modoDe(n) || REVISAR)}.`)];
   }
-  return el("p", { class: "nota-pie" }, `Después de corregir, ${describirModo(configuracion.modo)}. Se cambia en `,
-    cambiar, ".");
+  if (!instanciaDe(n)) return [];
+  const mensaje = el("div");
+  return [interruptorDeInstancia({
+    semestre, numero: n, nombre: nombre(n), modo: modoDe(n), mensaje,
+    esperando: () => estadoDe(n).porRevisar,
+    // Los textos de la pestaña (botón, aviso, confirmación) pasan al modo nuevo.
+    alGuardar: () => refrescarEstado(),
+  }), mensaje];
 }
 
 /** La pestaña Revisar: las correcciones de una instancia (revision.js). */
@@ -501,6 +530,8 @@ function vistaRevisar() {
   alCambiarDatos = () => {};
   return pestanaRevisar({
     semestre, ciclo: estadoCurso || null, id: revisarId,
+    // Cambiar el interruptor de una instancia cambia los textos de Evaluar.
+    alCambiarModo: () => refrescarEstado(),
     alCambiarId: (n) => {
       revisarId = n;
       if (pestana.id === "revisar") history.replaceState(null, "", hashDe("revisar"));

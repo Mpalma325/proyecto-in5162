@@ -11,7 +11,10 @@ simulados. Cubre lo que no puede romperse:
 - la nota cuenta cuando sale el correo: evaluacion en el log y después Nota;
 - si el envío falla en automático, la corrida siguiente lo manda, salvo que el
   semestre haya pasado a revisión;
-- «Las corrijo yo» nunca sale sin la nota y el texto del docente.
+- «Las corrijo yo» nunca sale sin la nota y el texto del docente;
+- el modo es de cada instancia (columna Revision de preguntas.csv; vacía,
+  configuracion.json): dos instancias del mismo semestre se corrigen cada una
+  con el suyo, y cambiarlo vale para lo que se corrija desde ese momento.
 """
 
 import contextlib
@@ -361,6 +364,102 @@ def descarte_y_reintento():
         check("sin archivo sigue siendo automático (2026-2)", configuracion.modo_revision(sid) == configuracion.AUTO)
 
 
+_CABECERA_NUEVA = ("Instancia,Tipo,Numero,Estado,Envio,Cierre,Revision,Tema,Fecha de Entrega,"
+                   "Control P1,Control P2,Control P3,Control Pauta P1,Control Pauta P2,Control Pauta P3,"
+                   "Tratamiento P1,Tratamiento P2,Tratamiento P3,"
+                   "Tratamiento Pauta P1,Tratamiento Pauta P2,Tratamiento Pauta P3")
+
+
+def _preguntas_nuevas(tmp: Path, modos: dict[int, str | None]) -> None:
+    """preguntas.csv del formato nuevo con una instancia confirmada por id; `None` deja la fila sin Revision.
+
+    Ids altos para no chocar con los Item de 2026-2 que trae la copia. Las
+    preguntas son inventadas (el repo es público).
+    """
+    columnas = _CABECERA_NUEVA.split(",")
+    filas = []
+    for i, (inst, modo) in enumerate(modos.items(), start=1):
+        valores = {"Instancia": str(inst), "Tipo": "Control", "Numero": str(i), "Estado": "confirmada",
+                   "Envio": "2026-11-23T10:15:00-03:00", "Cierre": "2026-11-30T10:15:00-03:00",
+                   "Revision": modo or "", "Tema": f"Tema {i}", "Control P1": "¿Qué es un logit?",
+                   "Control Pauta P1": "Lo esperado."}
+        filas.append(",".join(f'"{valores.get(c, "")}"' for c in columnas))
+    ruta = tmp / "tests_semanales" / "data" / "preguntas.csv"
+    ruta.write_text(_CABECERA_NUEVA + "\n" + "\n".join(filas) + "\n", encoding="utf-8")
+
+
+def modo_por_instancia():
+    """El interruptor de cada instancia: dos instancias con modos distintos en el mismo semestre."""
+    with semestre_desechable(sid="_tmp_revision_c") as (sid, tmp), sin_red():
+        AUTO_, REV_, SIN = 101, 102, 103
+        for item in (AUTO_, REV_, SIN):
+            _vaciar_instancia(tmp, item)
+        from modulos import datos
+        from modulos.semestre import configuracion
+        from modulos.tests import evaluar, feedback, preguntas
+
+        curso = datos.alumnos.correos(sid)
+
+        def estado(correo, item):
+            return datos.notas.estado(correo, datos.TESTS, str(item), sid) or {}
+
+        def corregir(item, desde, cantidad):
+            with patch("modulos.tests.evaluar.buscar_respuestas_semana",
+                       return_value=respuestas_falsas(curso, item, desde=desde, cantidad=cantidad, message_ids=True)), \
+                 patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("6,0")):
+                return _salida(evaluar.main, item, dry_run=False)
+
+        titulo("15. dos instancias del mismo semestre, una automática y otra en revisar")
+        # El respaldo del semestre dice lo contrario de la primera: manda la columna.
+        _config(tmp, "revisar")
+        _preguntas_nuevas(tmp, {AUTO_: "auto", REV_: "revisar", SIN: None})
+        check("cada fila trae su Revision", preguntas.cargar_semana(AUTO_).revision == "auto"
+              and preguntas.cargar_semana(REV_).revision == "revisar" and preguntas.cargar_semana(SIN).revision == "")
+        enviados.clear()
+        texto_a = corregir(AUTO_, 0, 2)
+        texto_b = corregir(REV_, 2, 2)
+        check("la automática dice su modo en la primera línea", texto_a.splitlines()[0].startswith("Modo automático"),
+              texto_a.splitlines()[:1])
+        check("la de revisar dice el suyo", texto_b.splitlines()[0].startswith("Modo revisión"),
+              texto_b.splitlines()[:1])
+        check("la automática manda y la otra espera", sorted(enviados) == sorted(curso[0:2]), enviados)
+        check("la automática queda con nota", all(estado(c, AUTO_).get("Nota") == "6,0" for c in curso[0:2]),
+              [estado(c, AUTO_) for c in curso[0:2]])
+        check("la de revisar queda por revisar, sin nota",
+              all(datos.notas.esta_por_revisar(estado(c, REV_)) for c in curso[2:4]), [estado(c, REV_) for c in curso[2:4]])
+        corr_b = [e for e in datos.log.leer(sid, flujo=datos.TESTS, item=str(REV_), evento="correccion")]
+        check("y su corrección dice modo=revisar", corr_b and all(e["Detalle"] == "modo=revisar" for e in corr_b), corr_b)
+
+        titulo("16. pasar a automático después de confirmada: lo nuevo sale solo y lo que esperaba sigue esperando")
+        _preguntas_nuevas(tmp, {AUTO_: "auto", REV_: "auto", SIN: None})
+        enviados.clear()
+        texto = corregir(REV_, 4, 2)
+        check("la corrida lee el modo nuevo", texto.splitlines()[0].startswith("Modo automático"), texto.splitlines()[:1])
+        check("las respuestas nuevas salen solas", sorted(enviados) == sorted(curso[4:6]), enviados)
+        check("las que esperaban siguen esperando, sin nota",
+              all(datos.notas.esta_por_revisar(estado(c, REV_)) for c in curso[2:4]), [estado(c, REV_) for c in curso[2:4]])
+        enviados.clear()
+        texto = _salida(feedback.main, REV_, prueba=False, por="profe@x.cl")
+        check("tests.feedback tampoco las manda sin que el docente las apruebe",
+              enviados == [] and "Esperando revisión: 2" in texto, (enviados, texto[-200:]))
+
+        titulo("17. una fila sin Revision toma el respaldo del semestre")
+        enviados.clear()
+        texto = corregir(SIN, 6, 1)
+        check("con configuracion.json en revisar, espera", texto.splitlines()[0].startswith("Modo revisión")
+              and enviados == [] and datos.notas.esta_por_revisar(estado(curso[6], SIN)), (texto.splitlines()[:1], enviados))
+        _config(tmp, None)
+        check("sin configuracion.json, automático (como 2026-2)", configuracion.modo_de("", sid) == configuracion.AUTO)
+        _config(tmp, "auto")
+        check("con el respaldo en auto, automático", configuracion.modo_de(None, sid) == configuracion.AUTO)
+        check("la columna gana al respaldo", configuracion.modo_de(" Revisar ", sid) == configuracion.REVISAR)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            raro = configuracion.modo_de("sí", sid)
+        check("un valor que no se entiende cuenta como revisar, y lo avisa",
+              raro == configuracion.REVISAR and "no se entiende" in buf.getvalue(), (raro, buf.getvalue()))
+
+
 def nombres_repetidos():
     titulo("12. dos instancias con el mismo Tipo y Número se avisan")
     import tempfile
@@ -380,5 +479,6 @@ def nombres_repetidos():
 cuerpo_identico()
 flujo_completo()
 descarte_y_reintento()
+modo_por_instancia()
 nombres_repetidos()
 sys.exit(resultado())
