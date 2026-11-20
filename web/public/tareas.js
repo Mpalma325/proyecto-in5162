@@ -46,12 +46,15 @@ const PESTANAS = [
     noEnviar: "Revisarlas antes de mandar el feedback", noEnviarMarcado: true,
     botonPrueba: () => `Simular corrección de ${tarea}`,
     botonReal: (envia) => (envia ? `Corregir ${tarea} y mandar feedback` : `Corregir ${tarea} y dejarlas para revisar`),
+    // La nota cuenta cuando sale el correo con el feedback, no al corregir.
     alerta: (envia) => (envia
-      ? "Se llama al modelo (gasta API), las notas quedan guardadas y cada alumno recibe su feedback por correo."
-      : "Se llama al modelo (gasta API) y las notas quedan guardadas. No sale ningún correo: las correcciones "
-        + "quedan abajo para leerlas, editarlas y mandarlas."),
+      ? "Se llama al modelo (gasta API) y cada alumno recibe su feedback por correo. Su nota queda registrada "
+        + "cuando sale ese correo."
+      : "Se llama al modelo (gasta API). No sale ningún correo y ninguna nota cuenta todavía: las correcciones "
+        + "quedan abajo para leerlas, editarlas y mandarlas, y cada nota cuenta cuando sale su correo."),
     confirmar: (a) => (a.no_enviar
-      ? `Vas a corregir ${tarea} con GPT (gasta tokens) y guardar las notas. El feedback queda para revisarlo antes de mandarlo.`
+      ? `Vas a corregir ${tarea} con GPT (gasta tokens). Las correcciones quedan para revisarlas antes de mandarlas; `
+        + "ninguna nota cuenta hasta que sale su correo."
       : `Vas a corregir ${tarea} con GPT y mandarle el feedback por correo a cada alumno. Son correos reales.`),
     despues: (d) => vistaRevision(d),
   },
@@ -95,7 +98,7 @@ function htmlsDeLaTarea() {
 //   generar    -> salidas/feedback_<T>.csv, una fila por integrante; con pregunta si se generó
 //   enviar     -> notas.csv (Flujo tarea, Item <T>): Enviado
 //   recolectar -> notas.csv: Respondio
-//   corregir   -> notas.csv: Nota
+//   corregir   -> notas.csv: Corregido; la Nota, solo cuando sale el correo (corregir o feedback)
 
 // { tarea, datos } con datos = los conteos, false si no se pudo leer, o undefined mientras carga.
 let estadoTarea = { tarea: null, datos: undefined };
@@ -150,7 +153,8 @@ async function leerEstadoTarea(t) {
   }
   if (notas.trim()) {
     const { columnas, filas } = leerCsv(notas);
-    const [iF, iI, iE, iR, iN] = ["Flujo", "Item", "Enviado", "Respondio", "Nota"].map((c) => columnas.indexOf(c));
+    const [iF, iI, iE, iR, iN, iCo, iD] = ["Flujo", "Item", "Enviado", "Respondio", "Nota", "Corregido", "Descartada"]
+      .map((c) => columnas.indexOf(c));
     for (const f of filas) {
       if ((f[iF] || "").trim() !== "tarea" || (f[iI] || "").trim().toUpperCase() !== t) continue;
       const enviado = (f[iE] || "").trim();
@@ -159,7 +163,10 @@ async function leerEstadoTarea(t) {
         if (!datos.primerEnvio || enviado < datos.primerEnvio) datos.primerEnvio = enviado;
       }
       if ((f[iR] || "").trim()) datos.respondieron++;
-      if ((f[iN] || "").trim()) datos.corregidas++;
+      // Corregida es lo mismo que notas.ya_corregido: con corrección (aunque
+      // espere revisión y no tenga nota todavía), con nota o descartada.
+      // notas.csv de antes no tiene Corregido ni Descartada (índice -1).
+      if ([iN, iCo, iD].some((i) => i >= 0 && (f[i] || "").trim())) datos.corregidas++;
     }
   }
   return datos;
@@ -192,7 +199,7 @@ function ahoraTocaTarea(d) {
   if (d.porMandar > 0) {
     return { id: "corregir", texto: `Revisar y mandar ${d.porMandar === 1 ? "la corrección pendiente"
       : `las ${d.porMandar} correcciones pendientes`} de ${tarea}`,
-      motivo: "Las notas ya están guardadas; el feedback no ha salido." };
+      motivo: "El feedback no ha salido, así que esas notas todavía no cuentan." };
   }
   if (d.respondieron < d.enviados) {
     const faltan = d.enviados - d.respondieron;
@@ -1263,8 +1270,9 @@ async function cargarRevision(nodo, destino, t) {
   nodo.replaceChildren(
     el("hr"),
     el("h4", {}, `Correcciones por revisar (${pendientes.length})`),
-    el("p", { class: "nota-pie" }, "Las notas ya quedaron guardadas, pero el alumno no ha recibido nada. Si cambias "
-      + "una nota, queda registrada como ajuste."),
+    el("p", { class: "nota-pie" }, "El alumno no ha recibido nada y estas notas todavía no cuentan: cada una cuenta "
+      + "cuando sale su correo. Sale lo que quede escrito aquí, y el registro guarda quién lo mandó y qué cambió "
+      + "respecto de la propuesta del modelo."),
     el("div", { class: "acciones" },
       el("button", { class: "enlace", type: "button", onclick: () => todas(true) }, "Todas"),
       el("button", { class: "enlace", type: "button", onclick: () => todas(false) }, "Ninguna")),

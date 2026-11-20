@@ -1000,8 +1000,8 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
       const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
       if (!await confirmar(mandaFeedback
         ? `Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\nLas demás quedan como están. ¿Confirmas?`
-        : `Vas a ${verbo.toLowerCase()} a: ${nombres}.\n\nLas notas quedan guardadas y las correcciones esperan tu `
-          + "revisión antes de mandarse. Las demás quedan como están. ¿Confirmas?",
+        : `Vas a ${verbo.toLowerCase()} a: ${nombres}.\n\nLas correcciones esperan tu revisión antes de mandarse, `
+          + "y ninguna nota cuenta hasta que sale su correo. Las demás quedan como están. ¿Confirmas?",
       mandaFeedback ? `${verbo} y mandar` : verbo, "real")) return;
       boton.disabled = true;
       aviso.replaceChildren();
