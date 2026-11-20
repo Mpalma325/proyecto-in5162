@@ -51,25 +51,32 @@ def grupo_de(correo: str, semestre_id: str | None = None) -> str:
     return (fila or {}).get("Grupo", "").strip().lower() or CONTROL
 
 
-def asignar_grupos_faltantes(semilla: int, semestre_id: str | None = None) -> int:
-    """Reparte control/tratamiento entre quienes aún no tienen grupo.
+def con_grupos(semilla: int, semestre_id: str | None = None) -> tuple[list[dict], int]:
+    """Las filas de alumnos.csv con el grupo que les tocaría a quienes aún no
+    tienen, y cuántos son. No guarda nada: es lo que usa una simulación.
 
-    Mitad y mitad, y con semilla fija para que sea reproducible. Solo toca a
-    los que están sin asignar: el grupo de un alumno no cambia nunca una vez
-    puesto, porque define qué versión de pregunta le tocó.
-
-    Devuelve cuántos se asignaron.
+    Mitad y mitad, y con semilla fija para que sea reproducible: con la misma
+    lista, el envío real asigna lo mismo que mostró la simulación.
     """
     filas = leer(semestre_id)
     sin_grupo = [f for f in filas if not f.get("Grupo", "").strip()]
-    if not sin_grupo:
-        return 0
-
     mitad = len(sin_grupo) // 2
     asignaciones = [CONTROL] * mitad + [TRATAMIENTO] * (len(sin_grupo) - mitad)
     random.Random(semilla).shuffle(asignaciones)
     for fila, grupo in zip(sin_grupo, asignaciones):
         fila["Grupo"] = grupo
+    return filas, len(sin_grupo)
 
-    escribir(filas, semestre_id)
-    return len(sin_grupo)
+
+def asignar_grupos_faltantes(semilla: int, semestre_id: str | None = None) -> int:
+    """Reparte control/tratamiento entre quienes aún no tienen grupo, y lo guarda.
+
+    Solo toca a los que están sin asignar: el grupo de un alumno no cambia
+    nunca una vez puesto, porque define qué versión de pregunta le tocó.
+
+    Devuelve cuántos se asignaron.
+    """
+    filas, nuevos = con_grupos(semilla, semestre_id)
+    if nuevos:
+        escribir(filas, semestre_id)
+    return nuevos

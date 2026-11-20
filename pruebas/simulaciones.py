@@ -1,5 +1,5 @@
 """
-Ninguna simulación escribe notas.csv ni el log.
+Ninguna simulación escribe alumnos.csv, notas.csv ni el log.
 
 El motor sube lo que un trabajo cambió también cuando es una simulación, y las
 simulaciones corren a la vez que los trabajos reales. Si una escribiera esas
@@ -10,11 +10,12 @@ probable: una escritura cualquiera las agrega.
 Corre cada flujo que la página trata como simulación (SIMULABLES de
 web/public/comun.js, y tareas.segunda con paso "enviar") en modo prueba, con el
 mismo comando que arma el motor, sobre una copia del semestre, y compara la
-huella de notas.csv y del log antes y después. Un flujo nuevo en SIMULABLES sin
+huella de las tres tablas antes y después. Un flujo nuevo en SIMULABLES sin
 caso acá hace fallar la prueba.
 
-No compara alumnos.csv: tests.enviar asigna los grupos que falten antes de
-mirar si es simulación, y eso ya se sabe (diseño, sección 3).
+tests.enviar asignaba los grupos que faltaban antes de mirar si era
+simulación, y el motor subía el alumnos.csv cambiado. La sección 3 lo prueba
+con alumnos sin grupo.
 """
 
 import hashlib
@@ -123,8 +124,8 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
     check("ninguno sin caso en esta prueba", not faltan, faltan)
     check("la lista de la página se leyó", len(simulables()) >= 8, simulables())
 
-    titulo("2. en modo prueba, ninguno toca notas.csv ni el log")
-    tablas = [tmp / "notas.csv", tmp / "log_envios.csv"]
+    titulo("2. en modo prueba, ninguno toca alumnos.csv, notas.csv ni el log")
+    tablas = [tmp / "alumnos.csv", tmp / "notas.csv", tmp / "log_envios.csv"]
     with patch("modulos.mail.buscar_respuestas_semana", return_value=buzon_tests), \
          patch("modulos.mail.buscar_no_leidos", return_value=buzon), \
          patch("modulos.mail.buscar_respuestas", return_value={}), \
@@ -144,10 +145,35 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
                 except Exception as e:  # noqa: BLE001
                     check(f"{nombre}: corre", False, f"{type(e).__name__}: {e}")
                 cambiadas = [p.name for p, h in zip(tablas, antes) if huella(p) != h]
-                check(f"{nombre}: no escribe notas.csv ni el log", not cambiadas, cambiadas)
+                check(f"{nombre}: no escribe alumnos.csv, notas.csv ni el log", not cambiadas, cambiadas)
                 check(f"{nombre}: no manda correos", enviados == [], enviados)
                 check(f"{nombre}: sin temporales de escritura",
                       not [p for p in tablas if p.with_suffix(p.suffix + ".tmp").exists()])
+
+    titulo("3. simular un envío con alumnos sin grupo no los deja asignados")
+    from modulos.tests import config as config_tests
+
+    filas = datos.alumnos.leer(sid)
+    nuevos = [f["Correo"].strip().lower() for f in filas if f.get("Correo", "").strip()][:2]
+    for f in filas:
+        if f.get("Correo", "").strip().lower() in nuevos:
+            f["Grupo"] = ""
+    datos.alumnos.escribir(filas, sid)
+    antes = huella(tmp / "alumnos.csv")
+    perfil, armar = trabajo.FLUJOS["tests.enviar"]
+    texto = correr(armar({"semana": semana + 1, "_semestre": sid, "_pedido_por": "prueba@correo.test"}))
+    check("alumnos.csv queda igual, byte a byte", huella(tmp / "alumnos.csv") == antes)
+    if config_tests.GRUPO_CONTROL_TRATAMIENTO:
+        check("la salida dice cuántos grupos asignaría", "Asignaría grupo a 2 alumno(s)" in texto, texto[-400:])
+        previstos = {f["Correo"].strip().lower(): f["Grupo"]
+                     for f in datos.alumnos.con_grupos(config_tests.GRUPO_SEED, sid)[0]}
+        datos.alumnos.asignar_grupos_faltantes(config_tests.GRUPO_SEED, sid)
+        reales = datos.alumnos.por_correo(sid)
+        check("el envío real asigna los mismos grupos que mostró la simulación",
+              all(reales[c]["Grupo"] == previstos[c] and previstos[c] for c in nuevos),
+              {c: (previstos.get(c), reales.get(c, {}).get("Grupo")) for c in nuevos})
+    else:
+        print("  (GRUPO_CONTROL_TRATAMIENTO está apagado en este entorno: no hay grupos que asignar)")
 
     os.environ.pop("IN5162_TRABAJO", None)
 
