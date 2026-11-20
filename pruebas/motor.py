@@ -191,6 +191,46 @@ for malo in ({"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5",
         check(f"ajuste rechaza {str(malo)[:50]}", False)
     except ValueError:
         check(f"ajuste rechaza {str(malo)[:50]}", True)
+base_aviso = {"flujo": "test", "item": "3", "correo": "ana@x.cl", "nota": "6,5", "_pedido_por": "profe@x.cl"}
+check("con aviso y prueba:false, el ajuste pide --avisar",
+      ajuste({**base_aviso, "avisar": True, "prueba": False})[-1] == "--avisar")
+check("sin aviso, el ajuste no avisa", "--avisar" not in ajuste(base_aviso))
+for malo, por_que in (({**base_aviso, "avisar": True}, "sin prueba:false"),
+                      ({**base_aviso, "avisar": True, "prueba": True}, "con prueba:true"),
+                      ({**base_aviso, "avisar": "true", "prueba": False}, "con avisar en texto"),
+                      ({**base_aviso, "flujo": "tarea", "item": "T1", "avisar": True, "prueba": False}, "en tareas")):
+    try:
+        ajuste(malo)
+        check(f"el aviso se rechaza {por_que}", False)
+    except ValueError as e:
+        check(f"el aviso se rechaza {por_que}", True)
+        if por_que == "sin prueba:false":
+            check("el rechazo dice que el aviso necesita prueba:false", "prueba:false" in str(e), str(e))
+
+titulo("1f. revisión: «Las corrijo yo» y el envío del feedback")
+_, evaluar_cmd = trabajo.FLUJOS["tests.evaluar"]
+cmd = evaluar_cmd({"instancia": 4, "prueba": False, "sin_modelo": True, "_pedido_por": "profe@x.cl"})
+check("sin_modelo agrega --sin-modelo y quién corrige", cmd[-3:] == ["--sin-modelo", "--por", "profe@x.cl"], cmd)
+check("sin sin_modelo, evaluar no cambia", "--sin-modelo" not in evaluar_cmd({"instancia": 4}))
+try:
+    evaluar_cmd({"instancia": 4, "sin_modelo": "si"})
+    check("sin_modelo en texto se rechaza", False)
+except ValueError:
+    check("sin_modelo en texto se rechaza", True)
+# 3.13: el evaluar programado al Cierre no fija el modo; lo lee el script de
+# configuracion.json al correr. El comando es el mismo con o sin a_las.
+programado = evaluar_cmd({"instancia": 4, "prueba": False, "a_las": "2026-12-01T10:00:00-03:00"})
+check("el evaluar programado no lleva modo ni elegidos: lo decide configuracion.json al correr",
+      programado == ["-m", "modulos.tests.evaluar", "4"], programado)
+_, feedback_cmd = trabajo.FLUJOS["tests.feedback"]
+check("tests.feedback es prueba salvo prueba:false", "--dry-run" in feedback_cmd({"instancia": 4})
+      and "--dry-run" not in feedback_cmd({"instancia": 4, "prueba": False}))
+check("tests.feedback anota quién lo pidió (lo pone el sitio)",
+      feedback_cmd({"instancia": 4, "_pedido_por": "profe@x.cl", "por": "otro@x.cl"})[-2:] == ["--por", "profe@x.cl"])
+check("tests.feedback no se corta en seco", "tests.feedback" not in trabajo.CORTABLES)
+check("tests.feedback baja las decisiones de la revisión y la configuración",
+      trabajo._en_perfil("tests", "tests_semanales/revision/4.json")
+      and trabajo._en_perfil("tests", "configuracion.json"))
 
 titulo("1d. segunda oportunidad")
 _, segunda = trabajo.FLUJOS["tareas.segunda"]
