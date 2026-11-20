@@ -66,7 +66,16 @@ check("tres bloques para una pregunta también avisa",
 viejo = C.leer("<p>Bien.</p><p><b>NOTA FINAL:</b> 6,5</p><p><b>ORIGINALIDAD:</b> Alta</p>")
 check("el HTML viejo: su NOTA FINAL, su originalidad y el logro de la inversa",
       (viejo["formato"], viejo["nota"], viejo["originalidad"], viejo["logro"]) == (C.HTML, "6,5", "Alta", "0.8333"))
-check("un JSON sin «preguntas» no es del formato nuevo", C.leer('{"nota": 7}')["formato"] == C.HTML)
+cortado = C.leer('{"preguntas": [{"rotulo": "P1", "puntaje": 3}], "originalidad": "Alta", "retroalimen')
+check("un JSON cortado (límite de tokens): sin nota, sin HTML crudo y con el problema dicho",
+      (cortado["formato"], cortado["nota"], cortado["html"], cortado["problemas"]) == (C.JSON, "", "", [C.JSON_ILEGIBLE]),
+      cortado)
+check("un JSON sin «preguntas» tampoco tiene nota", C.leer('{"nota": 7}')["problemas"] == [C.JSON_ILEGIBLE])
+from modulos.tests import decisiones as D  # noqa: E402
+for muestra in (C.NOTA, C.PUNTAJES, C.NADA):
+    j = D.juntar({"EvaluacionIA": '{"originalidad": "Alta", "retroalimentacion": "sacaste 3 de 3"}', "Nota": ""},
+                 None, muestra=muestra)
+    check(f"con {muestra}, juntar no deja salir el JSON crudo", j["problemas"] and "sacaste" not in j["html"], j)
 check("con otra escala, otra nota: 3 y 2 en 1–7 es 6,0",
       C.leer(puntajes_ia(3, 2), E.Escala(minima=1))["nota"] == "6,0")
 check("y en la del 60 %, 5,8 (5,75 hacia arriba)",
@@ -159,6 +168,8 @@ TEXTOS = {
     "HTML en ```html```": ("```html\n<p>NOTA FINAL: 5,0</p>\n<p>PUNTAJE TOTAL: 3</p>\n```", 1),
     "texto sin nota": ("Hola, no sé qué pasó.", 1),
     "JSON sin preguntas": ('{"nota": 7}', 1),
+    "JSON cortado": ('{"preguntas": [{"rotulo": "P1", "puntaje": 3}], "retroalimen', 1),
+    "JSON cortado en ```json```": ('```json\n{"preguntas": [', 1),
     "vacío": ("", 1),
 }
 llamadas, esperado, nombres = [], [], []
@@ -350,6 +361,19 @@ with semestre_desechable(sid="_tmp_correccion") as (sid, tmp), sin_red():
     check("queda por revisar, con el problema en el log",
           datos.notas.esta_por_revisar(nota) and corr and "modo=revisar" in corr[-1]["Detalle"], (nota, corr[-1:]))
 
+    configurar(C.NADA)
+    enviados.clear()
+    cuerpos = correr(5, '{"preguntas": [{"rotulo": "P1", "puntaje": 3}], "originalidad": "Alta", "retroalimen')
+    corr = eventos("correccion", curso[5])
+    nota = datos.notas.estado(curso[5], datos.TESTS, str(SEM), sid) or {}
+    check("un JSON cortado: no sale el correo (con el JSON crudo y sus puntajes) aunque sea automático",
+          cuerpos == [] and enviados == [], cuerpos)
+    check("queda por revisar, sin nota", datos.notas.esta_por_revisar(nota) and not nota.get("Nota"), nota)
+    with patch("modulos.tests.evaluar.buscar_respuestas_semana", return_value=[]):
+        _silencio(evaluar.main, SEM, dry_run=False)
+    check("y el reintento automático tampoco lo manda", enviados == [], enviados)
+
+    configurar(C.NOTA)
     (tmp / E.ARCHIVO).write_text(json.dumps({"minima": 1.0}), encoding="utf-8")
     cuerpos = correr(4, puntajes_ia(3, 2))
     nota = datos.notas.estado(curso[4], datos.TESTS, str(SEM), sid) or {}

@@ -88,6 +88,9 @@ for nombre, datos in (("mínima mayor que la máxima", {"minima": 7, "maxima": 4
                                                      "exigencia": 0.6}),
                       ("exigencia de 1", {"tipo": "dos_tramos", "minima": 1, "aprobacion": 4, "exigencia": 1}),
                       ("tipo desconocido", {"tipo": "curva"}),
+                      ("decimales true", {"decimales": True}),
+                      ("puntaje máximo por pregunta enorme", {"puntaje_maximo_pregunta": 1e9}),
+                      ("puntaje máximo por pregunta infinito", {"puntaje_maximo_pregunta": float("inf")}),
                       ("clave desconocida", {"minimo": 1})):
     try:
         E.desde_dict(datos)

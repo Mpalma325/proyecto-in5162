@@ -130,7 +130,8 @@ def reescribir_nota_final(html: str, nota: str) -> str:
 def es_formato_nuevo(correccion: dict | None, decision: dict | None = None) -> bool:
     """Si la corrección es del formato nuevo (JSON con puntajes), o la hizo el
     docente a mano con puntajes por pregunta."""
-    if _correccion.datos_json((correccion or {}).get("EvaluacionIA")) is not None:
+    # Un JSON que no se entiende también: el camino viejo lo mandaría crudo.
+    if _correccion.parece_json((correccion or {}).get("EvaluacionIA")):
         return True
     return es_del_docente(correccion) and isinstance((decision or {}).get("puntajes"), list)
 

@@ -76,10 +76,10 @@ class Escala:
         if not 0 <= self.minima < self.maxima <= 1000:
             raise ValueError(f"La escala va de {self.minima} a {self.maxima}: "
                              "la mínima tiene que ser menor que la máxima, entre 0 y 1000.")
-        if self.decimales not in (0, 1, 2):
+        if isinstance(self.decimales, bool) or self.decimales not in (0, 1, 2):
             raise ValueError(f"Decimales: {self.decimales!r} (0, 1 o 2)")
-        if not self.puntaje_maximo_pregunta > 0:
-            raise ValueError("El puntaje máximo por pregunta tiene que ser mayor que cero.")
+        if not 0 < self.puntaje_maximo_pregunta <= 100:
+            raise ValueError("El puntaje máximo por pregunta tiene que ser mayor que cero y no pasar de 100.")
         if self.tipo == DOS_TRAMOS:
             if self.aprobacion is None or self.exigencia is None:
                 raise ValueError("Una escala de dos tramos necesita la nota de aprobación y la exigencia.")

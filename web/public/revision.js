@@ -18,7 +18,7 @@ import {
 } from "./comun.js";
 import { leerCsv } from "./csv.js";
 import {
-  aplicar, armarHtml, datosJson, desdeDecision, leer as leerCorreccion, NOTA, ORIGINALIDADES, pideJson, quitarNumeros,
+  aplicar, armarHtml, desdeDecision, pareceJson, leer as leerCorreccion, NOTA, ORIGINALIDADES, pideJson, quitarNumeros,
   valoresRubrica,
 } from "./correccion.js";
 import { leerConfiguracion } from "./configuracion.js";
@@ -124,7 +124,7 @@ export const reescribirNotaFinal = (html, nota) => String(html).replace(NOTA_FIN
 const vacio = (v) => v === undefined || v === null || v === "";
 
 /** Si la corrección es del formato nuevo (JSON con puntajes), o la hizo el docente con puntajes (decisiones.es_formato_nuevo). */
-export const esFormatoNuevo = (correccion, decision) => datosJson(correccion?.EvaluacionIA) !== null
+export const esFormatoNuevo = (correccion, decision) => pareceJson(correccion?.EvaluacionIA)
   || (esDelDocente(correccion) && Array.isArray(decision?.puntajes));
 
 /**

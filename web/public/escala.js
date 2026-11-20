@@ -75,8 +75,9 @@ export function validar(e) {
     throw new Error(`La escala va de ${e.minima} a ${e.maxima}: la mínima tiene que ser menor que la máxima, entre 0 y 1000.`);
   }
   if (![0, 1, 2].includes(e.decimales)) throw new Error(`Decimales: ${e.decimales} (0, 1 o 2)`);
-  if (!(comparar(fraccion(e.puntaje_maximo_pregunta), fr(0n)) > 0)) {
-    throw new Error("El puntaje máximo por pregunta tiene que ser mayor que cero.");
+  const maximoPregunta = fraccion(e.puntaje_maximo_pregunta);
+  if (!(comparar(maximoPregunta, fr(0n)) > 0) || comparar(maximoPregunta, fr(100n)) > 0) {
+    throw new Error("El puntaje máximo por pregunta tiene que ser mayor que cero y no pasar de 100.");
   }
   if (e.tipo === DOS_TRAMOS) {
     if (e.aprobacion === null || e.aprobacion === undefined || e.exigencia === null || e.exigencia === undefined) {

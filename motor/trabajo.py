@@ -146,7 +146,7 @@ def _escala(a: dict) -> list[str]:
             continue
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))):
             raise ValueError(f"'{k}' tiene que ser un número: {v!r}")
-    if not isinstance(e.get("decimales", 1), int):
+    if isinstance(e.get("decimales", 1), bool) or not isinstance(e.get("decimales", 1), int):
         raise ValueError(f"'decimales' tiene que ser 0, 1 o 2: {e.get('decimales')!r}")
     escala = _esc.desde_dict(e)  # levanta ValueError con lo que está mal
     if escala.tipo == _esc.LINEAL:

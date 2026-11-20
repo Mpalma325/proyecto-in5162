@@ -113,12 +113,27 @@ def quitar_numeros(html: str, muestra: str) -> str:
 
 # --------------------------------------------------------------- formato nuevo
 
-def datos_json(texto) -> dict | None:
-    """El objeto de una corrección del formato nuevo, o None si no lo es."""
+JSON_ILEGIBLE = ("La IA devolvió un JSON incompleto o sin la lista de preguntas: no hay nota. "
+                 "Vuelve a corregirla o corrígela a mano.")
+
+
+def _sin_cerco(texto) -> str:
     t = str(texto or "").strip()
     if t.startswith("```"):
         t = re.sub(r"^```(?:json)?\s*", "", t)
         t = re.sub(r"\s*```$", "", t)
+    return t
+
+
+def parece_json(texto) -> bool:
+    """Si el texto empieza como un objeto JSON, se entienda o no. El HTML viejo
+    nunca empieza con «{»."""
+    return _sin_cerco(texto).startswith("{")
+
+
+def datos_json(texto) -> dict | None:
+    """El objeto de una corrección del formato nuevo, o None si no lo es."""
+    t = _sin_cerco(texto)
     if not t.startswith("{"):
         return None
     try:
@@ -204,6 +219,15 @@ def leer(texto, escala: _escala.Escala | None = None, n_preguntas: int | None = 
     """
     escala = escala or _escala.POR_DEFECTO
     datos = datos_json(texto)
+    if datos is None and parece_json(texto):
+        # Empieza como JSON pero no se entiende (cortado por el límite de tokens,
+        # o sin «preguntas»). No es el HTML viejo: sin nota y con el problema
+        # dicho, para que no salga solo ni le llegue el JSON crudo al alumno.
+        return {
+            "formato": JSON, "preguntas": [], "originalidad": "", "justificacion_originalidad": "",
+            "retroalimentacion": "", "html": "", "puntajes": "", "logro": "", "nota": "",
+            "problemas": [JSON_ILEGIBLE], "avisos": [],
+        }
     if datos is None:
         crudo = str(texto or "")
         nota, originalidad = extraer_nota_y_originalidad(crudo) if crudo.strip() else ("", "")

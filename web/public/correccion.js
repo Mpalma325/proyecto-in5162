@@ -62,10 +62,20 @@ export function originalidadDeHtml(html) {
 
 // ---------------------------------------------------------------- formato nuevo
 
+export const JSON_ILEGIBLE = "La IA devolvió un JSON incompleto o sin la lista de preguntas: no hay nota. "
+  + "Vuelve a corregirla o corrígela a mano.";
+
+function sinCerco(texto) {
+  const t = String(texto ?? "").trim();
+  return t.startsWith("```") ? t.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "") : t;
+}
+
+/** Si el texto empieza como un objeto JSON, se entienda o no (correccion.parece_json). */
+export const pareceJson = (texto) => sinCerco(texto).startsWith("{");
+
 /** El objeto de una corrección del formato nuevo, o null si no lo es (correccion.datos_json). */
 export function datosJson(texto) {
-  let t = String(texto ?? "").trim();
-  if (t.startsWith("```")) t = t.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  const t = sinCerco(texto);
   if (!t.startsWith("{")) return null;
   let datos;
   try { datos = JSON.parse(t); } catch { return null; }
@@ -128,6 +138,13 @@ const escalar = (v) => (typeof v === "number" || typeof v === "string") ? v : ""
  */
 export function leer(texto, escala = E.POR_DEFECTO, nPreguntas = null) {
   const datos = datosJson(texto);
+  if (!datos && pareceJson(texto)) {
+    // Empieza como JSON pero no se entiende: sin nota y con el problema dicho (correccion.leer).
+    return {
+      formato: JSON_, preguntas: [], originalidad: "", justificacion_originalidad: "", retroalimentacion: "",
+      html: "", puntajes: "", logro: "", nota: "", problemas: [JSON_ILEGIBLE], avisos: [],
+    };
+  }
   if (!datos) {
     const crudo = String(texto ?? "");
     const nota = crudo.trim() ? notaDeHtml(crudo) : "";
