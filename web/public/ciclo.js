@@ -4,8 +4,10 @@
 // Sale de lo guardado en la nube, no del historial de trabajos: las semanas
 // que se operaron desde un PC no están en el historial.
 //   enviada       = filas de notas.csv (Flujo test, Item = semana) con Enviado
-//   evaluada      = las mismas filas con Nota
-//   respondió sin nota = con Respondio y sin Nota
+//   evaluada      = las mismas filas con Nota (el feedback salió)
+//   por revisar   = con Corregido, sin Nota ni Descartada (espera al docente)
+//   descartada    = con Descartada y sin Nota (cerrada, sin feedback)
+//   respondió sin nota = con Respondio y nada de lo anterior: falta corregir
 //   resumen       = existe tests_semanales/data/resumen_semana_<n>.txt
 // El ciclo de cada semana es enviar y evaluar; el resumen es opcional.
 //
@@ -20,7 +22,8 @@ import {
   esLegado, fechaEntrega, leerSemana, nombreDe, RUTA as RUTA_PREGUNTAS, semanasDe, textoFecha,
 } from "./preguntas.js";
 
-const VACIA = { enviados: 0, primerEnvio: "", evaluadas: 0, sinNota: 0 };
+// `corregidas` = evaluadas + por revisar + descartadas: lo que ya no hay que corregir.
+const VACIA = { enviados: 0, primerEnvio: "", evaluadas: 0, sinNota: 0, porRevisar: 0, descartadas: 0, corregidas: 0 };
 
 /** "2026-10-09T09:00…" -> "09/10". */
 export function diaMes(iso) {
@@ -58,7 +61,8 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
   const porSemana = new Map();
   if (notas.trim()) {
     const { columnas, filas } = leerCsv(notas);
-    const [iF, iI, iE, iR, iN] = ["Flujo", "Item", "Enviado", "Respondio", "Nota"].map((c) => columnas.indexOf(c));
+    const [iF, iI, iE, iR, iN, iC, iD] = ["Flujo", "Item", "Enviado", "Respondio", "Nota", "Corregido", "Descartada"]
+      .map((c) => columnas.indexOf(c));
     for (const f of filas) {
       const n = Number(f[iI]);
       if ((f[iF] || "").trim() !== "test" || !Number.isInteger(n) || n < 1) continue;
@@ -69,8 +73,14 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
         if (!s.primerEnvio || enviado < s.primerEnvio) s.primerEnvio = enviado;
       }
       const nota = (f[iN] || "").trim();
+      // Sin las columnas (notas.csv de antes de la fase 1) no hay por revisar ni descartadas.
+      const descartada = iD >= 0 && (f[iD] || "").trim();
+      const corregido = iC >= 0 && (f[iC] || "").trim();
       if (nota) s.evaluadas++;
+      else if (descartada) s.descartadas++;
+      else if (corregido) s.porRevisar++;
       else if ((f[iR] || "").trim()) s.sinNota++;
+      if (nota || descartada || corregido) s.corregidas++;
       porSemana.set(n, s);
     }
   }
@@ -105,7 +115,7 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
    */
   const proximoPaso = (ahora = new Date()) => {
     if (!legado) return proximoInstancia(ahora);
-    const porEvaluar = enviadas().find((n) => !estadoDe(n).evaluadas);
+    const porEvaluar = enviadas().find((n) => !estadoDe(n).corregidas);
     if (porEvaluar) {
       const { fecha } = entregaDe(porEvaluar);
       return { paso: "evaluar", semana: porEvaluar, cuando: fecha, ya: !fecha || fecha <= ahora };
@@ -126,7 +136,7 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
   const fecha = (iso) => { const d = new Date(iso || ""); return Number.isNaN(d.getTime()) ? null : d; };
   const antes = (a, b) => (a ? a.getTime() : Infinity) - (b ? b.getTime() : Infinity);
   function proximoInstancia(ahora) {
-    const abiertas = enviadas().filter((n) => !estadoDe(n).evaluadas)
+    const abiertas = enviadas().filter((n) => !estadoDe(n).corregidas)
       .map((n) => ({ n, cierre: entregaDe(n).fecha })).sort((a, b) => antes(a.cierre, b.cierre) || a.n - b.n);
     if (abiertas.length) {
       const { n, cierre } = abiertas[0];
@@ -144,8 +154,12 @@ export function armarCiclo(notas, rutasResumen, preguntas) {
   }
 
   const sinNota = () => [...porSemana.values()].reduce((s, x) => s + x.sinNota, 0);
+  /** [[id, cuántas], …] de las instancias con correcciones esperando revisión, en orden de cierre. */
+  const porRevisar = () => [...porSemana].filter(([, x]) => x.porRevisar)
+    .sort(([a], [b]) => antes(entregaDe(a).fecha, entregaDe(b).fecha) || a - b)
+    .map(([n, x]) => [n, x.porRevisar]);
   return { porSemana, conResumen, preguntas: tablaPreguntas, estadoDe, enviadas, entregaDe, proximoPaso, sinNota,
-    legado, nombre, mencion };
+    porRevisar, legado, nombre, mencion };
 }
 
 /**

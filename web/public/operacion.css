@@ -8,3 +8,19 @@
 .cabeza-operacion + .fila-campos, .cabeza-operacion + .campo { margin-bottom: 10px; }
 
 .form-trabajo .costo { color: var(--tenue); font-size: 13px; align-self: center; }
+
+/* Tests › Revisar (revision.js): la respuesta a la izquierda y el correo a la derecha. */
+.tarjeta-revision { margin: 12px 0; }
+.tarjeta-revision > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.tarjeta-revision > header h4 { margin: 0; }
+.revision-columnas { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; margin-top: 8px; }
+@media (max-width: 820px) { .revision-columnas { grid-template-columns: minmax(0, 1fr); } }
+.revision-columnas h5 { margin: 4px 0 6px; }
+.respuesta-alumno { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.editor-correccion { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.editor-correccion label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--tenue); }
+.editor-correccion input { max-width: 6em; }
+.editor-correccion textarea.html-correccion { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; }
+.aviso-duplicado { margin: 6px 0; font-size: 14px; }
+.campo-motivo { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 13px; color: var(--tenue); }
+.campo-motivo textarea { width: 100%; }

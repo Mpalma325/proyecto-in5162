@@ -99,6 +99,11 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
     datos.log.registrar("evaluacion", datos.TESTS, semana, con_nota[0], sid,
                         MessageId="<feedback-sim@correo.test>", Nota="6,0",
                         EvaluacionIA="<p>NOTA FINAL: 6,0</p>")
+    # Para tests.feedback: una corrección automática cuyo feedback no salió. El
+    # semestre no tiene configuracion.json (automático), así que la mandaría.
+    pendiente = ([f["Correo"] for f in del_test if not f["Nota"].strip()][2:3] or sin_nota[:1])[0]
+    datos.log.registrar("correccion", datos.TESTS, semana, pendiente, sid, Modelo="modelo-prueba", Nota="5,0",
+                        EvaluacionIA="<p>Bien.</p><p>NOTA FINAL: 5,0</p>", Detalle="modo=auto")
     buzon_tests = (respuestas_falsas(sin_nota + con_nota[:1], semana, message_ids=True)
                    + [correo_entrante(con_nota[1], semana, "otra vez", uid="801",
                                       message_id="<ya-procesado@correo.test>")])
@@ -110,6 +115,7 @@ with semestre_desechable(sid="_tmp_simulaciones") as (sid, tmp), sin_red():
     CASOS = {
         "tests.enviar": [({"semana": semana}, None), ({"semana": semana + 1}, "Se enviaría a")],
         "tests.evaluar": [({"semana": semana}, "Duplicados: 1"), ({"semana": semana}, "Ya procesados antes: 1")],
+        "tests.feedback": [({"semana": semana}, "Feedback se enviarían: 1")],
         "tests.tutoria": [({"semana": semana}, "respondería"), ({}, "respondería")],
         "tests.experimento": [({"prompt": PROMPT, "n": 3, "semana": semana}, "MODO PRUEBA")],
         "tareas.enviar": [({"tarea": tarea}, None)],

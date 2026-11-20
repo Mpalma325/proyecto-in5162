@@ -667,6 +667,161 @@ for _html in sorted((RAIZ / "web" / "public").glob("*.html")):
     check(f"{_html.name}: sin scripts en línea ni atributos on…=",
           not re.search(r"<script(?![^>]*\bsrc=)[^>]*>|\son[a-z]+\s*=", _texto, re.IGNORECASE), _html.name)
 
+titulo("7i. Tests › Revisar: la página y tests.feedback deciden igual")
+# revision.js repite las reglas de decisiones.py (qué corrección vale, qué nota
+# y qué texto salen), el cuerpo del correo de feedback.py, el aviso de
+# ajustar.py y la lectura de configuracion.py. Con los mismos datos, la página
+# y el Python tienen que dar lo mismo. Nombres y correos inventados.
+if shutil.which("node"):
+    import tempfile as _tempfile
+    from unittest.mock import patch as _patch
+
+    from modulos import datos as _datos_mod
+    from modulos.datos import ajustar as _ajustar
+    from modulos.semestre import configuracion as _configuracion
+    from modulos.tests import decisiones as _dec
+    from modulos.tests import feedback as _fb
+
+    def _fila(t, correo, evento, item="4", flujo="test", **extra):
+        return {"Timestamp": t, "Flujo": flujo, "Item": item, "Correo": correo, "Evento": evento, "Detalle": "",
+                "Modelo": "", "Nota": "", "EvaluacionIA": "", "Respuesta": "", **extra}
+
+    _html = "<p>Bien</p><p><b>NOTA FINAL:</b> 5,5</p>"
+    _log = [
+        _fila("2026-11-02T09:00:01-03:00", "ana@correo.test", "respuesta", Respuesta="primera respuesta"),
+        _fila("2026-11-02T09:00:02-03:00", "ana@correo.test", "correccion", Modelo="modelo-x", Nota="5,5",
+              EvaluacionIA=_html, Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:03-03:00", "ana@correo.test", "respuesta", Respuesta="otra respuesta",
+              Detalle="duplicado"),
+        _fila("2026-11-02T09:00:04-03:00", "beto@correo.test", "respuesta", Respuesta="r"),
+        _fila("2026-11-02T09:00:05-03:00", "beto@correo.test", "correccion", Nota="6,0", Detalle="modo=auto"),
+        _fila("2026-11-02T09:00:06-03:00", "beto@correo.test", "evaluacion", Nota="6,0"),
+        _fila("2026-11-02T09:00:07-03:00", "caro@correo.test", "respuesta", Respuesta="r"),
+        _fila("2026-11-02T09:00:08-03:00", "caro@correo.test", "correccion", Modelo="docente:profe@correo.test",
+              Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:09-03:00", "dani@correo.test", "respuesta", Respuesta="r"),
+        _fila("2026-11-02T09:00:10-03:00", "dani@correo.test", "correccion", Nota="4,0", Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:11-03:00", "dani@correo.test", "correccion", Nota="4,5", Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:12-03:00", "eli@correo.test", "correccion", Nota="3,0", Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:13-03:00", "eli@correo.test", "descarte", Detalle="otra pregunta; por profe"),
+        _fila("2026-11-02T09:00:14-03:00", "fede@correo.test", "evaluacion", Nota="5,0"),
+        _fila("2026-11-02T09:00:15-03:00", "gabi@correo.test", "correccion", Nota="6,5", Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:16-03:00", "hugo@correo.test", "correccion", Nota="2,0", Detalle="modo=revisar"),
+        _fila("2026-11-02T09:00:17-03:00", "Ivan@Correo.test", "correccion", Modelo="modelo-x", Nota="5,0",
+              Detalle="modo=auto"),
+        _fila("2026-11-02T09:00:18-03:00", "ana@correo.test", "correccion", item="5", Nota="6,5", Detalle="modo=auto"),
+        _fila("2026-11-02T09:00:19-03:00", "ana@correo.test", "evaluacion", item="5", Nota="6,5"),
+        _fila("2026-11-02T09:00:20-03:00", "zoe@correo.test", "correccion", flujo="tarea", Detalle="modo=revisar"),
+    ]
+    _decisiones_json = {
+        "caro@correo.test": {"estado": "enviar", "base": "2026-11-02T09:00:08-03:00", "nota_legado": "5,5",
+                             "html_legado": "<p>Hecha a mano</p>", "manual": True},
+        "dani@correo.test": {"estado": "enviar", "base": "2026-11-02T09:00:10-03:00"},
+        "gabi@correo.test": {"estado": "aprobada", "base": "2026-11-02T09:00:15-03:00"},
+        "hugo@correo.test": {"estado": "descartada", "base": "2026-11-02T09:00:16-03:00",
+                             "retroalimentacion": "respondió otra pregunta"},
+    }
+    _notas = [{"Correo": c, "Flujo": "test", "Item": i, "Nota": n, "Descartada": d, "Corregido": k}
+              for c, i, n, d, k in [
+                  ("ana@correo.test", "4", "", "", "2026-11-02"), ("beto@correo.test", "4", "6,0", "", "2026-11-02"),
+                  ("caro@correo.test", "4", "", "", "2026-11-02"), ("dani@correo.test", "4", "", "", "2026-11-02"),
+                  ("eli@correo.test", "4", "", "2026-11-02", "2026-11-02"),
+                  ("gabi@correo.test", "4", "", "", "2026-11-02"), ("hugo@correo.test", "4", "", "", "2026-11-02"),
+                  ("ivan@correo.test", "4", "", "", "2026-11-02"), ("ana@correo.test", "5", "6,5", "", "2026-11-02")]]
+    _del_item = [f for f in _log if f["Flujo"] == "test" and f["Item"] == "4"]
+    _por_correo = _dec.estado_por_correo(4, filas=_del_item)
+    with _patch.object(_dec, "leer", return_value={c.lower(): d for c, d in _decisiones_json.items()}), \
+         _patch.object(_dec, "estado_por_correo", return_value=_por_correo), \
+         _patch.object(_datos_mod.notas, "leer", return_value=[f for f in _notas if f["Item"] == "4"]):
+        _sel = _fb.seleccionar(4, "revisar")
+
+    _juntar = [
+        ({"EvaluacionIA": _html, "Nota": "5,5"}, None),
+        ({"EvaluacionIA": _html, "Nota": "5,5"}, {"nota_legado": "6.0"}),
+        ({"EvaluacionIA": _html, "Nota": "5,5"}, {"nota_legado": "5,5"}),
+        ({"EvaluacionIA": _html, "Nota": "5,5"}, {"html_legado": "<p>Otro</p><p>NOTA FINAL: 4</p>", "nota_legado": "6,5"}),
+        ({"EvaluacionIA": "", "Nota": ""}, {"nota_legado": "6,0", "html_legado": "<p>A mano</p>"}),
+        ({"EvaluacionIA": "```html\n<p>NOTA FINAL: 3,0</p>\n```", "Nota": "3,0"}, {"html_legado": "   "}),
+        ({"EvaluacionIA": _html, "Nota": "5,5"}, {"nota_legado": 6.5}),
+        ({"EvaluacionIA": "<p>NOTA\nFINAL:</strong>\n<span class=\"n\">4.5</span> y NOTA FINAL: 2</p>", "Nota": "4,5"},
+         {"nota_legado": "5"}),
+    ]
+    _plantilla = (RAIZ / "semestres" / "_template" / "tests_semanales" / "prompts" / "correo_correccion.md").read_text(
+        encoding="utf-8")
+    _cuerpos = [(None, _html, "Ana Pérez"), (_plantilla, "```html\n<p>x $& $1 {NOMBRE}</p>\n```", "Ana Pérez"),
+                (_plantilla, _html, ""), ("{NOMBRE}{EVALUACION}{NOMBRE}", "  <p>y</p>  ", "  Luis   Soto ")]
+    _avisos = [(_ajustar.AVISO_POR_DEFECTO, "Ana Pérez", "6,5", ""),
+               ("Hola {NOMBRE}, {NOTA} por {MOTIVO} $1 {NOMBRE}", "Luis", "5,0", "la firma"),
+               ("{NOMBRE}", "", "4,0", "")]
+    _vigentes = [({"base": "t2"}, {"Timestamp": "t2"}), ({"base": "t1"}, {"Timestamp": "t2"}), (None, {"Timestamp": "t2"}),
+                 ({}, {"Timestamp": ""}), ({"estado": "enviar"}, {"Timestamp": ""}), ({"base": "t2"}, None)]
+    _faltantes = [None, {"estado": "aprobada"}, {"estado": "enviar"}, {"estado": "enviar", "nota_legado": "6,5"},
+                  {"estado": "enviar", "nota_legado": "6,5", "html_legado": " "},
+                  {"estado": "enviar", "nota_legado": "6.55", "html_legado": "x"},
+                  {"estado": "enviar", "nota_legado": 6.5, "html_legado": "x"},
+                  {"estado": "enviar", "nota_legado": "6.5", "html_legado": "<p>x</p>"}]
+    _textos_conf = [None, "", "{}", '{"revision": "revisar"}', '{"revision": "AUTO "}', '{"revision": "otra"}',
+                    "no es json", "[]", '﻿{"revision": "auto", "correo_muestra": "Puntajes"}',
+                    '{"correo_muestra": "rara"}', '{"revision": null, "correo_muestra": "nada"}']
+    _confs = []
+    with _tempfile.TemporaryDirectory() as _tmp_conf:
+        _ruta_conf = Path(_tmp_conf) / "configuracion.json"
+        import contextlib as _contextlib
+        import io as _io
+        # Los textos que no se entienden imprimen un aviso: acá no hace falta verlo.
+        with _patch("modulos.semestre.raiz", return_value=Path(_tmp_conf)), \
+             _contextlib.redirect_stdout(_io.StringIO()):
+            for _texto in _textos_conf:
+                _ruta_conf.unlink(missing_ok=True)
+                if _texto is not None:
+                    _ruta_conf.write_text(_texto, encoding="utf-8")
+                _confs.append({"texto": _texto, "modo": _configuracion.modo_revision(),
+                               "muestra": _configuracion.correo_muestra()})
+
+    def _sin_originalidad(d):
+        return {"nota": d["nota"], "html": d["html"], "cambios": d["cambios"]}
+
+    _esperado = {
+        "juntar": [{"correccion": c, "decision": d, "sale": _sin_originalidad(_dec.juntar(c, d))} for c, d in _juntar],
+        "reescribir": [{"html": h, "nota": n, "sale": _dec.reescribir_nota_final(h, n)}
+                       for h, n in [(_html, "6,0"), ("<p>sin la línea</p>", "6,0"),
+                                    ("NOTA FINAL 4 y NOTA FINAL: 5", "7,0"), ("nota final:\n<b>\n3.5</b>", "4,0")]],
+        "cuerpo": [{"plantilla": t, "html": h, "nombre": n, "sale": _fb._construir_cuerpo_correccion(t, h, n)}
+                   for t, h, n in _cuerpos],
+        "aviso": [{"plantilla": t, "nombre": n, "nota": x, "motivo": m, "sale": _ajustar.cuerpo_aviso(t, n, x, m)}
+                  for t, n, x, m in _avisos],
+        "aviso_por_defecto": _ajustar.AVISO_POR_DEFECTO,
+        "vigente": [{"decision": d, "correccion": c, "sale": _dec.vigente(d, c)} for d, c in _vigentes],
+        "faltante": [{"decision": d, "sale": _dec.faltante_manual(d)} for d in _faltantes],
+        "configuracion": _confs,
+        "log": _log,
+        "notas": _notas,
+        "decisiones_texto": json.dumps(_decisiones_json),
+        "estado_por_correo": {c: {"base": e["correccion"]["Timestamp"], "cerrada": e["cerrada"],
+                                  "respuesta": (e.get("respuesta") or {}).get("Timestamp")}
+                              for c, e in _por_correo.items()},
+        "seleccion": {"enviar": sorted(x["correo"] for x in _sel["enviar"]),
+                      "descartar": sorted(x["correo"] for x in _sel["descartar"]),
+                      "saltadas": sorted(c for c, _ in _sel["saltadas"])},
+    }
+    check("el trabajo manda la corrección a mano aprobada, registra el descarte y salta la decisión vieja",
+          _esperado["seleccion"] == {"enviar": ["caro@correo.test"], "descartar": ["hugo@correo.test"],
+                                     "saltadas": ["dani@correo.test"]} and _sel["esperando"] == 3,
+          (_esperado["seleccion"], _sel["esperando"]))
+    with _tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "esperado.json").write_text(json.dumps(_esperado, ensure_ascii=False), encoding="utf-8")
+        r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "probar-revision.mjs"), str(Path(tmp) / "esperado.json")],
+                           capture_output=True, text=True, encoding="utf-8")
+    for linea in (r.stdout or "").splitlines():
+        estado, _, nombre = linea.partition("\t")
+        check(nombre, estado == "OK", linea)
+    if r.returncode and not r.stdout:
+        check("probar-revision.mjs corre", False, r.stderr[-600:])
+    elif r.returncode and r.stderr.strip():
+        check("probar-revision.mjs termina sin errores", False, r.stderr[-600:])
+else:
+    print("  (sin node en el PATH: no se prueba revision.js)")
+
 titulo("8. solo entra quien trae un token de Access firmado")
 # El Worker no confía en el encabezado de correo: verifica la firma del token.
 # Se prueba con claves generadas en el momento, sin red.

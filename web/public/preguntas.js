@@ -17,6 +17,22 @@
 import { api, caja, centrarSeleccion, conDetalle, confirmar, el, idDe, normalizar, pedirTrabajo, textoProgramado,
   urlTrabajos } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
+import { AUTO, cargarConfiguracion, REVISAR } from "./configuracion.js";
+
+/**
+ * Qué pasa al cierre de una instancia confirmada, según el modo de revisión
+ * vigente (configuracion.json). `cuando` es «vie 14/11 10:00». Sin saber el
+ * modo (no se pudo leer), lo dice en general.
+ */
+export function textoAlCierre(modo, cuando) {
+  if (modo === AUTO) return `se evalúa ${cuando}, al cierre, con el feedback por correo.`;
+  if (modo === REVISAR) {
+    return `se corrige ${cuando}, al cierre; las correcciones quedan esperando tu revisión en Tests › Revisar y el `
+      + "feedback no sale hasta que lo apruebes.";
+  }
+  return `se corrige ${cuando}, al cierre; según la configuración del semestre, el feedback sale solo o espera tu `
+    + "revisión.";
+}
 
 export const RUTA = "tests_semanales/data/preguntas.csv";
 const PLANTILLA_CORREO = "tests_semanales/prompts/correo_pregunta.md";
@@ -626,6 +642,28 @@ export function cambiosProhibidos(antes, despues, enviados) {
     }
     if (d.estado === "borrador" && a.estado !== "borrador") problemas.push(`${nombreDe(a)} ya se envió: no puede volver a borrador.`);
   }
+  return [...problemas, ...nombresRepetidos(despues)];
+}
+
+/**
+ * Dos instancias con el mismo Tipo y Número se llaman igual en la página y en
+ * el asunto, y el alumno no distingue los correos. Lo mismo que avisa
+ * modulos/tests/preguntas.py (_nombres_repetidos); acá no deja guardar.
+ */
+export function nombresRepetidos(datos) {
+  if (!datos?.columnas?.length || columnaId(datos) !== "Instancia") return [];
+  const vistos = new Map();
+  const problemas = [];
+  for (const n of idsDe(datos)) {
+    const s = leerSemana(datos, n);
+    const clave = `${s.tipo.split(/\s+/).join(" ").toLowerCase()}\u0000${s.numeroTipo}`;
+    if (vistos.has(clave)) {
+      problemas.push(`${s.tipo} ${s.numeroTipo} aparece dos veces (ids ${vistos.get(clave)} y ${n}): cambia el número `
+        + "de una de las dos.");
+    } else {
+      vistos.set(clave, n);
+    }
+  }
   return problemas;
 }
 
@@ -991,8 +1029,10 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     if (problemas.length) { mensaje.replaceChildren(caja("aviso", problemas.join(" "))); return; }
     const avisosAntes = avisosDe(s);
     const sale = enviarAhora ? "sale ahora" : `sale ${textoProgramado(new Date(s.envio))}`;
-    if (!await confirmar(`Vas a confirmar ${nombreDe(s)}: la pregunta ${sale} a los alumnos que no la tienen, y se `
-      + `evalúa ${textoProgramado(new Date(s.cierre))}, al cierre, con el feedback por correo. Son correos reales.`
+    // El modo no se fija al confirmar: lo lee la evaluación al correr. Se dice el de hoy.
+    const modo = await cargarConfiguracion(semestre).then((c) => c.modo, () => null);
+    if (!await confirmar(`Vas a confirmar ${nombreDe(s)}: la pregunta ${sale} a los alumnos que no la tienen, y `
+      + `${textoAlCierre(modo, textoProgramado(new Date(s.cierre)))} Son correos reales.`
       + `${avisosAntes.length ? `\n\nOjo: ${avisosAntes.join(" ")}` : ""}`
       + `\n\n${enviarAhora ? "" : "Hasta el envío puedes volverla a borrador, y eso anula lo programado. "}¿Confirmas?`,
     enviarAhora ? "Confirmar y enviar ahora" : "Confirmar", "real")) return;
