@@ -306,8 +306,9 @@ def _cargar(j):
     # llegan como int. En Python la nota es siempre float: sin esto la página
     # mostraría "7" donde Streamlit muestra "7.0".
     for f in _TODAS:
-        if f.get("Nota") is not None:
-            f["Nota"] = float(f["Nota"])
+        for c in ("Nota", "NotaModelo", "Logro"):
+            if f.get(c) is not None:
+                f[c] = float(f[c])
     return json.dumps({"items": items(_TODAS), "grupos": grupos(_TODAS)})
 
 def _filtrar(items_j, grupos_j):
@@ -1138,15 +1139,25 @@ function seccionPendientes() {
   const enCurso = itemEnCurso();
   const sinResp = llamar("_casillas", JSON.stringify({ estado: "sin_responder" }));
   const pend = llamar("_casillas", JSON.stringify({ estado: "sin_nota" }));
+  // Corregidas que esperan la revisión docente: no son nota todavía (la nota
+  // cuenta cuando sale el correo), y tampoco hay que volver a corregirlas.
+  const porRevisar = llamar("_casillas", JSON.stringify({ estado: "por_revisar" }));
   const cerradas = sinResp.filter((c) => c.Item !== enCurso);
   const deEnCurso = sinResp.filter((c) => c.Item === enCurso);
   return [
-    el("h4", {}, `Respondieron pero no tienen nota — ${pend.length}`),
+    el("h4", {}, `Respondieron y nadie las ha corregido — ${pend.length}`),
     pend.length ? [
       el("p", { class: "nota-pie" }, "Pueden ser respuestas fuera de plazo. Se evalúan en ",
         el("a", { href: "/tests#evaluar" }, "Tests Semanales › Evaluar respuestas"), "."),
       pend.map(tarjetaCasilla),
     ] : caja("exito", "No hay respuestas pendientes de evaluación."),
+    porRevisar.length ? [
+      el("hr"),
+      el("h4", {}, `Corregidas, esperando revisión — ${porRevisar.length}`),
+      el("p", { class: "nota-pie" }, "Todavía no son nota: el alumno no ha recibido el feedback. Se revisan en ",
+        el("a", { href: "/tests#revisar" }, "Tests Semanales › Revisar"), "."),
+      porRevisar.map(tarjetaCasilla),
+    ] : null,
     el("hr"),
     el("h4", {}, `${deEnCurso.length ? "Sin responder en semanas ya evaluadas" : "Sin responder"} — ${cerradas.length}`),
     cerradas.length ? listaPorAlumno(cerradas) : caja("exito", "Todos respondieron lo que se les envió."),

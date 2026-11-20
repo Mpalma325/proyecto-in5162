@@ -245,8 +245,14 @@ for sem in SEMESTRES:
           not any(f["PorRevisar"] and f["Descartada"] for f in filas))
     check(f"{sem}: PorRevisar y Descartada son booleanas, como las demás de BOOLEANAS",
           all(isinstance(f["PorRevisar"], bool) and isinstance(f["Descartada"], bool) for f in filas))
-    check(f"{sem}: NotaModelo vacía hasta que exista la corrección en el log",
-          all(f["NotaModelo"] is None for f in filas))
+    # Sin eventos `correccion` (semestres anteriores a la revisión), la nota
+    # del modelo es la del feedback: coincide con la nota salvo un ajuste.
+    from modulos.datos import log as _log_sem
+    ajustadas = {(e["Correo"].strip().lower(), e["Item"]) for e in _log_sem.leer(sem, evento="ajuste")}
+    distintas = [f for f in filas if f["Nota"] is not None and (f["Correo"], f["Item"]) not in ajustadas
+                 and f["NotaModelo"] is not None and f["NotaModelo"] != f["Nota"]]
+    check(f"{sem}: sin corrección en el log, NotaModelo es la nota del feedback (salvo ajustes)",
+          not distintas, distintas[:2])
 
 from comun import semestre_desechable  # noqa: E402
 from modulos import datos  # noqa: E402

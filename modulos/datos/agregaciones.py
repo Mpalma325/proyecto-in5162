@@ -73,7 +73,8 @@ def casillas(filas: list[dict], *, tramo: float | None = None, ancho: float = 0.
     `sin_responder` y `pendientes_de_evaluar`. Así la lista tiene siempre
     exactamente las casillas que cuenta la barra.
 
-    `estado` puede ser "sin_responder", "sin_nota" o "evaluada".
+    `estado` puede ser "sin_responder", "sin_nota" (respondió y nadie lo ha
+    corregido), "por_revisar" (corregida, esperando la revisión) o "evaluada".
     Se devuelven de la nota más baja a la más alta, que es lo que se quiere
     revisar primero.
     """
@@ -90,7 +91,9 @@ def casillas(filas: list[dict], *, tramo: float | None = None, ancho: float = 0.
     if estado == "sin_responder":
         salida = [f for f in salida if f["Enviado"] and not f["Respondio"]]
     elif estado == "sin_nota":
-        salida = [f for f in salida if f["Respondio"] and f["Nota"] is None]
+        salida = [f for f in salida if _sin_corregir(f)]
+    elif estado == "por_revisar":
+        salida = [f for f in salida if _espera_revision(f)]
     elif estado == "evaluada":
         salida = [f for f in salida if f["Nota"] is not None]
     return sorted(salida, key=lambda f: (f["Nota"] is not None, f["Nota"] or 0,
@@ -120,12 +123,27 @@ def grupos(filas: list[dict]) -> list[str]:
     return sorted({f["Grupo"] for f in filas if f["Grupo"]})
 
 
+def _espera_revision(f: dict) -> bool:
+    """Corregida y sin enviar: la propuesta espera al docente. No es nota todavía."""
+    return bool(f.get("PorRevisar")) and f["Nota"] is None
+
+
+def _descartada(f: dict) -> bool:
+    """El docente decidió no mandar feedback: cerrada, sin nota y sin pendiente."""
+    return bool(f.get("Descartada")) and f["Nota"] is None
+
+
+def _sin_corregir(f: dict) -> bool:
+    return bool(f["Respondio"]) and f["Nota"] is None and not _espera_revision(f) and not _descartada(f)
+
+
 def _agregar(filas: list[dict]) -> dict:
     """Las métricas de un conjunto de casillas. Único lugar donde se calculan."""
     enviados = [f for f in filas if f["Enviado"]]
     respondieron = [f for f in filas if f["Respondio"]]
     notas = [f["Nota"] for f in filas if f["Nota"] is not None]
     sin_registro = [f for f in filas if f["Enviado"] and not f["EnvioRegistrado"]]
+    por_revisar = [f for f in filas if _espera_revision(f)]
 
     return {
         "Casillas": len(filas),
@@ -134,7 +152,10 @@ def _agregar(filas: list[dict]) -> dict:
         "Respondieron": len(respondieron),
         "SinResponder": len(enviados) - len(respondieron),
         "Evaluados": len(notas),
-        "PendientesEvaluar": len(respondieron) - len(notas),
+        # Lo mismo que lista pendientes_de_evaluar: ni las por revisar ni las
+        # descartadas, que ya están corregidas.
+        "PendientesEvaluar": sum(1 for f in filas if _sin_corregir(f)),
+        "PorRevisar": len(por_revisar),
         "TasaRespuesta": round(len(respondieron) / len(enviados) * 100, 1) if enviados else None,
         "NotaMedia": round(sum(notas) / len(notas), 2) if notas else None,
         "NotaMin": min(notas) if notas else None,
@@ -541,8 +562,16 @@ def sin_responder(filas: list[dict]) -> list[dict]:
 
 
 def pendientes_de_evaluar(filas: list[dict]) -> list[dict]:
-    """Respondieron pero todavía no tienen nota."""
+    """Respondieron y nadie los ha corregido. Las por revisar y las descartadas no entran."""
     return sorted(
-        [f for f in filas if f["Respondio"] and f["Nota"] is None],
+        [f for f in filas if _sin_corregir(f)],
+        key=lambda f: (_orden_item(f["Item"]), f["Nombre"].lower()),
+    )
+
+
+def por_revisar(filas: list[dict]) -> list[dict]:
+    """Corregidas que esperan la revisión docente: todavía no son nota."""
+    return sorted(
+        [f for f in filas if _espera_revision(f)],
         key=lambda f: (_orden_item(f["Item"]), f["Nombre"].lower()),
     )

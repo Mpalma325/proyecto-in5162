@@ -117,6 +117,30 @@ for sem in [s for s in semestre.listar() if not s.startswith("_")]:
                     for x in json.loads(ns["_calc"]("por_item")))
     check(f"{sem}: cada semana abre sus casillas", semana_ok)
 
+titulo("4b. por revisar y descartadas no son pendientes de evaluar ni notas")
+sem = [s for s in semestre.listar() if not s.startswith("_")][-1]
+local = [dict(f) for f in reportes.panel(sem)]
+con_nota = [f for f in local if f.get("EnRoster") and f["Nota"] is not None][:3]
+if len(con_nota) == 3:
+    for f, marca in zip(con_nota, ("PorRevisar", "PorRevisar", "Descartada")):
+        f.update({"Nota": None, "NotaTexto": "", marca: True})
+    ns["_cargar"](como_javascript(local))
+    ns["_filtrar"]("[]", "[]")
+    lista = lambda **c: json.loads(ns["_casillas"](json.dumps(c)))
+    r = json.loads(ns["_calc"]("resumen"))
+    esperado = reportes.filtrar([f for f in local if f.get("EnRoster")])
+    check("el indicador cuenta 2 por revisar", r["PorRevisar"] == 2, r.get("PorRevisar"))
+    check("'por revisar' abre lo que cuenta el indicador", len(lista(estado="por_revisar")) == r["PorRevisar"])
+    check("'sin nota' sigue abriendo lo que cuenta PendientesEvaluar, sin las por revisar ni la descartada",
+          len(lista(estado="sin_nota")) == r["PendientesEvaluar"]
+          and not any(c["Correo"] == f["Correo"] and c["Item"] == f["Item"]
+                      for c in lista(estado="sin_nota") for f in con_nota))
+    check("pendientes_de_evaluar de Python coincide",
+          len(reportes.pendientes_de_evaluar(esperado)) == r["PendientesEvaluar"]
+          and len(reportes.por_revisar(esperado)) == 2)
+else:
+    print("  (el semestre no tiene tres notas: no se prueba)")
+
 titulo("5. el Worker devuelve las columnas en el orden de Python")
 columnas_ts = re.search(r"const COLUMNAS = \[(.*?)\]", WORKER.read_text(encoding="utf-8"), re.S)
 orden_ts = re.findall(r'"([A-Za-z]+)"', columnas_ts.group(1)) if columnas_ts else []
