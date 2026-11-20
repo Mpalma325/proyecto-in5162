@@ -1,5 +1,7 @@
 // Las comprobaciones de public/prompts.js antes de guardar un prompt editado.
 // La corre pruebas/web.py.
+import fs from "node:fs";
+
 const { PROMPTS, problemasDePrompt } = await import(new URL("../public/prompts.js", import.meta.url));
 const evaluar = PROMPTS["tests_semanales/prompts/evaluar_respuesta.md"];
 const feedback = PROMPTS["tareas/prompts/correo_feedback.md"];
@@ -7,6 +9,12 @@ const casos = [
   ["un prompt de evaluación con sus etiquetas está bien",
     problemasDePrompt(evaluar, "...NOTA FINAL: x\nORIGINALIDAD: y"), 0],
   ["sin «NOTA FINAL:» avisa", problemasDePrompt(evaluar, "...ORIGINALIDAD: y"), 1],
+  ["un prompt que pide JSON con «puntaje» y «originalidad» no pide NOTA FINAL",
+    problemasDePrompt(evaluar, 'Devuelve JSON: {"preguntas": [{"puntaje": 2}], "originalidad": "Media"}'), 0],
+  ["un prompt JSON sin «originalidad» avisa",
+    problemasDePrompt(evaluar, 'Devuelve JSON: {"preguntas": [{"puntaje": 2}]}'), 1],
+  ["el prompt de la plantilla (JSON) pasa", problemasDePrompt(evaluar, fs.readFileSync(
+    new URL("../../semestres/_template/tests_semanales/prompts/evaluar_respuesta.md", import.meta.url), "utf8")), 0],
   ["un correo de tareas con sus variables está bien",
     problemasDePrompt(feedback, "Hola {nombre}, tu nota en {tarea} es {nota}. {{llaves}}"), 0],
   ["una variable que no existe avisa", problemasDePrompt(feedback, "Hola {Nombre}"), 1],

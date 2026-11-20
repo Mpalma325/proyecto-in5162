@@ -18,6 +18,7 @@ import { api, caja, centrarSeleccion, conDetalle, confirmar, el, idDe, normaliza
   urlTrabajos } from "./comun.js";
 import { escribirCsv, leerCsv } from "./csv.js";
 import { AUTO, cargarConfiguracion, REVISAR } from "./configuracion.js";
+import { ARCHIVO as ARCHIVO_ESCALA, leerEscala, POR_DEFECTO, rango } from "./escala.js";
 
 /**
  * Qué pasa al cierre de una instancia confirmada, según el modo de revisión
@@ -425,14 +426,18 @@ export function bloquePreguntas(preguntas, legado = true) {
     ...preguntas.map((p, i) => `<blockquote style="${ESTILO_CITA}">\n  ${i + 1}. ${p}\n</blockquote>`)].join("\n");
 }
 
-/** El correo que recibe un alumno de ese grupo: { asunto, html }. */
-export function correoDe(plantilla, semana, grupo, nombre = "Ana") {
+/**
+ * El correo que recibe un alumno de ese grupo: { asunto, html }. `escala` es la
+ * del semestre (escala.js), para {ESCALA}; sin ella, la de siempre (4,0 a 7,0).
+ */
+export function correoDe(plantilla, semana, grupo, nombre = "Ana", escala = POR_DEFECTO) {
   const preguntas = semana.preguntas.map((p) => (p.igual ? p.control : p[grupo]).texto.trim()).filter(lleno);
   // Como preguntas.py: en el formato nuevo manda el cierre, y la columna queda de respaldo.
   const fecha = (semana.tipo && textoFecha(semana.cierre)) || semana.fecha.trim();
   return {
     asunto: asuntoDe(semana),
     html: plantilla
+      .replaceAll("{ESCALA}", rango(escala))
       .replaceAll("{NOMBRE}", nombre)
       .replaceAll("{TEMA}", semana.tema.trim())
       .replaceAll("{FECHA_ENTREGA}", fecha)
@@ -720,6 +725,7 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
   let borrador = null; // esa instancia, con lo que se ha editado
   let original = null; // la misma instancia al abrirla, para saber si hay cambios
   let plantilla = null; // correo_pregunta.md, para la vista previa
+  let escalaSemestre = POR_DEFECTO; // escala_notas.json, para {ESCALA}
   let envios = { enviados: new Map(), items: [] }; // de notas.csv
   let legado = true;
 
@@ -915,7 +921,7 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
     const detalles = el("details", { class: "vista-previa" },
       el("summary", {}, "Vista previa del correo"), el("div", { class: "contenido" }, contenido));
     const mostrar = (grupo) => {
-      const { asunto, html } = correoDe(plantilla, borrador, grupo);
+      const { asunto, html } = correoDe(plantilla, borrador, grupo, "Ana", escalaSemestre);
       const distintas = usaGrupos && borrador.preguntas.some((p) => !p.igual);
       contenido.replaceChildren(
         distintas ? el("div", { class: "chips" }, GRUPOS.map((g) => el("button", {
@@ -932,6 +938,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
         contenido.replaceChildren(el("p", { class: "cargando" }, "Cargando la plantilla del correo…"));
         try {
           plantilla = await leerTexto(semestre, PLANTILLA_CORREO);
+          // {ESCALA} sale de escala_notas.json; sin el archivo, 4,0 a 7,0.
+          escalaSemestre = leerEscala(await leerTexto(semestre, ARCHIVO_ESCALA).catch(() => null)).escala;
         } catch (e) {
           contenido.replaceChildren(caja("aviso", `No pude leer correo_pregunta.md: ${e.message}`));
           return;

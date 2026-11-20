@@ -36,6 +36,9 @@ COLUMNAS = [
     # La revisión docente (fase 3): qué propuso quién corrigió, qué salió y quién lo revisó.
     "Logro", "NotaEnviada", "Editada", "RevisadoPor", "CorregidoPor", "ModoRevision",
     "FechaFeedback", "Descartada",
+    # La escala de notas (fase 4): con qué escala se calculó la Nota vigente y si
+    # la dejó así un cambio de escala (evento recalculo).
+    "EscalaNota", "Recalculada",
     "Repreguntas", "Tutorias",
 ]
 
@@ -55,14 +58,18 @@ def _numerar(textos: list[str]) -> str:
 
 def _eventos(semestre_id: str) -> dict:
     """Por (correo, flujo, item): el último envío, corrección, evaluación, descarte,
-    ajuste y feedback, y cuántas repreguntas."""
+    ajuste, recálculo y feedback, cuál de ellos dejó la nota vigente y cuántas
+    repreguntas."""
     por = {}
     for e in sorted(datos.log.leer(semestre_id), key=lambda f: datos.log._instante(f.get("Timestamp"))):
         clave = (e.get("Correo", "").strip().lower(), e.get("Flujo", ""), str(e.get("Item", "")))
         d = por.setdefault(clave, {"repreguntas": 0, "tutorias": 0})
         ev = e.get("Evento")
-        if ev in ("envio", "correccion", "evaluacion", "descarte", "ajuste", "feedback"):
+        if ev in ("envio", "correccion", "evaluacion", "descarte", "ajuste", "feedback", "recalculo"):
             d[ev] = e
+            # La nota vigente es la del último de estos tres (como reconstruir_estado).
+            if ev in ("evaluacion", "ajuste", "recalculo") and (e.get("Nota") or "").strip():
+                d["nota_por"] = e
             # La de antes (sin Message-ID) trae la nota del modelo; la del envío
             # después de una revisión trae la que salió.
             if ev == "evaluacion" and not (e.get("MessageId") or "").strip():
@@ -167,6 +174,21 @@ def _revision(flujo: str, correccion: dict, evaluacion: dict, descarte: dict) ->
     return salida
 
 
+def _escala_nota(nota_por: dict) -> dict:
+    """EscalaNota y Recalculada de una casilla de Tests, según el evento que dejó la nota.
+
+    Una evaluación anota su escala en Versiones (escala=4-7/1); un recálculo, en
+    el Detalle («escala 4-7/1 → 1-7/1; por X»). Un ajuste es una nota puesta a
+    mano y no tiene escala. Las evaluaciones de antes de la escala no la anotan.
+    """
+    ev = nota_por.get("Evento")
+    if ev == "recalculo":
+        m = re.match(r"escala .+? → (.+?);", nota_por.get("Detalle") or "")
+        return {"EscalaNota": m.group(1) if m else "", "Recalculada": "sí"}
+    m = re.search(r"(?:^|; )escala=([^;]+)", nota_por.get("Versiones") or "") if ev == "evaluacion" else None
+    return {"EscalaNota": m.group(1).strip() if m else "", "Recalculada": "no"}
+
+
 def construir(semestre_id: str | None = None) -> list[dict]:
     sid = semestre_id or _semestre.activo_o_error()
     eventos = _eventos(sid)
@@ -204,6 +226,9 @@ def construir(semestre_id: str | None = None) -> list[dict]:
                 "Descartada": "sí" if p.get("Descartada") else "no",
             })
             fila.update(_revision(flujo, correccion, evaluacion, descarte))
+            fila["Recalculada"] = "no"
+            if flujo == datos.TESTS and p["Nota"] is not None:
+                fila.update(_escala_nota(ev.get("nota_por") or {}))
             if flujo == datos.TESTS:
                 info = semanas.get(str(p["Item"]))
                 fila["Variante"] = p["Grupo"]

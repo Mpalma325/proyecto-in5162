@@ -17,7 +17,8 @@ Cuando alguien aprieta "Evaluar", el Worker anota el trabajo y le avisa al motor
 | CSV, prompts y entregas de cada semestre | R2, con las mismas rutas que en disco: `semestres/2026-2/alumnos.csv` |
 | La tabla de la reportería | D1, tabla `panel` |
 | Los trabajos pedidos y su salida | D1, tabla `trabajos` |
-| Modelo, temperatura, escala de notas, grupos | D1, tabla `parametros`. El motor se los pasa a cada script como variables de entorno |
+| Modelo, temperatura, escala de notas de Tareas, grupos | D1, tabla `parametros`. El motor se los pasa a cada script como variables de entorno |
+| La escala de notas de Tests | R2, `escala_notas.json` del semestre. Sin el archivo, 4,0 a 7,0 con un decimal |
 | Quién cambió cada archivo, y la versión anterior | D1, tabla `ediciones`; las versiones en R2, bajo `historial/` |
 | Clave de OpenAI, correo y su contraseña | Solo en el motor (Secret Manager). Nunca pasan por el sitio |
 
@@ -31,6 +32,26 @@ Cuando alguien aprieta "Evaluar", el Worker anota el trabajo y le avisa al motor
 - **Nada se pisa sin saberlo.** Cada escritura lleva la versión que se leyó (`If-Match`); si en la nube cambió mientras tanto, el Worker responde 409 en vez de reemplazarla. Vale para el motor, la página y `subir`.
 - **Historial.** Antes de reemplazar un archivo, el Worker guarda la versión anterior en R2 (`historial/`) y anota quién la cambió en la tabla `ediciones`. Se ve en Configuración › Registro › Historial.
 - **Dos tokens con lo mínimo.** `TOKEN_MOTOR` lo usa el motor para leer y escribir archivos y trabajos; no sirve para ver la reportería ni para pedir trabajos. `TOKEN_WEB` lo usa el Worker para avisarle al motor.
+
+## La escala de notas de Tests
+
+Se cambia en Configuración › Semestre, y solo en un semestre con
+`configuracion.json`; en los otros la página dice que usa la configuración de
+antes. «Ver qué cambia» pide `datos.escala` en modo prueba y muestra cuántas
+notas cambian, la media antes y después y las que quedan fijas. «Guardar y
+recalcular» se habilita después de simular esa misma escala. Si alguna nota
+que cambia ya le llegó al alumno con número, la confirmación pide escribir el
+id del semestre. El trabajo no manda correos.
+
+La salida de `datos.escala` termina con una línea `@@escala {…}` que la página
+lee para la confirmación; `sinProgreso` (comun.js) la oculta, igual que las de
+`@@progreso`.
+
+Resultados, el ajuste de notas, Tests › Revisar y Probar criterio leen
+`escala_notas.json`: los ejes, los tramos de los histogramas y la validación de
+una nota salen de la escala. `public/escala.js` y `public/correccion.js` son
+las gemelas de `modulos/escala.py` y `modulos/tests/correccion.py`; calculan
+con enteros (BigInt) para dar el mismo redondeo que Python.
 
 ## En el PC, para desarrollar
 
@@ -110,4 +131,4 @@ Con el uso del curso todo queda dentro de los planes gratuitos: Cloudflare (Work
 
 ## Pruebas
 
-`python pruebas/web.py` comprueba que el puente de la reportería calcule lo mismo que `reportes.py`, que el editor de CSV guarde los archivos sin alterarlos, que solo entre quien trae un token de Access bien firmado y que el Worker, el motor y la página tengan las mismas listas de flujos y parámetros. `python pruebas/motor.py` corre el ciclo de un trabajo sin red.
+`python pruebas/web.py` comprueba que el puente de la reportería calcule lo mismo que `reportes.py`, que el editor de CSV guarde los archivos sin alterarlos, que solo entre quien trae un token de Access bien firmado y que el Worker, el motor y la página tengan las mismas listas de flujos y parámetros. `python pruebas/motor.py` corre el ciclo de un trabajo sin red. `python pruebas/correccion.py` compara `correccion.js` y `escala.js` con sus gemelas de Python sobre los mismos casos, con `scripts/probar-correccion.mjs`.

@@ -11,6 +11,10 @@ import {
   seguirTrabajo, vistaCorreo,
 } from "./comun.js";
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
+import {
+  ARCHIVO as ARCHIVO_ESCALA, dominioNotas as dominioEscala, leerEscala, limitesAjuste, POR_DEFECTO, problemaNota,
+  texto as textoNota,
+} from "./escala.js";
 import { asuntoDe, esLegado, leerSemana, nombreDe, semanasDe } from "./preguntas.js";
 import { cuerpoAviso } from "./revision.js";
 import { seccionSabana } from "./sabana.js";
@@ -50,6 +54,8 @@ const estado = {
   filas: [],
   // La última semana enviada (semanaActual), sobre todo el semestre.
   semana: null,
+  // escala_notas.json del semestre (sin el archivo, 4,0–7,0): ejes, histograma y ajuste.
+  escala: POR_DEFECTO,
   filtrosAbiertos: null, ordenAlumnos: null, busquedaAlumnos: "", irAFicha: false,
   // Correlaciones: si se mira por alumno o por respuesta, y el par elegido en cada caso.
   correlacion: { unidad: "alumno", alumno: ["NotaMedia", "TasaRespuesta"], respuesta: ["Nota", "Palabras"] },
@@ -198,7 +204,7 @@ function correoEvaluacion(c) {
     para: c.Correo, nombre: c.Nombre, html: true,
     // Con función: como texto de reemplazo, un "$&" o "$'" de la evaluación se interpretaría.
     cuerpo: plantilla ? plantilla.replaceAll("{NOMBRE}", () => nombre).replaceAll("{EVALUACION}", () => evaluacion)
-      : html ? evaluacion : evaluacionDeTexto(evaluacion),
+      : html ? evaluacion : evaluacionDeTexto(evaluacion, estado.escala),
   }, {
     aviso: plantilla ? "Rearmado con la plantilla actual del correo: el saludo o el pie pueden diferir de lo enviado."
       : html ? null : "Guardado como texto (recuperado del buzón): el formato se rearmó para leerlo.",
@@ -273,12 +279,11 @@ const campo = (field, type, extra = {}) => ({ field, type, ...extra });
 const EJE_CONTEO = { tickMinStep: 1, format: "d" };
 const tooltips = (campos) => campos.filter((c) => c !== "Item" || !formatoNuevo()).map((c) => ({ field: c }));
 
-/** Eje de notas ajustado a los datos con medio punto de margen, dentro de 1 a 7. */
-function dominioNotas(valores) {
-  const v = valores.filter(hay);
-  if (!v.length) return [1, 7];
-  return [Math.max(1, Math.floor(Math.min(...v) - 0.5)), Math.min(7, Math.ceil(Math.max(...v) + 0.5))];
-}
+/**
+ * Eje de notas ajustado a los datos, dentro de la escala del semestre (escala.js).
+ * Con 4–7: medio punto de margen, entre 1 y 7, como siempre.
+ */
+const dominioNotas = (valores) => dominioEscala(valores.filter(hay), estado.escala);
 
 /**
  * Serie por semana, como `_linea` de main.py. Todas las semanas quedan en el
@@ -393,7 +398,14 @@ const calc = (nombre) => llamar("_calc", nombre);
 async function cargarSemestre(id) {
   estado.semestre = id;
   estado.alumno = null;
-  const filas = await api(`/api/panel/${encodeURIComponent(id)}`);
+  const [filas, textoEscala] = await Promise.all([
+    api(`/api/panel/${encodeURIComponent(id)}`),
+    fetch(`/api/archivo/${encodeURIComponent(id)}/${ARCHIVO_ESCALA}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : null)).catch(() => null),
+  ]);
+  // La escala va a Python antes de calcular: los tramos del histograma salen de ella.
+  estado.escala = leerEscala(textoEscala).escala;
+  llamar("usar_escala", Number(estado.escala.minima), Number(estado.escala.maxima));
   const meta = llamar("_cargar", JSON.stringify(filas));
   estado.items = meta.items;
   estado.grupos = meta.grupos;
@@ -694,7 +706,7 @@ function seccionOriginalidad() {
     mark: { type: "bar", cornerRadiusTopLeft: 4, cornerRadiusTopRight: 4 },
     encoding: {
       x: campo("Originalidad", "ordinal", { title: "", sort: etiquetas }),
-      y: campo("NotaMedia", "quantitative", { title: "Nota media", scale: { domain: [1.0, 7.0] } }),
+      y: campo("NotaMedia", "quantitative", { title: "Nota media", scale: { domain: limitesAjuste(estado.escala) } }),
       color: campo("Originalidad", "nominal", { scale: escala, sort: etiquetas, legend: null }),
       tooltip: tooltips(["Originalidad", "Evaluaciones", "NotaMedia", "NotaMin", "NotaMax"]),
     },
@@ -1141,7 +1153,8 @@ function plantillaAjuste() {
  * feedback; sin la casilla no se le escribe.
  */
 function formularioAjuste(c) {
-  const nota = el("input", { type: "text", size: 5, placeholder: "6,5", "aria-label": "Nota nueva" });
+  const ejemplo = textoNota(estado.escala, estado.escala.maxima);
+  const nota = el("input", { type: "text", size: 5, placeholder: ejemplo, "aria-label": "Nota nueva" });
   const motivo = el("input", { type: "text", size: 40, placeholder: "opcional", "aria-label": "Motivo (opcional)" });
   const avisar = el("input", { type: "checkbox" });
   const vista = el("div", { class: "vista-aviso", hidden: true });
@@ -1153,7 +1166,7 @@ function formularioAjuste(c) {
     vista.hidden = !avisar.checked;
     if (!avisar.checked) return;
     const plantilla = await plantillaAjuste();
-    const n = nota.value.trim().replace(".", ",") || "6,5";
+    const n = nota.value.trim().replace(".", ",") || ejemplo;
     vista.replaceChildren(vistaCorreo({
       asunto: semana ? `Re: ${asuntoDe(semana)}` : "", para: c.Correo, nombre: c.Nombre, html: true,
       cuerpo: cuerpoAviso(plantilla, c.Nombre, n, motivo.value.trim()),
@@ -1162,9 +1175,10 @@ function formularioAjuste(c) {
   [avisar, nota, motivo].forEach((x) => x.addEventListener(x === avisar ? "change" : "input", pintarAviso));
   boton.addEventListener("click", async () => {
     const n = nota.value.trim().replace(".", ",");
-    const v = Number(n.replace(",", "."));
-    if (!/^\d{1,2}(,\d)?$/.test(n) || v < 1 || v > 7) {
-      destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
+    // La misma regla que ajustar.py: de min(1, mínima) a la máxima, con los decimales de la escala.
+    const problema = problemaNota(estado.escala, n);
+    if (problema) {
+      destino.replaceChildren(caja("aviso", problema));
       return;
     }
     const conAviso = avisar.checked;

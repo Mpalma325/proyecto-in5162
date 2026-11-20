@@ -98,9 +98,9 @@ def ciclo_completo():
         from modulos.ia import versiones
         plantilla = versiones.anotar(config_tests.PROMPTS / "correo_correccion.md",
                                      "<div>{EVALUACION}<hr><p>Cierre fijo para {NOMBRE}.</p></div>")
-        check("el log anota con qué prompt, pauta y plantilla del correo se corrigió",
+        check("el log anota con qué prompt, pauta, plantilla del correo y escala se corrigió",
               len(guardada) == 1 and guardada[0].get("Versiones")
-              == f"evaluar_respuesta.md@1a2b3c4d; pauta.md@5e6f7a8b; {plantilla}", guardada)
+              == f"evaluar_respuesta.md@1a2b3c4d; pauta.md@5e6f7a8b; {plantilla}; escala=4-7/1", guardada)
         check("la nota sale igual de la corrección", datos.notas.estado(tercero, datos.TESTS, "5", sid)["Nota"] == "6,0")
 
 
@@ -494,6 +494,40 @@ def ensayo_de_prompt():
             vacio = experimento.main(archivo, n=3, semilla=7, dry_run=True)
         check("no llamó a la IA", len(llamadas) == 0, len(llamadas))
         check("no devolvió resultados", vacio == [], vacio)
+
+        titulo("21b. con un prompt JSON, la nota la calcula la escala; lo del docente no entra")
+        import json as _json
+
+        from comun import puntajes_ia
+        elegida = disponibles[0]
+        datos.log.registrar("correccion", datos.TESTS, elegida["Item"], elegida["Correo"], sid,
+                            Modelo="docente:profe@x.cl", Nota="", Detalle="modo=revisar")
+        despues = experimento.candidatas(semestre_id=sid)
+        check("la casilla cuya última corrección es del docente sale de las candidatas",
+              len(despues) == len(disponibles) - 1
+              and (elegida["Correo"], elegida["Item"]) not in {(f["Correo"], f["Item"]) for f in despues},
+              (len(despues), len(disponibles)))
+        con_json = tmp / "prompt_json.md"
+        con_json.write_text("Evalúa.\nPreguntas: {{PREGUNTAS}}\nPautas: {{PAUTAS}}\n"
+                            'Devuelve JSON: {"preguntas": [{"puntaje": 3}], "originalidad": "Media"}\n',
+                            encoding="utf-8")
+        (tmp / "escala_notas.json").write_text(_json.dumps({"minima": 1.0}), encoding="utf-8")
+        salida_json = tmp / "tests_semanales" / "data" / "experimento_json.csv"
+        with patch("modulos.tests.experimento.evaluar_respuesta",
+                   side_effect=lambda *a, **k: puntajes_ia(3, 0, originalidad="Alta")):
+            con_escala = experimento.main(con_json, n=2, semilla=7, salida=salida_json)
+        check("los puntajes 3 y 0 dan 4,0 en la escala del semestre (1 a 7), no en 4 a 7",
+              con_escala and all(r["NotaDespues"] == 4.0 and r["OriginalidadDespues"] == "Alta" for r in con_escala),
+              [(r["NotaDespues"], r["OriginalidadDespues"]) for r in con_escala])
+        import csv as _csv
+        with salida_json.open(encoding="utf-8-sig", newline="") as f:
+            lector = _csv.DictReader(f)
+            columnas, filas_json = lector.fieldnames, list(lector)
+        check("la salida dice «Test» y trae la nota final al lado de la del modelo",
+              "Test" in columnas and "Semana" not in columnas and "NotaFinal" in columnas, columnas)
+        check("antes es la nota del modelo (NotaModelo), y el delta se mide contra ella",
+              all(r["DeltaNota"] == round(4.0 - r["NotaAntes"], 2) for r in con_escala), con_escala[:1])
+        (tmp / "escala_notas.json").unlink()
 
 
 def _desalinear_estado(carpeta, quitar=5, vaciar=4):

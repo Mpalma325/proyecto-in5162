@@ -17,6 +17,7 @@ import {
   semanasPorVersion, textoNota,
 } from "./criterio.js";
 import { leerCsv } from "./csv.js";
+import { ARCHIVO as ARCHIVO_ESCALA, leerEscala, POR_DEFECTO } from "./escala.js";
 import { esLegado, RUTA as RUTA_PREGUNTAS, semanasDe as instanciasDe } from "./preguntas.js";
 
 const VIGENTE = "tests_semanales/prompts/evaluar_respuesta.md";
@@ -45,10 +46,13 @@ function objetosCsv(texto) {
   return filas.map((f) => Object.fromEntries(columnas.map((c, i) => [c, f[i] ?? ""])));
 }
 
-/** Una corrección del modelo, para dibujarla como correo: HTML tal cual, texto rearmado. */
-function cuerpoCorreccion(texto) {
+/**
+ * Una corrección del modelo, para dibujarla como correo: HTML tal cual, texto
+ * rearmado. La del JSON se arma con la escala del semestre, como al corregir.
+ */
+function cuerpoCorreccion(texto, escala = POR_DEFECTO) {
   const limpio = String(texto || "").trim().replace(/^```(?:html)?\s*/, "").replace(/\s*```$/, "");
-  return /<(p|b|strong|br|div|ul|li|h\d)\b/i.test(limpio) ? limpio : evaluacionDeTexto(limpio);
+  return /<(p|b|strong|br|div|ul|li|h\d)\b/i.test(limpio) ? limpio : evaluacionDeTexto(limpio, escala);
 }
 
 // ---------------------------------------------------------------- la comparación
@@ -65,15 +69,22 @@ function delta(d) {
     `${x > 0 ? "+" : ""}${x.toLocaleString("es-CL", { maximumFractionDigits: 2 })}`);
 }
 
-/** Una respuesta reevaluada: plegada, la línea con el cambio; abierta, las dos correcciones. */
-function filaComparacion(f) {
+/**
+ * Una respuesta reevaluada: plegada, la línea con el cambio; abierta, las dos
+ * correcciones. «Antes» es lo que propuso el modelo (NotaAntes); si el docente
+ * la cambió, la nota final va al lado.
+ */
+function filaComparacion(f, escala) {
   const cuerpo = el("div", { class: "detalle-comparacion" });
   const d = el("details", { class: "fila-comparacion" },
     el("summary", {},
-      el("span", { class: "quien" }, f.Nombre || f.Correo, el("span", { class: "tenue" }, ` · ${rotuloItem(f.Semana)}`)),
+      // "Test" desde la escala; los CSV de antes lo llamaban "Semana".
+      el("span", { class: "quien" }, f.Nombre || f.Correo, el("span", { class: "tenue" }, ` · ${rotuloItem(f.Test ?? f.Semana)}`)),
       el("span", { class: "cambio" }, "Nota ", textoNota(f.NotaAntes), " ", flecha(f.NotaAntes, f.NotaDespues), " ",
         f.FormatoOK === "NO" ? el("strong", { class: "aviso-texto" }, "sin nota legible") : textoNota(f.NotaDespues),
-        " ", delta(f.DeltaNota)),
+        " ", delta(f.DeltaNota),
+        f.NotaFinal && f.NotaFinal !== f.NotaAntes
+          ? el("span", { class: "tenue" }, ` (quedó en ${textoNota(f.NotaFinal)})`) : null),
       el("span", { class: "cambio" }, "Originalidad ", f.OriginalidadAntes || "—", " ",
         flecha(f.OriginalidadAntes, f.OriginalidadDespues), " ", f.OriginalidadDespues || "—")),
     cuerpo);
@@ -85,11 +96,11 @@ function filaComparacion(f) {
       el("h5", {}, "Lo que respondió"),
       el("div", { class: "respuesta" }, respuestaLegible(f.Respuesta)),
       el("div", { class: "dos-columnas" },
-        el("div", {}, el("h5", {}, "La corrección que recibió"),
-          f.EvaluacionAntes ? vistaCorreo({ cuerpo: cuerpoCorreccion(f.EvaluacionAntes), html: true })
+        el("div", {}, el("h5", {}, "La corrección del modelo"),
+          f.EvaluacionAntes ? vistaCorreo({ cuerpo: cuerpoCorreccion(f.EvaluacionAntes, escala), html: true })
             : el("p", { class: "tenue" }, "Esta prueba es anterior a guardar la corrección original.")),
         el("div", {}, el("h5", {}, "Con el prompt candidato"),
-          vistaCorreo({ cuerpo: cuerpoCorreccion(f.EvaluacionNueva), html: true }))));
+          vistaCorreo({ cuerpo: cuerpoCorreccion(f.EvaluacionNueva, escala), html: true }))));
   });
   return d;
 }
@@ -121,14 +132,16 @@ function resumen(filas) {
 /** Debajo de una prueba terminada: el resumen, cada respuesta y la descarga del CSV. */
 function comparacion(semestre, ruta) {
   const nodo = el("div", { class: "comparacion" }, el("p", { class: "cargando" }, "Cargando la comparación…"));
-  leerTexto(semestre, ruta).then((texto) => {
+  Promise.all([leerTexto(semestre, ruta),
+    leerTexto(semestre, ARCHIVO_ESCALA).catch(() => null)]).then(([texto, textoEscala]) => {
     const filas = objetosCsv(texto);
+    const { escala } = leerEscala(textoEscala);
     if (!filas.length) { nodo.replaceChildren(caja("info", "La prueba no reevaluó ninguna respuesta.")); return; }
     nodo.replaceChildren(
       el("h4", {}, "Antes y con el prompt candidato"),
       ...resumen(filas).filter(Boolean),
       el("p", { class: "tenue" }, "Primero las que más cambiaron. Abre una para leer las dos correcciones."),
-      el("div", { class: "lista-comparacion" }, ordenarPorCambio(filas).map(filaComparacion)),
+      el("div", { class: "lista-comparacion" }, ordenarPorCambio(filas).map((f) => filaComparacion(f, escala))),
       el("a", { class: "descarga", href: `${urlArchivo(semestre, ruta)}?descargar` }, `Descargar ${ruta.split("/").pop()}`));
   }).catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer el resultado (${e.message}).`)));
   return nodo;

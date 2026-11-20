@@ -6,7 +6,8 @@
 // escriben los trabajos, y el Worker rechaza cualquier otra ruta.
 
 import {
-  api, barraPestanas, caja, conDetalle, confirmar, el, fechaCorta, navegacion, resumenCsv, tareasConocidas, textoEdicion,
+  api, barraPestanas, caja, conDetalle, confirmar, el, fechaCorta, navegacion, pedirTrabajo, resumenCsv, seguirTrabajo,
+  tareasConocidas, textoEdicion,
 } from "./comun.js";
 import {
   contarCambios, diffLineas, filasDelLog, huella, ordenarVersiones, textoUsos, usosPorHuella, versionesDe,
@@ -15,6 +16,10 @@ import { escribirCsv, leerCsv, textoDeArchivo } from "./csv.js";
 import { cambiosProhibidos, editorPreguntas, enviosDeNotas } from "./preguntas.js";
 import { AUTO, cargarConfiguracion, describirModo, REVISAR, RUTA_CONFIGURACION } from "./configuracion.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
+import {
+  ARCHIVO as ARCHIVO_ESCALA, confirmacionEscala, DOS_TRAMOS, escalaDelFormulario, fr, fraccion, idConfirmado, leerEscala,
+  LOGROS_DE_MUESTRA, mismaEscala, nota as notaDeLogro, numCorto, por, rango, resumenSimulacion, texto as textoNota,
+} from "./escala.js";
 import { leerPrecios } from "./consumo.js";
 import {
   comoCelda, decidirFila, enlaceSeguro, fechaConsulta, NOMBRE_MODELO, resumenDecisiones, textoOrigen, textoPrecio,
@@ -692,7 +697,8 @@ function editorPrompt(ruta) {
         el("span", { class: "tenue" }, "Variables:"),
         info.variables.map((v) => el("button", { class: "chip", type: "button", onclick: () => insertar(v) }, v))) : null,
       info?.obligatorias ? el("p", { class: "nota-pie" }, `Tiene que conservar `
-        + `${info.obligatorias.map((o) => `«${o}»`).join(" y ")}: de ahí se lee la nota.`) : null,
+        + `${(typeof info.obligatorias === "function" ? info.obligatorias(texto) : info.obligatorias)
+          .map((o) => `«${o}»`).join(" y ")}: de ahí se lee la nota.`) : null,
       info?.formato ? el("p", { class: "nota-pie" }, "Una llave literal se escribe doble: {{ o }}.") : null,
       area,
       el("div", { class: "barra-guardar" }, estadoTexto, el("span", { class: "espacio" }), guardar),
@@ -1293,9 +1299,139 @@ function vistaPreguntas() {
 
 // ---------------------------------------------------------------- semestre
 
-// Qué números puede mostrar el correo de corrección. Por ahora sale siempre
-// «puntajes y nota»; las otras dos llegan con el formato nuevo de corrección.
+// Qué números puede mostrar el correo de corrección (correo_muestra). La nota
+// se calcula y se guarda igual; esto decide solo qué ve el alumno.
 const MUESTRAS = [["nota", "Puntajes y nota"], ["puntajes", "Solo puntajes"], ["nada", "Ningún número"]];
+
+const DECIMALES = [[0, "sin decimales"], [1, "un decimal"], [2, "dos decimales"]];
+
+/** "4,0 a 7,0, un decimal" y, en la de dos tramos, "; se aprueba con 4,0 al 60 %". */
+function textoEscala(e) {
+  const base = `${rango(e)}, ${DECIMALES.find(([d]) => d === e.decimales)?.[1] || ""}`;
+  return e.tipo === DOS_TRAMOS
+    ? `${base}; se aprueba con ${textoNota(e, e.aprobacion)} al ${numCorto(por(fraccion(e.exigencia), fr(100n)))} %`
+    : base;
+}
+
+/**
+ * La escala de notas de Tests (escala_notas.json). La página no la escribe:
+ * «Ver qué cambia» corre datos.escala en prueba y «Guardar y recalcular» lo
+ * corre en real, que guarda la escala y recalcula notas.csv en la misma corrida.
+ * Si alguna nota que cambia ya le llegó al alumno con número, además de
+ * confirmar hay que escribir el id del semestre (escala.js, confirmacionEscala).
+ */
+function seccionEscala() {
+  const nodo = el("div", { class: "escala-notas" }, el("p", { class: "cargando" }, `Leyendo ${ARCHIVO_ESCALA}…`));
+  (existe(ARCHIVO_ESCALA) ? leerTexto(ARCHIVO_ESCALA) : Promise.resolve(null)).then((texto) => {
+    let { escala: actual, error } = leerEscala(texto);
+    const campo = (valor, etiqueta) => el("input", { type: "text", size: 6, "aria-label": etiqueta,
+      value: valor === null || valor === undefined ? "" : String(valor) });
+    const minima = campo(textoNota(actual, actual.minima), "Nota mínima");
+    const maxima = campo(textoNota(actual, actual.maxima), "Nota máxima");
+    const decimales = el("select", { "aria-label": "Decimales" }, DECIMALES.map(([d, t]) =>
+      el("option", { value: d, selected: actual.decimales === d }, t)));
+    const conAprobacion = el("input", { type: "checkbox", checked: actual.tipo === DOS_TRAMOS });
+    const aprobacion = campo(actual.aprobacion === null ? "4,0" : textoNota(actual, actual.aprobacion), "Nota de aprobación");
+    const exigencia = campo(actual.exigencia === null ? "60" : numCorto(por(fraccion(actual.exigencia), fr(100n))),
+      "Exigencia en porcentaje");
+    const tramos = el("div", { class: "fila-campos" },
+      el("label", { class: "campo" }, "Nota de aprobación", aprobacion),
+      el("label", { class: "campo" }, "Exigencia (%)", exigencia));
+    const ahora = el("p", {}, `Ahora: ${textoEscala(actual)}.`);
+    const tabla = el("div");
+    const ver = el("button", { class: "secundario", type: "button" }, "Ver qué cambia");
+    const guardar = el("button", { class: "primario real", type: "button", disabled: true }, "Guardar y recalcular");
+    const idSemestre = el("input", { type: "text", size: 10, "aria-label": "Id del semestre", autocomplete: "off" });
+    const pideId = el("label", { class: "campo", hidden: true }, `Escribe ${semestre} para confirmar`, idSemestre);
+    const salida = el("div");
+    // El resumen de la última simulación, mientras lo escrito sea la escala que se simuló.
+    let simulada = null;
+    let corriendo = false;
+
+    const leida = () => escalaDelFormulario({
+      conAprobacion: conAprobacion.checked, minima: minima.value, maxima: maxima.value, decimales: decimales.value,
+      aprobacion: aprobacion.value, exigencia: exigencia.value, puntajeMaximo: actual.puntaje_maximo_pregunta,
+    });
+    const pintar = () => {
+      tramos.hidden = !conAprobacion.checked;
+      const { escala, error: problema } = leida();
+      if (escala) {
+        tabla.replaceChildren(el("div", { class: "tabla-envoltura" }, el("table", {},
+          el("thead", {}, el("tr", {}, el("th", {}, "Logro"), ...LOGROS_DE_MUESTRA.map((p) => el("th", {}, `${p} %`)))),
+          el("tbody", {}, el("tr", {}, el("th", {}, "Nota"),
+            ...LOGROS_DE_MUESTRA.map((p) => el("td", {}, notaDeLogro(escala, fr(BigInt(p), 100n)))))))));
+      } else {
+        tabla.replaceChildren(caja("aviso", problema));
+      }
+      if (simulada && !(escala && mismaEscala(simulada.escala, escala))) simulada = null;
+      const pide = Boolean(simulada) && confirmacionEscala(simulada, semestre).pideId;
+      pideId.hidden = !pide;
+      ver.disabled = corriendo || !escala;
+      guardar.disabled = corriendo || !simulada || (pide && !idConfirmado(idSemestre.value, semestre));
+    };
+    [minima, maxima, aprobacion, exigencia, idSemestre].forEach((x) => x.addEventListener("input", pintar));
+    [decimales, conAprobacion].forEach((x) => x.addEventListener("change", pintar));
+
+    const correr = async (prueba) => {
+      const { escala } = leida();
+      if (!escala) return;
+      corriendo = true;
+      pintar();
+      const terminar = async (t) => {
+        corriendo = false;
+        idSemestre.value = "";
+        if (prueba) {
+          const r = t.estado === "terminado" ? resumenSimulacion(t.salida) : null;
+          simulada = r && mismaEscala(r.escala, leida().escala) ? r : null;
+        } else {
+          simulada = null;
+          if (t.estado === "terminado") {
+            actual = escala;
+            error = "";
+            ahora.textContent = `Ahora: ${textoEscala(actual)}.`;
+            archivos = await api(`/api/archivos/${encodeURIComponent(semestre)}`).catch(() => archivos);
+            salida.append(caja("exito", "Escala guardada y notas recalculadas. Resultados la usa desde ahora "
+              + "(si la tienes abierta, recárgala)."));
+          }
+        }
+        pintar();
+      };
+      try {
+        const id = await pedirTrabajo(semestre, "datos.escala", { escala, prueba });
+        await seguirTrabajo(id, salida, { alTerminar: terminar });
+      } catch (e) {
+        corriendo = false;
+        salida.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
+        pintar();
+      }
+    };
+    ver.addEventListener("click", () => correr(true));
+    guardar.addEventListener("click", async () => {
+      if (!simulada) return;
+      const { texto: confirmacion, pideId: pide } = confirmacionEscala(simulada, semestre);
+      if (pide && !idConfirmado(idSemestre.value, semestre)) return;
+      if (!await confirmar(confirmacion, "Guardar y recalcular", "real")) return;
+      correr(false);
+    });
+    nodo.replaceChildren(...[
+      error ? caja("aviso", `${error}. Mientras tanto rige ${rango(actual)}.`) : null,
+      ahora,
+      el("div", { class: "fila-campos" },
+        el("label", { class: "campo" }, "Nota mínima", minima),
+        el("label", { class: "campo" }, "Nota máxima", maxima),
+        el("label", { class: "campo" }, "Decimales", decimales)),
+      el("label", { class: "interruptor" }, conAprobacion, "Escala con nota de aprobación (exigencia)"),
+      tramos,
+      tabla,
+      el("p", { class: "nota-pie" }, "Cambiarla recalcula las notas de Tests que ya están, también las que el "
+        + "alumno ya vio por correo, y no le avisa a nadie. Un ajuste fuera de la escala queda como está. "
+        + "«Ver qué cambia» no guarda nada."),
+      el("div", { class: "acciones" }, ver, pideId, guardar),
+      salida].filter(Boolean));
+    pintar();
+  }).catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer ${ARCHIVO_ESCALA}: ${e.message}`)));
+  return nodo;
+}
 
 /**
  * configuracion.json: qué pasa después de corregir y qué muestra el correo.
@@ -1318,8 +1454,7 @@ function vistaSemestre() {
     const radios = [[AUTO, "Enviar el feedback automáticamente"], [REVISAR, "Revisar antes de enviar"]].map(([v, t]) =>
       el("label", { class: "interruptor" }, el("input", { type: "radio", name: "modo-revision", value: v,
         checked: conf.modo === v }), t));
-    const muestra = el("select", {}, MUESTRAS.map(([v, t]) => el("option", { value: v, selected: conf.muestra === v,
-      disabled: v !== "nota" }, v === "nota" ? t : `${t} (todavía no)`)));
+    const muestra = el("select", {}, MUESTRAS.map(([v, t]) => el("option", { value: v, selected: conf.muestra === v }, t)));
     const guardar = el("button", { class: "primario", type: "button", disabled: true }, "Guardar");
     const mensaje = el("div");
     const modoElegido = () => radios.map((r) => r.querySelector("input")).find((r) => r.checked)?.value;
@@ -1360,7 +1495,11 @@ function vistaSemestre() {
       el("p", { class: "nota-pie" }, "Vale para Tests. Una corrección que hiciste a mano siempre espera tu revisión."),
       el("h4", {}, "En el correo de corrección, mostrar"),
       el("label", { class: "campo" }, muestra),
-      el("div", { class: "acciones" }, guardar), mensaje].filter(Boolean));
+      el("p", { class: "nota-pie" }, "La nota se calcula y se guarda igual. Con «Solo puntajes» el correo trae el "
+        + "puntaje de cada pregunta sin la nota; con «Ningún número», solo los comentarios."),
+      el("div", { class: "acciones" }, guardar), mensaje,
+      el("h4", {}, "Escala de notas de Tests"),
+      seccionEscala()].filter(Boolean));
   }).catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer configuracion.json: ${e.message}`)));
   return [nodo];
 }

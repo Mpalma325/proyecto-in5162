@@ -18,6 +18,7 @@ tres: es un flujo, y orquestar es justamente su trabajo.
 |---|---|
 | `enviar.py` | Manda la pregunta de la semana a quien todavía no la tiene |
 | `evaluar.py` | Lee las respuestas del buzón, las evalúa y devuelve el feedback |
+| `feedback.py` | Manda las correcciones que el docente aprobó en Tests › Revisar |
 | `resumen.py` | Resume cómo le fue al curso esa semana |
 | `chequeo.py` | Dice qué pasaría al evaluar, **sin enviar nada** |
 | `tutoria.py` | Responde las dudas del alumno sobre su corrección. **No cambia la nota.** |
@@ -26,7 +27,35 @@ tres: es un flujo, y orquestar es justamente su trabajo.
 
 Auxiliares: `preguntas.py` (lee `preguntas.csv`), `storage.py` (el formato
 viejo, en retirada), `ia_prompts.py` (los prompts de este flujo),
+`correccion.py` (lee la corrección y calcula la nota, ver abajo),
+`decisiones.py` (lo que decidió el docente en la revisión),
 `config.py` (proxy al config del subproyecto, donde está el `.env`).
+
+## La corrección y la nota
+
+Hay dos formatos de corrección y `correccion.py` los distingue por el
+contenido. En el viejo (2026-2 y anteriores) el modelo escribe un HTML con
+`NOTA FINAL`, y esa es la nota. En el nuevo el prompt pide JSON: el modelo
+devuelve el puntaje de cada pregunta (0; 0,5; 1; 2 o 3) y no escribe nota. El
+código valida cada puntaje, calcula el logro (puntos sobre el máximo) y lo pasa
+por la escala del semestre (`escala_notas.json`, `modulos/escala.py`). Un
+puntaje fuera de la rúbrica deja la corrección sin nota y por revisar: no sale
+ningún correo con ella.
+
+`ia_prompts.py` pide `json_mode` a la API solo cuando el prompt dice «JSON».
+Un semestre con el prompt viejo sigue igual que siempre.
+
+`correo_muestra` (configuracion.json) decide qué números ve el alumno:
+`nota`, `puntajes` o `nada`. La nota se registra igual en los tres casos.
+El equipo docente ve siempre la corrección completa (`texto_docente`).
+
+La escala se cambia desde Configuración › Semestre, con el trabajo
+`datos.escala` (modulos/datos/DATOS.md). Las notas de Tests ya registradas se
+recalculan con la escala nueva; cada evaluación queda con la escala con que se
+calculó (`escala=` en Versiones).
+
+`web/public/correccion.js` es la gemela para la página y
+`pruebas/correccion.py` compara las dos sobre los mismos casos.
 
 ## Cómo se ejecuta
 
@@ -75,7 +104,10 @@ se cambia el prompt de evaluación, ¿cómo se mueve lo que el modelo califica?
 
 Toma N respuestas al azar entre las que ya tienen nota, las vuelve a pasar por
 el modelo con un prompt candidato y compara casilla por casilla contra la nota
-y la originalidad que se les puso en su momento. La muestra sale del mismo
+y la originalidad que propuso el modelo en su momento (`NotaAntes`). Si el
+docente la cambió en la revisión o con un ajuste, la nota que quedó va al lado,
+en `NotaFinal`. Las casillas que el docente corrigió a mano no entran en la
+muestra. La muestra sale del mismo
 `reportes.panel()` que alimenta los gráficos, así que "lo que se evaluó"
 significa lo mismo acá que allá.
 
@@ -95,9 +127,11 @@ El prompt candidato se le pasa como archivo y llega a `evaluar_respuesta()` por
 el parámetro `plantilla`. El archivo del semestre no se toca: la evaluación real
 sigue usando el de siempre hasta que alguien lo edite a mano.
 
-Si el prompt candidato no menciona `NOTA FINAL:` ni `ORIGINALIDAD:`, avisa
-antes de empezar. Sin esas etiquetas `extraer_nota_y_originalidad` no encuentra
-nada y la comparación sale vacía después de haber gastado la API.
+Si el prompt candidato no pide JSON y no menciona `NOTA FINAL:` ni
+`ORIGINALIDAD:`, avisa antes de empezar. Sin esas etiquetas
+`extraer_nota_y_originalidad` no encuentra nada y la comparación sale vacía
+después de haber gastado la API. Con un prompt JSON la nota nueva la calcula
+el código con la escala del semestre, igual que al corregir.
 
 ## Cuidado
 

@@ -42,6 +42,12 @@ ambas pasadas:
 del alumno es la que se le comunicó; esto es un ensayo aparte y su resultado
 vive en un CSV propio. Lo único que gasta es API.
 
+Se compara contra lo que propuso el modelo (`NotaModelo`, sin las ediciones ni
+los ajustes del docente); la nota final va al lado, en `NotaFinal`. Con un
+prompt que pide JSON, la nota nueva la calcula el código con la escala del
+semestre (escala_notas.json), igual que al corregir. Las casillas que corrigió
+el docente a mano no entran: no hay nota del modelo contra la cual comparar.
+
 El muestreo es aleatorio con semilla (`--semilla`, 19 por defecto), así que dos
 corridas con la misma semilla eligen las mismas respuestas: es lo que permite
 comparar dos prompts candidatos sobre la misma muestra en vez de sobre dos
@@ -55,10 +61,12 @@ from datetime import datetime
 from pathlib import Path
 
 from modulos import datos as _datos
+from modulos import escala as _escala
 from modulos.datos import reportes as _reportes
 
 from . import config
-from .evaluar import extraer_nota_y_originalidad
+from . import correccion as _correccion
+from .evaluar import _n_preguntas
 from .ia_prompts import evaluar_respuesta
 from .preguntas import cargar_semana
 
@@ -67,9 +75,12 @@ N_DEFAULT = 20
 
 OLLAMA = "http://127.0.0.1:11434/v1"
 
+# "Test" es el id de la instancia (o la semana, en un semestre de antes). Los
+# CSV anteriores lo llamaban "Semana": se siguen leyendo y retomando.
 COLUMNAS = [
-    "Semestre", "Correo", "Nombre", "Semana", "Grupo",
+    "Semestre", "Correo", "Nombre", "Test", "Grupo",
     "NotaAntes", "NotaDespues", "DeltaNota",
+    "NotaFinal",  # la que quedó después de la revisión y los ajustes; NotaAntes es la del modelo
     "OriginalidadAntes", "OriginalidadDespues", "DeltaNivel",
     "ModeloAntes", "ModeloDespues", "TokensEntrada", "TokensSalida",
     "Segundos", "FormatoOK",
@@ -85,15 +96,54 @@ def _anunciar_semestre() -> str:
     return sid
 
 
+def _clave(e: dict) -> tuple[str, str]:
+    return (e.get("Correo") or "").strip().lower(), str(e.get("Item", "")).strip()
+
+
+def _corregidas_a_mano(semestre_id: str | None) -> set[tuple[str, str]]:
+    """Las casillas cuya última corrección es del docente (Modelo docente:…)."""
+    ultima = {}
+    for e in _datos.log.leer(semestre_id, flujo=_datos.TESTS, evento="correccion"):
+        ultima[_clave(e)] = e.get("Modelo") or ""
+    return {k for k, modelo in ultima.items() if modelo.startswith("docente:")}
+
+
+def correcciones_antes(semestre_id: str | None = None, escala: _escala.Escala | None = None) -> dict:
+    """Por casilla, la corrección que propuso quien corrigió, como la lee el docente.
+
+    Es la última `correccion` del log, con puntajes y NOTA FINAL aunque el
+    alumno no los haya visto; en las casillas anteriores a la revisión, la
+    `evaluacion`. El `EvaluacionIA` del panel ya no sirve: es el bloque que se
+    envió, sin los números ocultos y con las ediciones del docente.
+    """
+    escala = escala or _escala.leer(semestre_id)
+    por: dict[tuple[str, str], dict] = {}
+    for e in _datos.log.leer(semestre_id, flujo=_datos.TESTS):
+        ev = e.get("Evento")
+        previa = por.get(_clave(e))
+        if ev == "correccion" or (ev == "evaluacion" and (previa is None or previa.get("Evento") == "evaluacion")):
+            por[_clave(e)] = e
+    return {k: _correccion.texto_docente(_correccion.leer(e.get("EvaluacionIA") or "", escala), escala)
+            for k, e in por.items() if (e.get("EvaluacionIA") or "").strip()}
+
+
+def nota_del_modelo(fila: dict):
+    """Lo que propuso el modelo (NotaModelo); en casillas sin ese dato, la nota que quedó."""
+    return fila["NotaModelo"] if fila.get("NotaModelo") is not None else fila["Nota"]
+
+
 def candidatas(semana: int | None = None, semestre_id: str | None = None) -> list[dict]:
     """Las casillas reevaluables: tienen el texto del alumno y una nota puesta.
 
     Sale del mismo `panel()` que alimenta la reportería, así que "lo que se
-    evaluó" significa exactamente lo mismo acá que en los gráficos.
+    evaluó" significa exactamente lo mismo acá que en los gráficos. Quedan
+    fuera las que corrigió el docente a mano: no tienen nota del modelo.
     """
     filas = _reportes.filtrar(_reportes.panel(semestre_id, _datos.TESTS))
+    a_mano = _corregidas_a_mano(semestre_id)
     elegibles = [f for f in filas
-                 if f["Respuesta"].strip() and f["Nota"] is not None]
+                 if f["Respuesta"].strip() and f["Nota"] is not None
+                 and _clave(f) not in a_mano]
     if semana is not None:
         elegibles = [f for f in elegibles if f["Item"] == str(semana)]
     return elegibles
@@ -107,8 +157,8 @@ def muestrear(filas: list[dict], n: int, semilla: int) -> list[dict]:
 
 
 def _comparar(fila: dict, nota_nueva: str, originalidad_nueva: str) -> dict:
-    """Las diferencias de una casilla entre la evaluación original y la nueva."""
-    antes = fila["Nota"]
+    """Las diferencias de una casilla entre lo que propuso el modelo y la evaluación nueva."""
+    antes = nota_del_modelo(fila)
     despues = _reportes.nota_a_float(nota_nueva)
     nivel_antes = _reportes.nivel_originalidad(fila["Originalidad"])
     nivel_despues = _reportes.nivel_originalidad(originalidad_nueva)
@@ -196,6 +246,11 @@ def _escribir_csv(resultados: list[dict], destino: Path) -> Path:
     return destino
 
 
+def _test_de(fila: dict) -> str:
+    """El id del test de una fila del CSV: "Test", o "Semana" en los de antes."""
+    return str(fila.get("Test") or fila.get("Semana") or "")
+
+
 def _ya_hechas(destino: Path) -> list[dict]:
     """Lo que una corrida anterior ya dejó en ese archivo."""
     if not destino.exists():
@@ -212,14 +267,29 @@ def _agregar_fila(fila: dict, destino: Path) -> None:
     """
     destino.parent.mkdir(parents=True, exist_ok=True)
     nuevo = not destino.exists()
+    columnas = COLUMNAS
+    if not nuevo:
+        # Al retomar un CSV de antes se escribe con su cabecera, para que las
+        # columnas no se corran ("Semana" en vez de "Test", sin NotaFinal).
+        with destino.open(encoding="utf-8-sig", newline="") as f:
+            columnas = next(csv.reader(f), None) or COLUMNAS
+        if "Semana" in columnas and "Test" not in columnas:
+            fila = {**fila, "Semana": fila.get("Test", "")}
     with destino.open("a", encoding="utf-8-sig" if nuevo else "utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNAS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
         if nuevo:
             w.writeheader()
         w.writerow(fila)
 
 
-def _evaluar_por_pregunta(grupo_info, respuesta: str, plantilla: str):
+def leer_resultado(html, escala: _escala.Escala, n_preguntas: int | None = None) -> tuple[str, str]:
+    """La nota y la originalidad de lo que devolvió el modelo: NOTA FINAL en el
+    HTML viejo, o los puntajes del JSON llevados a nota con la escala."""
+    leida = _correccion.leer(str(html), escala, n_preguntas)
+    return leida["nota"], leida["originalidad"]
+
+
+def _evaluar_por_pregunta(grupo_info, respuesta: str, plantilla: str, escala: _escala.Escala | None = None):
     """Una llamada al modelo por cada pregunta de la semana, y el promedio acá.
 
     Pedirle al modelo que evalúe dos preguntas en un mismo mensaje y que
@@ -230,11 +300,14 @@ def _evaluar_por_pregunta(grupo_info, respuesta: str, plantilla: str):
     sale de un único puntaje sobre 3.
 
     Separando las llamadas, el bloque por pregunta queda garantizado por
-    construcción y el promedio lo hace el código, no el modelo.
+    construcción y el promedio lo hace el código, no el modelo. Con un prompt
+    que pide JSON se juntan los puntajes de todas las llamadas y la nota sale
+    de la escala, como al corregir.
     """
     from modulos.datos import reportes as _rep
 
-    htmls, notas, niveles = [], [], []
+    escala = escala or _escala.POR_DEFECTO
+    htmls, notas, niveles, puntajes = [], [], [], []
     tokens_in = tokens_out = 0
     modelo = ""
 
@@ -258,7 +331,10 @@ def _evaluar_por_pregunta(grupo_info, respuesta: str, plantilla: str):
         tokens_in += meta.get("prompt_tokens") or 0
         tokens_out += meta.get("completion_tokens") or 0
 
-        nota, orig = extraer_nota_y_originalidad(html)
+        leida = _correccion.leer(str(html), escala, 1)
+        nota, orig = leida["nota"], leida["originalidad"]
+        if leida["formato"] == _correccion.JSON and leida["puntajes"]:
+            puntajes += leida["puntajes"].split(";")
         n = _rep.nota_a_float(nota)
         if n is not None:
             notas.append(n)
@@ -268,7 +344,10 @@ def _evaluar_por_pregunta(grupo_info, respuesta: str, plantilla: str):
         etiqueta = f"<p><u>P{i}</u></p>" if len(grupo_info.preguntas) > 1 else ""
         htmls.append(etiqueta + str(html))
 
-    nota_final = f"{sum(notas) / len(notas):.1f}".replace(".", ",") if notas else ""
+    if puntajes and len(notas) == len(htmls):
+        nota_final = escala.texto(escala.nota(escala.logro_de(puntajes)))
+    else:
+        nota_final = f"{sum(notas) / len(notas):.1f}".replace(".", ",") if notas else ""
     # La originalidad es un juicio sobre el texto completo, no sobre cada
     # pregunta: se toma el nivel medio de lo que dijo en cada llamada.
     orig_final = ""
@@ -292,7 +371,7 @@ def _numero(v):
 
 def _desde_csv(fila: dict) -> dict:
     fila = dict(fila)
-    for k in ("NotaAntes", "NotaDespues", "DeltaNota"):
+    for k in ("NotaAntes", "NotaDespues", "DeltaNota", "NotaFinal"):
         fila[k] = _numero(fila.get(k))
     d = _numero(fila.get("DeltaNivel"))
     fila["DeltaNivel"] = int(d) if d is not None else None
@@ -343,9 +422,12 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
     if "{{PREGUNTAS}}" not in plantilla or "{{PAUTAS}}" not in plantilla:
         print("⚠ El prompt no tiene {{PREGUNTAS}} ni {{PAUTAS}}: el modelo va a "
               "evaluar sin ver la pregunta ni la pauta.")
-    if "NOTA FINAL" not in plantilla or "ORIGINALIDAD" not in plantilla:
-        print("⚠ El prompt no menciona 'NOTA FINAL:' ni 'ORIGINALIDAD:'. Sin esas "
-              "etiquetas no se puede leer el resultado y la comparación sale vacía.")
+    if not _correccion.pide_json(plantilla) and ("NOTA FINAL" not in plantilla or "ORIGINALIDAD" not in plantilla):
+        print("⚠ El prompt no menciona 'NOTA FINAL:' ni 'ORIGINALIDAD:', ni pide el JSON con \"puntaje\". "
+              "Sin eso no se puede leer el resultado y la comparación sale vacía.")
+    escala = _escala.leer(semestre_id)
+    if _correccion.pide_json(plantilla):
+        print(f"La nota del prompt candidato se calcula con la escala del semestre: {escala.rango()}.")
 
     disponibles = candidatas(semana)
     ambito = f"semana {semana}" if semana is not None else "todas las semanas"
@@ -363,7 +445,7 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
     salida = Path(salida)
 
     previas = _ya_hechas(salida)
-    hechas = {(r.get("Correo", ""), str(r.get("Semana", ""))) for r in previas}
+    hechas = {(r.get("Correo", ""), _test_de(r)) for r in previas}
     pendientes = [f for f in muestra if (f["Correo"], f["Item"]) not in hechas]
     if previas:
         print(f"Retomando {salida.name}: {len(previas)} ya hechas, faltan {len(pendientes)}")
@@ -400,6 +482,7 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
         return []
 
     semanas: dict[int, object] = {}
+    antes_de = correcciones_antes(semestre_id, escala)
     fallidas = 0
     inicio_total = time.time()
 
@@ -429,11 +512,11 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
         try:
             if por_pregunta:
                 html, nota_nueva, orig_nueva, meta = _evaluar_por_pregunta(
-                    grupo_info, fila["Respuesta"], plantilla)
+                    grupo_info, fila["Respuesta"], plantilla, escala)
             else:
                 html = evaluar_respuesta(grupo_info.preguntas, grupo_info.pautas,
                                          fila["Respuesta"], plantilla=plantilla)
-                nota_nueva, orig_nueva = extraer_nota_y_originalidad(html)
+                nota_nueva, orig_nueva = leer_resultado(html, escala, _n_preguntas(grupo_info))
                 meta = getattr(html, "meta", {}) or {}
         except Exception as e:  # noqa: BLE001
             fallidas += 1
@@ -446,9 +529,10 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
             "Semestre": semestre_id,
             "Correo": fila["Correo"],
             "Nombre": fila["Nombre"],
-            "Semana": fila["Item"],
+            "Test": fila["Item"],
             "Grupo": fila["Grupo"],
-            "NotaAntes": fila["Nota"],
+            "NotaAntes": nota_del_modelo(fila),
+            "NotaFinal": fila["Nota"],
             "OriginalidadAntes": fila["Originalidad"],
             "OriginalidadDespues": orig_nueva,
             "ModeloAntes": fila["Modelo"],
@@ -462,7 +546,7 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
             "FormatoOK": "SI" if nota_nueva else "NO",
             "Respuesta": fila["Respuesta"],
             "EvaluacionNueva": str(html),
-            "EvaluacionAntes": fila.get("EvaluacionIA", ""),
+            "EvaluacionAntes": antes_de.get(_clave(fila)) or fila.get("EvaluacionIA", ""),
             **comparacion,
         }
         _agregar_fila(registro, salida)
@@ -471,8 +555,10 @@ def main(prompt: Path | None = None, n: int = N_DEFAULT, semana: int | None = No
         restante = transcurrido / i * (len(pendientes) - i)
         flecha = ("=" if comparacion["DeltaNivel"] in (0, None)
                   else "↑" if comparacion["DeltaNivel"] > 0 else "↓")
+        antes = nota_del_modelo(fila)
+        antes = f"{antes:.1f}".replace(".", ",") if antes is not None else "?"
         print(f"✓ [{i}/{len(pendientes)}] {etiqueta}: "
-              f"nota {fila['NotaTexto'] or '?'} → {nota_nueva or 'SIN NOTA'}, "
+              f"nota {antes} → {nota_nueva or 'SIN NOTA'}, "
               f"originalidad {fila['Originalidad'] or '?'} → {orig_nueva or '?'} {flecha}"
               f"   {segundos:.0f}s  (faltan ~{restante / 60:.0f} min)", flush=True)
 
@@ -569,7 +655,7 @@ def _contrastar(archivos_a: list[Path], archivos_b: list[Path],
         d = {}
         for a in archivos:
             for r in _ya_hechas(a):
-                d[(r.get("Semestre"), r.get("Correo"), str(r.get("Semana")))] = _desde_csv(r)
+                d[(r.get("Semestre"), r.get("Correo"), _test_de(r))] = _desde_csv(r)
         return d
 
     a, b = indice(archivos_a), indice(archivos_b)

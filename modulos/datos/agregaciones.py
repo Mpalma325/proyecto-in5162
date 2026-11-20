@@ -61,7 +61,7 @@ def _orden_item(item: str):
     return (0, int(texto), "") if texto.isdigit() else (1, 0, texto)
 
 
-def casillas(filas: list[dict], *, tramo: float | None = None, ancho: float = 0.5,
+def casillas(filas: list[dict], *, tramo: float | None = None, ancho: float | None = None,
              originalidad: str | None = None, item: str | None = None,
              grupo: str | None = None, estado: str | None = None) -> list[dict]:
     """Las casillas que hay detrás de un punto de un gráfico.
@@ -79,6 +79,7 @@ def casillas(filas: list[dict], *, tramo: float | None = None, ancho: float = 0.
     revisar primero.
     """
     salida = filas
+    ancho = ancho or ANCHO_TRAMO
     if tramo is not None:
         salida = [f for f in salida
                   if f["Nota"] is not None and _tramo(f["Nota"], ancho) == round(tramo, 2)]
@@ -230,9 +231,29 @@ def ficha(correo: str, filas: list[dict]) -> dict:
     }
 
 
-# La escala termina en 7,0. Un 7 va en el último tramo (6,5–7,0): con tramos
+# La escala del semestre (escala_notas.json; sin el archivo, 4,0–7,0). La fija
+# `usar_escala`: la página la llama al cargar un semestre, antes de calcular.
+# La nota máxima cierra el último tramo: un 7 va en 6,5–7,0; con tramos
 # abiertos a la derecha abría uno propio, "7,0–7,5", que no existe.
 NOTA_MAXIMA = 7.0
+ANCHO_TRAMO = 0.5
+_ANCHOS = (0.5, 1.0, 5.0, 10.0)
+
+
+def ancho_de_tramo(minima: float, maxima: float) -> float:
+    """El ancho de las barras del histograma: (máxima − mínima)/6 llevado a 0,5, 1, 5 o 10.
+
+    Con 4–7 da 0,5, como siempre; con 1–7, 1; con 0–100, 10.
+    """
+    bruto = (float(maxima) - float(minima)) / 6
+    return min(_ANCHOS, key=lambda a: (abs(a - bruto), a))
+
+
+def usar_escala(minima: float = 4.0, maxima: float = 7.0) -> None:
+    """Fija la escala con que se arman el histograma y sus tramos."""
+    global NOTA_MAXIMA, ANCHO_TRAMO
+    NOTA_MAXIMA = float(maxima)
+    ANCHO_TRAMO = ancho_de_tramo(minima, maxima)
 
 
 def _tramo(nota: float, ancho: float) -> float:
@@ -246,8 +267,9 @@ def _tramo(nota: float, ancho: float) -> float:
     return round(NOTA_MAXIMA - ancho, 2) if piso >= NOTA_MAXIMA else piso
 
 
-def distribucion_notas(filas: list[dict], ancho: float = 0.5) -> list[dict]:
-    """Histograma de notas, en tramos de `ancho`."""
+def distribucion_notas(filas: list[dict], ancho: float | None = None) -> list[dict]:
+    """Histograma de notas, en tramos de `ancho` (por omisión, el de la escala)."""
+    ancho = ancho or ANCHO_TRAMO
     notas = [f["Nota"] for f in filas if f["Nota"] is not None]
     if not notas:
         return []
@@ -255,7 +277,8 @@ def distribucion_notas(filas: list[dict], ancho: float = 0.5) -> list[dict]:
     for n in notas:
         piso = _tramo(n, ancho)
         cubos[piso] = cubos.get(piso, 0) + 1
-    return [{"Tramo": piso, "Etiqueta": f"{piso:.1f}–{piso + ancho:.1f}", "Alumnos": n}
+    d = 1 if ancho < 1 else 0
+    return [{"Tramo": piso, "Etiqueta": f"{piso:.{d}f}–{piso + ancho:.{d}f}", "Alumnos": n}
             for piso, n in sorted(cubos.items())]
 
 

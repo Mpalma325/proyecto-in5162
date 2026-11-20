@@ -11,6 +11,11 @@ llegaron con la línea "El vie… escribió:" pegada y el modelo las castigó po
 Queda en `notas.csv` (lo que ve la reportería) y como evento `ajuste` en el
 log, con la nota anterior y el motivo, así que se puede reconstruir y auditar.
 
+En Tests la nota se valida con la escala del semestre (`escala_notas.json`):
+va de min(1, mínima) a la máxima, con los decimales de la escala, y guarda su
+logro. Una nota bajo la mínima (un 3,0 en 4–7) se acepta sin logro y queda
+fija si la escala cambia. Tareas sigue con 1,0–7,0 y un decimal.
+
 Sin `--avisar` no manda correos. Con `--avisar` (solo Tests) le escribe al
 alumno «tu nota quedó en 6,5», con `tests_semanales/prompts/correo_ajuste.md`
 o, si el semestre no lo tiene, con un texto fijo. El aviso responde en el hilo
@@ -25,7 +30,9 @@ Una casilla «por revisar» no se ajusta: esa nota se cambia en Tests › Revisa
 import argparse
 import re
 import sys
+from fractions import Fraction
 
+from modulos import escala as _escala
 from modulos import semestre as _semestre
 
 from . import TAREAS, TESTS
@@ -82,6 +89,26 @@ def _avisar(correo: str, item: str, nota: str, motivo: str, semestre_id: str | N
         raise ValueError(f"No pude mandar el aviso ({e}): la nota no se cambió.") from e
 
 
+def nota_de_test(nota: str, escala: _escala.Escala) -> tuple[str, str]:
+    """La nota de un ajuste en Tests, validada con la escala: (como se escribe, logro).
+
+    Va de min(1, mínima) a la máxima, con a lo más los decimales de la escala.
+    Bajo la mínima (un 3,0 en una escala de 4 a 7) se acepta sin logro: queda
+    fija aunque la escala cambie (modulos/datos/escala_trabajo.py).
+    """
+    texto = (nota or "").strip()
+    decimales = f"([.,]\\d{{1,{escala.decimales}}})?" if escala.decimales else ""
+    if not re.fullmatch(r"\d{1,4}" + decimales, texto):
+        ejemplo = escala.texto(escala.maxima)
+        raise ValueError(f"Nota inválida: {nota!r} (se escribe como {ejemplo})")
+    valor = Fraction(texto.replace(",", "."))
+    if not min(Fraction(1), Fraction(repr(float(escala.minima)))) <= valor <= Fraction(repr(float(escala.maxima))):
+        raise ValueError(f"Nota fuera de la escala: {nota} (va de {escala.texto(min(1, escala.minima))} "
+                         f"a {escala.texto(escala.maxima)})")
+    logro = escala.logro(valor)
+    return escala.texto(valor), (_escala.texto_logro(logro) if logro is not None else "")
+
+
 def ajustar(flujo: str, item: str, correo: str, nota: str, motivo: str, por: str,
             semestre_id: str | None = None, avisar: bool = False) -> dict:
     """Cambia la nota. Devuelve {"antes", "despues", "aviso"}. Levanta ValueError si no corresponde."""
@@ -89,10 +116,15 @@ def ajustar(flujo: str, item: str, correo: str, nota: str, motivo: str, por: str
         raise ValueError(f"Flujo inválido: {flujo!r}")
     if avisar and flujo != TESTS:
         raise ValueError("El aviso de ajuste solo existe para Tests.")
-    if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota.strip()):
-        raise ValueError(f"Nota inválida: {nota!r} (se escribe como 6,5)")
-    if not 1.0 <= float(nota.replace(",", ".")) <= 7.0:
-        raise ValueError(f"Nota fuera de la escala: {nota}")
+    logro = ""
+    if flujo == TESTS:
+        nueva, logro = nota_de_test(nota, _escala.leer(semestre_id))
+    else:
+        # Tareas tiene su propia escala (modulos/tareas/escala.py) y sigue con la de siempre.
+        if not re.fullmatch(r"\d{1,2}([.,]\d)?", nota.strip()):
+            raise ValueError(f"Nota inválida: {nota!r} (se escribe como 6,5)")
+        if not 1.0 <= float(nota.replace(",", ".")) <= 7.0:
+            raise ValueError(f"Nota fuera de la escala: {nota}")
     # El motivo es opcional: si no se da, el log igual guarda la nota anterior y quién.
     motivo = " ".join((motivo or "").split()) or "sin motivo indicado"
 
@@ -104,15 +136,17 @@ def ajustar(flujo: str, item: str, correo: str, nota: str, motivo: str, por: str
         raise ValueError(f"{correo} tiene la corrección de {flujo} {item} por revisar: "
                          "esa nota se cambia en Tests › Revisar, no con un ajuste.")
     nota_antes = (antes.get("Nota") or "").strip()
-    # Con el separador que ya usa ese registro: coma en tests (6,5); en tareas, el que tenga.
-    separador = "," if flujo == TESTS or "," in nota_antes else "."
-    nueva = f"{float(nota.replace(',', '.')):.1f}".replace(".", separador)
+    if flujo == TAREAS:
+        # Con el separador que ya usa ese registro.
+        separador = "," if "," in nota_antes else "."
+        nueva = f"{float(nota.replace(',', '.')):.1f}".replace(".", separador)
 
     aviso = _avisar(correo, str(item), nueva, motivo, semestre_id) if avisar else None
 
-    _notas.registrar_nota(correo, flujo, str(item), nueva, antes.get("Originalidad", ""), semestre_id)
+    _notas.registrar_nota(correo, flujo, str(item), nueva, antes.get("Originalidad", ""), semestre_id,
+                          logro=logro)
     _log.registrar("ajuste", flujo, str(item), correo, semestre_id,
-                   Nota=nueva, Originalidad=antes.get("Originalidad", ""),
+                   Nota=nueva, Originalidad=antes.get("Originalidad", ""), Logro=logro,
                    MessageId=aviso or "",
                    Detalle=f"{motivo} (antes: {nota_antes or 'sin nota'}; por {por}"
                            + ("; avisado por correo" if avisar else "") + ")")

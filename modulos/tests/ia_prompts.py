@@ -14,6 +14,7 @@ from modulos import ia  # noqa: E402
 from modulos.ia import versiones  # noqa: E402
 
 from . import config  # noqa: E402
+from .correccion import pide_json  # noqa: E402
 
 ia.configurar(config.cargar_api_key, config.MODELO, config.TEMPERATURA, config.MAX_TOKENS)
 
@@ -55,7 +56,12 @@ def evaluar_respuesta(preguntas: list[str], pautas: list[str],
         "<<<FIN_RESPUESTA>>>"
     )
 
-    resp = ia.completar(system_prompt, user_msg)
+    # El prompt del formato nuevo pide JSON con puntajes: se le pide al modelo
+    # en modo JSON, como hace Tareas. El de siempre (HTML con NOTA FINAL), no.
+    if pide_json(plantilla):
+        resp = ia.completar(system_prompt, user_msg, json_mode=True)
+    else:
+        resp = ia.completar(system_prompt, user_msg)
     resp.meta["versiones"] = _versiones(version, preguntas, pautas, resp.meta)
     return resp.con_meta()
 

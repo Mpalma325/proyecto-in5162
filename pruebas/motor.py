@@ -211,6 +211,44 @@ for malo, por_que in (({**base_aviso, "avisar": True}, "sin prueba:false"),
         if por_que == "sin prueba:false":
             check("el rechazo dice que el aviso necesita prueba:false", "prueba:false" in str(e), str(e))
 
+check("la nota del ajuste admite la forma de otras escalas (83; 6,50; 1000)",
+      all(ajuste({**base_aviso, "nota": n})[ajuste({**base_aviso, "nota": n}).index("--nota") + 1] == n
+          for n in ("83", "6,50", "1000")))
+
+titulo("1g. cambiar la escala (datos.escala)")
+_, escala = trabajo.FLUJOS["datos.escala"]
+UNO_SIETE = {"tipo": "lineal", "minima": 1, "maxima": 7, "decimales": 1, "aprobacion": None, "exigencia": None,
+             "puntaje_maximo_pregunta": 3}
+cmd = escala({"escala": UNO_SIETE, "_pedido_por": "profe@x.cl", "por": "otro@x.cl"})
+check("arma el script con la escala en JSON, quién la cambia y, por defecto, en prueba",
+      cmd[:2] == ["-m", "modulos.datos.escala_trabajo"] and cmd[-1] == "--dry-run"
+      and cmd[cmd.index("--por") + 1] == "profe@x.cl", cmd)
+import json as _json  # noqa: E402
+check("la escala va normalizada", _json.loads(cmd[cmd.index("--escala") + 1])["minima"] == 1, cmd)
+check("con prueba:false, en real", "--dry-run" not in escala({"escala": UNO_SIETE, "prueba": False}))
+check("una lineal pierde aprobación y exigencia",
+      _json.loads(escala({"escala": {**UNO_SIETE, "aprobacion": 4, "exigencia": 0.6}})[3])["exigencia"] is None)
+DEL_60 = {**UNO_SIETE, "tipo": "dos_tramos", "aprobacion": 4, "exigencia": 0.6}
+check("la de dos tramos pasa", _json.loads(escala({"escala": DEL_60})[3])["exigencia"] == 0.6)
+for malo, por_que in (({}, "sin escala"),
+                      ({"escala": "4-7"}, "en texto"),
+                      ({"escala": {**UNO_SIETE, "minima": 7, "maxima": 4}}, "mínima sobre la máxima"),
+                      ({"escala": {**UNO_SIETE, "maxima": 1001}}, "máxima sobre 1000"),
+                      ({"escala": {**UNO_SIETE, "decimales": 3}}, "tres decimales"),
+                      ({"escala": {**UNO_SIETE, "decimales": 1.5}}, "decimales con coma"),
+                      ({"escala": {**UNO_SIETE, "minima": "1; rm"}}, "un número en texto"),
+                      ({"escala": {**UNO_SIETE, "minima": True}}, "un booleano"),
+                      ({"escala": {**UNO_SIETE, "tipo": "curva"}}, "un tipo desconocido"),
+                      ({"escala": {**UNO_SIETE, "otra": 1}}, "una clave desconocida"),
+                      ({"escala": {**DEL_60, "aprobacion": 8}}, "aprobación fuera de la escala"),
+                      ({"escala": {**DEL_60, "exigencia": 1}}, "exigencia de 1"),
+                      ({"escala": {**DEL_60, "exigencia": None}}, "dos tramos sin exigencia")):
+    try:
+        escala(malo)
+        check(f"la escala se rechaza: {por_que}", False)
+    except ValueError:
+        check(f"la escala se rechaza: {por_que}", True)
+
 titulo("1f. revisión: «Las corrijo yo» y el envío del feedback")
 _, evaluar_cmd = trabajo.FLUJOS["tests.evaluar"]
 cmd = evaluar_cmd({"instancia": 4, "prueba": False, "sin_modelo": True, "_pedido_por": "profe@x.cl"})

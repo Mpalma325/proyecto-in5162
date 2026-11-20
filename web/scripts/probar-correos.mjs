@@ -65,6 +65,21 @@ const ev = evaluacionDeTexto("EVALUACIÓN SEGÚN PAUTA\nA.\nRESPUESTA:\nDice <al
 check("las etiquetas van en negrita con su valor al lado", ev.includes("<b>RESPUESTA:</b> Dice &lt;algo&gt; &amp; más.")
   && ev.includes("<b>EVALUACIÓN:</b> 2 / 3 puntos") && ev.includes("<b>NOTA FINAL:</b> 6,5"));
 check("el título y el apartado conservan su formato", ev.includes("<strong>EVALUACIÓN SEGÚN PAUTA</strong>") && ev.includes("<u>A.</u>"));
+const evJson = evaluacionDeTexto(JSON.stringify({ preguntas: [
+  { rotulo: "P1", respuesta: "Dice <algo>.", puntaje: 3, justificacion: "Completa." },
+  { rotulo: "P2", respuesta: "Otra.", puntaje: 2, justificacion: "Falta un elemento." }],
+originalidad: "Media", retroalimentacion: "Bien." }));
+check("una corrección JSON se arma como el correo: puntaje por pregunta y la nota calculada (6,5 con 4–7)",
+  evJson.includes("<b>EVALUACIÓN:</b> 3 / 3 puntos") && evJson.includes("<b>NOTA FINAL:</b> 6,5")
+  && evJson.includes("<b>RESPUESTA:</b> Dice &lt;algo&gt;.") && evJson.includes("<u>P2.</u>"), evJson);
+const escala17 = { tipo: "lineal", minima: 1, maxima: 7, decimales: 1, aprobacion: null, exigencia: null,
+  puntaje_maximo_pregunta: 3 };
+const evJson17 = evaluacionDeTexto('{"preguntas": [{"puntaje": 1}, {"puntaje": 3}]}', escala17);
+check("con otra escala la nota sale de esa escala (1 y 3 de 3 con 1–7: 5,0)",
+  evJson17.includes("<b>NOTA FINAL:</b> 5,0"), evJson17);
+const evMalo = evaluacionDeTexto('{"preguntas": [{"puntaje": 1.5}, {"puntaje": 3}]}');
+check("un puntaje fuera de la rúbrica (1,5) deja la corrección sin nota",
+  !evMalo.includes("NOTA FINAL") && evMalo.includes("<b>EVALUACIÓN:</b> 1,5 / 3 puntos"), evMalo);
 check("se quita el 'El vie, … escribió:' del final de una respuesta",
   respuestaLegible("Mi respuesta.\n\nEl vie, 21 ago 2026 a la(s) 12:01 p.m., <curso@ejemplo.cl> escribió:") === "Mi respuesta.");
 

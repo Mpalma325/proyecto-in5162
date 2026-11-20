@@ -1,8 +1,4 @@
-import re
 import sys
-
-from bs4 import BeautifulSoup
-
 
 from modulos import datos as _datos
 from modulos.datos import esquema as _esquema
@@ -20,35 +16,11 @@ from modulos.semestre import configuracion as _configuracion
 from . import decisiones as _decisiones
 
 
-def _normalizar_html_gpt(html: str) -> str:
-    html = html.strip()
-    if html.startswith("```"):
-        html = re.sub(r'^```(?:html)?\s*', '', html)
-        html = re.sub(r'\s*```$', '', html)
-    return html.strip()
-
-
-def extraer_nota_y_originalidad(html: str) -> tuple[str, str]:
-    html = _normalizar_html_gpt(html)
-    texto = BeautifulSoup(html, "html.parser").get_text("\n")
-
-    nota = ""
-    m = re.search(r'NOTA\s*FINAL\s*:?\s*([0-9]+(?:[.,][0-9]+)?)', texto, re.IGNORECASE)
-    if m:
-        nota = m.group(1).replace(".", ",")
-
-    originalidad = ""
-    # El ":" es obligatorio y debe ir al inicio de línea: si no, cualquier mención
-    # de "originalidad" en el texto de retroalimentación se captura por error.
-    m = re.search(r'^\s*ORIGINALIDAD\s*:\s*([^\n]+)', texto, re.IGNORECASE | re.MULTILINE)
-    if m:
-        valor = m.group(1).strip()
-        for sep in ('.', '\n', '|', '<'):
-            if sep in valor:
-                valor = valor.split(sep)[0].strip()
-        originalidad = valor
-
-    return nota, originalidad
+# La lectura de la corrección vive en correccion.py (JSON nuevo o HTML viejo);
+# el extractor del HTML viejo se reexporta para quien lo importaba de aquí.
+from . import correccion as _correccion  # noqa: E402
+from .correccion import _normalizar_html_gpt, extraer_nota_y_originalidad  # noqa: E402,F401
+from modulos import escala as _escala  # noqa: E402
 
 
 def _cargar_template_duplicado() -> str:
@@ -168,6 +140,11 @@ def _estado_candidato(fila: dict | None) -> str:
     return ""
 
 
+def _n_preguntas(grupo_info) -> int:
+    """Cuántas preguntas no vacías tiene el grupo: con eso se avisa si el modelo juntó dos."""
+    return len([p for p in grupo_info.preguntas if str(p).strip()])
+
+
 def _modo_de_la_corrida(sin_modelo: bool) -> str:
     """El modo de esta corrida: el de configuracion.json, salvo «Las corrijo yo», que siempre revisa."""
     modo = _configuracion.modo_revision()
@@ -206,6 +183,8 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
 
     template_duplicado = _cargar_template_duplicado()
     automatico = modo == _configuracion.AUTO
+    escala = _escala.leer()
+    muestra = _configuracion.correo_muestra()
     plantilla = _feedback.Plantilla(dry_run) if automatico else None
     if automatico and plantilla.texto is None:
         print("Sin correo_correccion.md: el correo lleva solo la corrección de la IA.")
@@ -220,7 +199,8 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
                 print(f"{len(pendientes)} corrección(es) de una corrida anterior quedaron sin enviar: "
                       f"se enviarían ahora.")
         else:
-            previas = _feedback.enviar_pendientes(info, modo, solo_automaticas=True, plantilla=plantilla)
+            previas = _feedback.enviar_pendientes(info, modo, solo_automaticas=True, plantilla=plantilla,
+                                                  escala=escala, muestra=muestra)
             if previas["enviados"] or previas["fallidos"]:
                 print(f"Reenvío de correcciones anteriores: {previas['enviados']} enviada(s), "
                       f"{previas['fallidos']} fallida(s).")
@@ -334,6 +314,7 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
             ya_evaluados_en_esta_corrida.add(correo_alumno.lower())
             continue
 
+        leida = None
         if sin_modelo:
             html_eval, nota, originalidad, meta = "", "", "", {}
             modelo = f"{_decisiones.DOCENTE}{por or 'desconocido'}"
@@ -344,11 +325,20 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
                 fallidos += 1
                 print(f"✗ {nombre}: error GPT: {e}")
                 continue
-            nota, originalidad = extraer_nota_y_originalidad(html_eval)
+            # JSON con puntajes (la nota la calcula la escala) o el HTML de
+            # siempre con NOTA FINAL (la nota la escribió el modelo).
+            leida = _correccion.leer(html_eval, escala, _n_preguntas(grupo_info))
+            nota, originalidad = leida["nota"], leida["originalidad"]
             # El texto del modelo trae encima lo que costó producirlo. Puede venir
             # un str pelado (una prueba con mocks), así que se pide con getattr.
             meta = getattr(html_eval, "meta", {}) or {}
             modelo = meta.get("modelo") or config.MODELO
+
+        # Un puntaje fuera de la rúbrica deja la corrección sin nota: no sale
+        # sola aunque el semestre esté en automático, espera la revisión.
+        problemas = (leida or {}).get("problemas") or []
+        avisos = problemas + ((leida or {}).get("avisos") or [])
+        modo_alumno = _configuracion.REVISAR if problemas else modo
 
         # La corrección queda registrada antes de mandar nada: la API ya se
         # gastó, y si el envío falla la corrida siguiente la manda sin volver
@@ -358,10 +348,11 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
             "Modelo": modelo,
             "Versiones": versiones.juntar(meta.get("versiones")),
             "Nota": nota, "Originalidad": originalidad,
+            "Puntajes": (leida or {}).get("puntajes", ""),
             "EvaluacionIA": html_eval,
-            "Detalle": f"modo={modo}",
+            "Detalle": "; ".join([f"modo={modo_alumno}", *avisos]),
         }
-        logro = _feedback._logro_de(nota)
+        logro = (leida or {}).get("logro", "")
         try:
             _fecha = corr.get("fecha").isoformat() if corr.get("fecha") else None
             _datos.notas.marcar_respondio(_c, _datos.TESTS, semana, _fecha)
@@ -385,9 +376,14 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
         evaluados += 1
         procesados.append(corr["uid"])
 
-        if automatico:
+        for aviso in avisos:
+            print(f"  ⚠ {nombre}: {aviso}")
+        if automatico and problemas:
+            print(f"⋯ {nombre}: corregido sin nota; queda por revisar en Tests › Revisar")
+        elif automatico:
             id_feedback = _feedback.enviar_una(info, _c, nombre, correccion, None, plantilla,
-                                               in_reply_to=corr.get("in_reply_to") or None)
+                                               in_reply_to=corr.get("in_reply_to") or None,
+                                               escala=escala, muestra=muestra)
             if id_feedback is None:
                 fallidos += 1
                 print(f"✗ {nombre}: corregido (nota {nota or '?'}), pero el feedback no salió")

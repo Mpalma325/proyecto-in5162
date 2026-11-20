@@ -56,6 +56,8 @@ la conexión abierta hasta 30 minutos.
 | `tareas.feedback` | `modulos.tareas.feedback --por <pedido_por>`: manda las correcciones que `corregir` con `no_enviar` dejó para revisar, con lo que se haya editado en la página; quién lo pidió queda en el log | correos reales solo con `prueba: false` |
 | `tareas.segunda` | segunda oportunidad: `preparar` genera las preguntas nuevas; `enviar` en modo prueba arma los borradores | preparar llama al modelo; enviar manda correos solo con `prueba: false` |
 | `datos.panel` | nada: solo recalcula la reportería después de editar alumnos o preguntas | ninguno |
+| `datos.ajustar` | `modulos.datos.ajustar`: cambia una nota a mano. El motor solo revisa la forma de la nota (hasta cuatro cifras y dos decimales); el rango y los decimales los valida el script con la escala del semestre | con `avisar`, un correo real; pide `prueba: false` |
+| `datos.escala` | `modulos.datos.escala_trabajo`: cambia la escala de notas de Tests y recalcula las notas que ya están. El motor valida la escala con `modulos/escala.py` y le pasa el JSON normalizado | ninguno; en modo prueba no escribe nada |
 
 Un flujo nuevo se agrega en `FLUJOS` de `trabajo.py` y en `FLUJOS` de
 `web/src/index.ts`. `pruebas/web.py` falla si las dos listas no coinciden.
@@ -75,8 +77,10 @@ con los correos de ese grupo a recolectar y a corregir (este último con
 
 ## Parámetros
 
-Modelo, temperatura, tokens, escala de notas, tarea por defecto y grupos se
-editan en la página (Configuración › La IA › Parámetros) y quedan en D1. Antes
+Modelo, temperatura, tokens, escala de notas de Tareas, tarea por defecto y
+grupos se editan en la página (Configuración › La IA › Parámetros) y quedan en
+D1. La escala de Tests no es un parámetro: vive en `escala_notas.json` del
+semestre y la cambia el trabajo `datos.escala`. Antes
 de cada trabajo el motor los lee y se los pasa al script como variables de
 entorno, que `config.py` prefiere sobre el `.env`. Solo pasan las claves de
 `PARAMETROS`: si la tabla trajera otra cosa, como una clave de API, no llega.

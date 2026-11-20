@@ -46,6 +46,30 @@ Cuando el esquema crece, los archivos que ya existen se amplían solos la
 primera vez que se les escribe (`_csv._ampliar_columnas`), conservando las
 filas. Sin eso las filas nuevas quedarían corridas contra la cabecera vieja.
 
+## La escala de Tests
+
+La nota de Tests sale del logro (puntos sobre el máximo, de 0 a 1) pasado por
+la escala del semestre, `escala_notas.json` (`modulos/escala.py`). Sin el
+archivo la escala es la de siempre: 4,0 a 7,0 con un decimal. Tareas tiene su
+propia escala (`modulos/tareas/escala.py`) y no se mezclan.
+
+`notas.csv` guarda el `Logro` de cada nota de Tests. El log guarda también los
+`Puntajes` de cada evaluación, y en `Versiones` la escala con que se calculó
+(`escala=4-7/1`).
+
+`ajustar.py` valida la nota de Tests con la escala: va de min(1, mínima) a la
+máxima y con los decimales de la escala. Una nota bajo la mínima (un 3,0 en
+una escala de 4 a 7) se acepta sin logro.
+
+`escala_trabajo.py` es el trabajo `datos.escala`, que pide Configuración ›
+Semestre. Con `--dry-run` dice qué cambiaría; en real escribe
+`escala_notas.json`, recalcula Nota y Logro de las filas de Tests y deja un
+evento `recalculo` por nota que cambió, con `Detalle` «escala 4-7/1 → 1-7/1;
+por profe@x.cl». No manda correos. Las notas de un ajuste sin logro, las que
+caen fuera de la escala vieja y las que no son un número quedan como están, y
+la salida las lista. La última línea de la salida, `@@escala {…}`, es el
+resumen que lee la página para la confirmación.
+
 ## La reportería
 
 Todo sale de `reportes.panel()`: una fila por (alumno, ítem). El resto

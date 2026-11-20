@@ -6,7 +6,7 @@
   </p>
 
   <p>
-    Tus respuestas serán revisadas por un agente de IA entrenado para analizar las respuestas a esta pregunta, que te pondrá una nota preliminar en la escala de 4.0 a 7.0 y que evaluará la originalidad de tus respuestas identificando el uso de inteligencia artificial. Por lo tanto, es muy importante que escribas las respuestas con tus propias palabras.
+    Tus respuestas serán revisadas por un agente de IA entrenado para analizar las respuestas a esta pregunta, que te pondrá una nota preliminar en la escala de {ESCALA} y que evaluará la originalidad de tus respuestas identificando el uso de inteligencia artificial. Por lo tanto, es muy importante que escribas las respuestas con tus propias palabras.
   </p>
 
   {BLOQUE_PREGUNTAS}

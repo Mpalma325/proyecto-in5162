@@ -147,7 +147,22 @@ def respuestas_falsas(correos, item, desde=0, cantidad=None, message_ids=False):
 
 
 def nota_ia(nota="6,0", originalidad="Media"):
+    """La corrección del modelo en el formato viejo: HTML con NOTA FINAL."""
     return f"<p>NOTA FINAL: {nota}</p><p>ORIGINALIDAD: {originalidad}</p>"
+
+
+def puntajes_ia(*puntajes, originalidad="Media", retro="Bien encaminado."):
+    """La corrección del modelo en el formato nuevo: JSON con un puntaje por pregunta, sin nota.
+
+    puntajes_ia(3, 2) es la de una instancia con dos preguntas (con 4–7, un 6,5).
+    """
+    import json
+    return json.dumps({
+        "preguntas": [{"rotulo": f"P{i}", "respuesta": f"Lo que respondió a P{i}.", "puntaje": p,
+                       "justificacion": f"Justificación de P{i}."} for i, p in enumerate(puntajes or (2,), 1)],
+        "originalidad": originalidad, "justificacion_originalidad": "Razonamiento propio.",
+        "retroalimentacion": retro,
+    }, ensure_ascii=False)
 
 
 def correo_entrante(remitente, item, texto, in_reply_to="", uid="900",

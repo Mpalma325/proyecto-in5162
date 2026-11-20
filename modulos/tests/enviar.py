@@ -9,6 +9,7 @@ el log.
 import sys
 
 from modulos import datos
+from modulos.escala import leer as _leer_escala
 from modulos.mail import enviar_correo
 from modulos.mail.vista import mostrar_correo
 
@@ -37,9 +38,12 @@ def _construir_bloque_preguntas(preguntas: list[str], legado: bool = True) -> st
     return "\n".join(bloques)
 
 
-def _construir_cuerpo(template: str, alumno: dict, info: SemanaInfo) -> str:
+def _construir_cuerpo(template: str, alumno: dict, info: SemanaInfo, escala=None) -> str:
     nombre_corto = alumno["Nombre"].split()[0] if alumno.get("Nombre") else "estudiante"
     grupo_info = info.para_grupo(alumno.get("Grupo", "control").strip().lower())
+    if "{ESCALA}" in template:
+        # «4,0 a 7,0», de escala_notas.json; los correos de 2026-2 no lo usan.
+        template = template.replace("{ESCALA}", (escala or _leer_escala()).rango())
     return (
         template
         .replace("{NOMBRE}", nombre_corto)
