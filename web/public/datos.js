@@ -11,7 +11,7 @@ import {
 import {
   contarCambios, diffLineas, filasDelLog, huella, ordenarVersiones, textoUsos, usosPorHuella, versionesDe,
 } from "./historial-prompts.js";
-import { escribirCsv, leerCsv } from "./csv.js";
+import { escribirCsv, leerCsv, textoDeArchivo } from "./csv.js";
 import { cambiosProhibidos, editorPreguntas, enviosDeNotas } from "./preguntas.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import { leerPrecios } from "./consumo.js";
@@ -104,7 +104,7 @@ function bajarComo(nombreArchivo, texto) {
 function botonSubir(texto, aceptar, alElegir) {
   const input = el("input", { type: "file", accept: aceptar });
   input.addEventListener("change", async () => {
-    if (input.files[0]) alElegir(await input.files[0].text(), input.files[0].name);
+    if (input.files[0]) alElegir(textoDeArchivo(await input.files[0].arrayBuffer()), input.files[0].name);
     input.value = "";
   });
   return el("label", { class: "descarga" }, texto, input);

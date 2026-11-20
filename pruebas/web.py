@@ -169,6 +169,19 @@ if shutil.which("node"):
     filas, igual = json.loads(r.stdout) if r.returncode == 0 else ([], False)
     check("separador ;, comillas escapadas y saltos dentro de una celda",
           filas == [["Pérez; Ana", "6,5"], ['con "comillas"\nen dos líneas', "7"]] and igual, r.stdout[:300])
+    # Lo que sube el profesor desde Excel: UTF-8 con BOM o cp1252, separado por ;.
+    excel = "Nombre;Correo\r\nAna Pérez Muñoz;ana.prueba@correo.test\r\n"
+    r = subprocess.run(["node", "--input-type=module", "-e",
+                        "const m = await import(process.argv[1]);"
+                        "const leer = (hex) => m.leerCsv(m.textoDeArchivo(Buffer.from(hex, 'hex')));"
+                        "console.log(JSON.stringify(process.argv.slice(2).map((h) => {"
+                        "  const d = leer(h); return [d.columnas, d.filas, d.formato.sep]; })))",
+                        csv_js, excel.encode("utf-8-sig").hex(), excel.encode("cp1252").hex()],
+                       capture_output=True, text=True, encoding="utf-8")
+    leidos = json.loads(r.stdout) if r.returncode == 0 else []
+    esperado = [["Nombre", "Correo"], [["Ana Pérez Muñoz", "ana.prueba@correo.test"]], ";"]
+    check("un CSV de Excel subido desde la página (UTF-8 con BOM o cp1252) conserva tildes y ñ",
+          leidos == [esperado, esperado], (r.stderr or r.stdout)[:300])
 else:
     print("  (sin node en el PATH: no se prueba csv.js)")
 

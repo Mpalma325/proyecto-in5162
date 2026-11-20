@@ -1,6 +1,7 @@
 """
 El esquema común de notas.csv y del log: lo que necesitan la revisión docente y
-la escala de notas, sin que cambie nada de lo que ya funciona.
+la escala de notas, sin que cambie nada de lo que ya funciona. Y que alumnos.csv
+y preguntas.csv se lean igual si vienen de un Excel en español.
 
 Corre sobre la plantilla, con tablas armadas acá y nombres inventados: no lee
 datos de alumnos reales.
@@ -318,6 +319,59 @@ def fusion_con_duplicados(tmp, sid):
           filas)
 
 
+def csv_de_excel(tmp, sid):
+    from modulos import datos
+    from modulos.datos import _csv
+    from modulos.tests import preguntas
+
+    titulo("12. alumnos.csv y preguntas.csv guardados por Excel en español")
+    # Excel con configuración regional chilena separa con punto y coma, y según
+    # cómo se guarde pone BOM o escribe en cp1252.
+    nomina = ("Nombre;Correo;CorreosAlternativos\r\n"
+              "Ana Pérez Muñoz;ana.prueba@correo.test;ana.otra@correo.test\r\n"
+              "\"Ñuñoa, Beto\";beto.ensayo@correo.test;\r\n")
+    variantes = {
+        "punto y coma, UTF-8 con BOM": nomina.encode("utf-8-sig"),
+        "punto y coma, cp1252": nomina.encode("cp1252"),
+        "coma, UTF-8 sin BOM": nomina.replace(";", ",").encode("utf-8"),
+        "coma, UTF-8 con BOM": nomina.replace(";", ",").encode("utf-8-sig"),
+    }
+    for nombre, contenido in variantes.items():
+        (tmp / "alumnos.csv").write_bytes(contenido)
+        filas = datos.alumnos.leer(sid)
+        check(f"{nombre}: dos alumnos, con tildes, ñ y la coma dentro de las comillas",
+              [(f.get("Nombre"), f.get("Correo")) for f in filas]
+              == [("Ana Pérez Muñoz", "ana.prueba@correo.test"), ("Ñuñoa, Beto", "beto.ensayo@correo.test")],
+              filas)
+        check(f"{nombre}: la cabecera son tres columnas",
+              _csv.cabecera(tmp / "alumnos.csv") == ["Nombre", "Correo", "CorreosAlternativos"],
+              _csv.cabecera(tmp / "alumnos.csv"))
+
+    (tmp / "alumnos.csv").write_bytes(variantes["punto y coma, cp1252"])
+    datos.alumnos.asignar_grupos_faltantes(7, sid)
+    campos, filas = _leer_csv(tmp / "alumnos.csv")
+    check("al asignar grupos se reescribe en UTF-8 con coma, sin columnas fantasma",
+          campos == ["Nombre", "Correo", "Grupo", "CorreosAlternativos"]
+          and [f["Nombre"] for f in filas] == ["Ana Pérez Muñoz", "Ñuñoa, Beto"]
+          and all(f["Grupo"] for f in filas), (campos, filas))
+
+    ruta = tmp / "tests_semanales" / "data" / "preguntas.csv"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_bytes(("Semana;Tema;Fecha de Entrega;Control P1;Control Pauta P1\r\n"
+                      "1;Elasticidad;lunes 16/03/2027, 10:15;¿Qué mide la elasticidad?;Cambio porcentual\r\n"
+                      ).encode("cp1252"))
+    archivo = preguntas.leer_archivo(ruta)
+    fila = archivo.filas.get(1, {})
+    check("preguntas.csv con punto y coma y cp1252: se lee la semana con su fecha y sus signos",
+          archivo.columna == "Semana" and fila.get("Fecha de Entrega") == "lunes 16/03/2027, 10:15"
+          and fila.get("Control P1") == "¿Qué mide la elasticidad?" and not archivo.problemas,
+          (archivo.columna, fila, archivo.problemas))
+
+    check("el separador sale de la cabecera, sin contar lo que va entre comillas",
+          _csv.separador("Nombre;Correo") == ";" and _csv.separador("Nombre,Correo") == ","
+          and _csv.separador('"Apellido; Nombre",Correo') == "," and _csv.separador("Correo") == ",")
+
+
 with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     escritura_que_conserva(tmp, sid)
     columnas_y_eventos_nuevos(tmp, sid)
@@ -325,5 +379,6 @@ with semestre_desechable(base="_template", sid="_tmp_esquema") as (sid, tmp):
     estado_desde_el_log(tmp, sid)
     sincronizar_y_comparar(tmp, sid)
     fusion_con_duplicados(tmp, sid)
+    csv_de_excel(tmp, sid)
 
 sys.exit(resultado())

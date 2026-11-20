@@ -4,6 +4,20 @@
 
 const BOM = "﻿";
 
+/**
+ * El texto de un archivo que se sube desde la página. Excel en Windows puede
+ * guardar el CSV en cp1252 en vez de UTF-8; leído como UTF-8, cada tilde y
+ * cada ñ quedaría como «�» y se guardaría así. El BOM de UTF-8 se descarta,
+ * igual que con File.text().
+ */
+export function textoDeArchivo(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
 /** Texto -> { columnas, filas, formato }. `filas` son listas de strings. */
 export function leerCsv(texto) {
   const bom = texto.startsWith(BOM);

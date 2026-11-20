@@ -15,11 +15,12 @@ Con las dos columnas a la vez el archivo es un error: no se sabe cuál manda.
 El id es el `Item` de notas.csv, del log y del panel en los dos formatos.
 """
 
-import csv
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+from modulos.datos import lector_csv
 
 from . import config
 
@@ -121,10 +122,10 @@ def leer_archivo(ruta: Path | None = None) -> ArchivoPreguntas:
     ruta = ruta or config.PREGUNTAS_CSV
     if not Path(ruta).exists():
         return ArchivoPreguntas("Instancia", {}, [], set())
-    with Path(ruta).open(encoding="utf-8-sig", newline="") as f:
-        lector = csv.DictReader(f)
-        columnas = [(c or "").strip() for c in (lector.fieldnames or [])]
-        filas = [_limpia(x) for x in lector]
+    # Coma o punto y coma, UTF-8 o cp1252: puede venir de una planilla.
+    lector = lector_csv(ruta)
+    columnas = [(c or "").strip() for c in (lector.fieldnames or [])]
+    filas = [_limpia(x) for x in lector]
     if "Semana" in columnas and "Instancia" in columnas:
         raise PreguntasError("preguntas.csv tiene las columnas Semana e Instancia a la vez: "
                              "deja solo una (Instancia en los semestres nuevos).")

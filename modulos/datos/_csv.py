@@ -1,6 +1,14 @@
-"""Lectura y escritura de los CSV del semestre. Detalle interno del módulo."""
+"""Lectura y escritura de los CSV del semestre. Detalle interno del módulo.
+
+Lo que se escribe acá va siempre en UTF-8 y separado por coma. Lo que se lee
+puede venir de una planilla: Excel con configuración regional en español
+guarda los CSV separados por punto y coma, a veces con BOM y a veces en
+cp1252. `lector` acepta todo eso, y es por donde pasa cada lectura de un CSV
+que arma una persona (alumnos.csv, preguntas.csv).
+"""
 
 import csv
+import io
 from pathlib import Path
 
 from modulos import semestre as _semestre
@@ -11,12 +19,38 @@ def ruta(nombre: str, semestre_id: str | None = None) -> Path:
     return _semestre.raiz(semestre_id) / nombre
 
 
+def _decodificar(datos: bytes) -> str:
+    """UTF-8 (con o sin BOM) o, si no lo es, cp1252: lo que guarda Excel en Windows."""
+    try:
+        return datos.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return datos.decode("cp1252", errors="replace")
+
+
+def separador(primera_linea: str) -> str:
+    """Coma o punto y coma: el que más aparece en la cabecera, fuera de comillas.
+    Si empatan (una sola columna), coma."""
+    fuera, entre_comillas = [], False
+    for c in primera_linea:
+        if c == '"':
+            entre_comillas = not entre_comillas
+        elif not entre_comillas:
+            fuera.append(c)
+    return ";" if fuera.count(";") > fuera.count(",") else ","
+
+
+def lector(p: Path) -> csv.DictReader:
+    """Un DictReader sobre el archivo, con separador y codificación detectados."""
+    texto = _decodificar(Path(p).read_bytes())
+    return csv.DictReader(io.StringIO(texto, newline=""),
+                          delimiter=separador(texto.split("\n", 1)[0]))
+
+
 def leer(nombre: str, semestre_id: str | None = None) -> list[dict]:
     p = ruta(nombre, semestre_id)
     if not p.exists():
         return []
-    with p.open(encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+    return list(lector(p))
 
 
 def escribir(nombre: str, filas: list[dict], columnas: list[str],
@@ -52,8 +86,9 @@ def cabecera(p: Path) -> list[str]:
     """Los nombres de columna del archivo, sin leerlo entero."""
     if not p.exists():
         return []
-    with p.open(encoding="utf-8-sig", newline="") as f:
-        return next(csv.reader(f), [])
+    with p.open("rb") as f:
+        primera = _decodificar(f.readline()).rstrip("\r\n")
+    return next(csv.reader([primera], delimiter=separador(primera)), [])
 
 
 def _ampliar_columnas(p: Path, columnas: list[str]) -> None:
@@ -71,8 +106,7 @@ def _ampliar_columnas(p: Path, columnas: list[str]) -> None:
     if not faltan:
         return
 
-    with p.open(encoding="utf-8-sig", newline="") as f:
-        filas = list(csv.DictReader(f))
+    filas = list(lector(p))
     nuevas = actuales + faltan
     tmp = p.with_suffix(p.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="") as f:
