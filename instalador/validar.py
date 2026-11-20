@@ -191,7 +191,8 @@ def probar_openai(clave: str, ej: Ejecutor, modelo: str = MODELO_POR_DEFECTO) ->
                        "platform.openai.com/api-keys y pégala.")
     if estado == 429:
         return None, ("OpenAI respondió 429: demasiadas llamadas seguidas con esta clave. Espera un "
-                      "minuto y presiona Enter para probar de nuevo.")
+                      "minuto y presiona Enter dos veces: la primera responde que no a seguir sin "
+                      "comprobar y la segunda deja la misma clave, que se prueba de nuevo.")
     if estado == 404 and codigo == "model_not_found":
         return True, (f"La clave sirve, pero la cuenta no tiene el modelo {modelo}, que es el que se usa "
                       "por defecto, así que no pude comprobar el saldo. Después de instalar, elige otro "
