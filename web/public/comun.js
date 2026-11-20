@@ -104,7 +104,7 @@ if (typeof location !== "undefined" && typeof document !== "undefined" && docume
 
 const PAGINAS = [
   ["/", "Inicio"],
-  ["/tests", "Tests semanales"],
+  ["/tests", "Tests"],
   ["/tareas", "Tareas"],
   ["/resultados", "Resultados"],
   ["/datos", "Configuración"],

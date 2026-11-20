@@ -126,6 +126,10 @@ function rotuloItem(item) {
   const s = leerSemana(estado.preguntas, Number(item));
   return s ? nombreDe(s) : `Instancia ${item}`;
 }
+/** «semana»/«semanas» o «instancia»/«instancias», para contar. */
+const unidad = (n) => (formatoNuevo() ? (n === 1 ? "instancia" : "instancias") : (n === 1 ? "semana" : "semanas"));
+/** «semanas ya evaluadas» o «instancias ya evaluadas». */
+const yaEvaluadas = () => `${unidad(2)} ya evaluadas`;
 /** Para meterlo en una frase: «la semana 4» o «Control 2». */
 const mencionItem = (item) => (formatoNuevo() ? rotuloItem(item) : `la semana ${item}`);
 /** «Semanas 3, 4» o «Control 2, Control 3». */
@@ -428,8 +432,10 @@ async function cargarSemestre(id) {
     .then((texto) => {
       if (!texto || estado.semestre !== id) return;
       estado.preguntas = leerCsv(texto);
-      // En el formato nuevo, los ejes y títulos pasan del id al nombre de cada instancia.
-      if (estado.pestana === "Alumnos" || formatoNuevo()) dibujarPestana();
+      // En el formato nuevo, los filtros, ejes y títulos pasan del id al nombre
+      // de cada instancia: se redibuja la página entera, no solo la pestaña.
+      if (formatoNuevo()) dibujar();
+      else if (estado.pestana === "Alumnos") dibujarPestana();
     })
     .catch(() => {});
 }
@@ -501,7 +507,8 @@ function tarjetaCasilla(c) {
     el("div", { class: "contenido" },
       c.Respuesta
         ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, respuestaLegible(c.Respuesta))]
-        : el("p", { class: "tenue" }, c.Respondio ? "No hay texto de respuesta guardado." : "No respondió esta semana."),
+        : el("p", { class: "tenue" }, c.Respondio ? "No hay texto de respuesta guardado."
+          : formatoNuevo() ? "No respondió." : "No respondió esta semana."),
       c.EvaluacionIA
         ? el("div", { class: "evaluacion" }, el("p", {}, el("strong", {}, "El correo que recibió")),
           correoEvaluacion(c))
@@ -542,8 +549,11 @@ function listaPorAlumno(lista, enCurso = itemEnCurso()) {
   const orden = [...gente.values()]
     .map((g) => ({ ...g, semanas: [...new Set(g.semanas)].sort((a, b) => posicion(a) - posicion(b)) }))
     .sort((a, b) => b.semanas.length - a.semanas.length || a.Nombre.localeCompare(b.Nombre, "es"));
-  const semanas = (s) => `${s.length === 1 ? "semana" : "semanas"} `
-    + s.map((x) => (x === enCurso ? `${x} (en curso)` : x)).join(", ");
+  const semanas = (s) => {
+    const marca = (x, texto) => (x === enCurso ? `${texto} (en curso)` : texto);
+    return formatoNuevo() ? s.map((x) => marca(x, rotuloItem(x))).join(", ")
+      : `${unidad(s.length)} ` + s.map((x) => marca(x, String(x))).join(", ");
+  };
   return el("div", { class: "por-alumno" },
     el("div", { class: "acciones" }, botonCopiar(orden.map((g) => g.Correo)),
       el("span", { class: "tenue" }, plural(orden.length, "alumno", "alumnos"))),
@@ -572,7 +582,7 @@ function abrirDetalle(titulo, criterio, { lista = null, excluirItem = null } = {
   if (porAlumno) {
     // Si a cada uno le falta una sola semana, contar semanas no agrega nada.
     resumen = casillas.length === personas ? plural(personas, "alumno", "alumnos")
-      : `${plural(personas, "alumno", "alumnos")} · ${plural(casillas.length, "semana", "semanas")} sin `
+      : `${plural(personas, "alumno", "alumnos")} · ${plural(casillas.length, unidad(1), unidad(2))} sin `
         + "responder en total";
   } else {
     const base = casillas.length === personas
@@ -638,14 +648,14 @@ function seccionCurso() {
 
   return [
     el("div", { class: "grilla2" },
-      tarjeta("Nota media por semana", g1 || el("p", { class: "tenue" }, "Sin notas todavía."),
+      tarjeta(`Nota media por ${unidad(1)}`, g1 || el("p", { class: "tenue" }, "Sin notas todavía."),
         { pie: pieNotas }),
-      tarjeta("Tasa de respuesta por semana", g2 || el("p", { class: "tenue" }, "Sin envíos todavía."),
+      tarjeta(`Tasa de respuesta por ${unidad(1)}`, g2 || el("p", { class: "tenue" }, "Sin envíos todavía."),
         { pie: pieTasa })),
     el("div", { class: "grilla2" },
       tarjeta("Distribución de notas", g3),
       tarjeta("Originalidad según el modelo", g4)),
-    desplegable("Ver la tabla por semana", tabla(porItem)),
+    desplegable(`Ver la tabla por ${unidad(1)}`, tabla(porItem)),
   ];
 }
 
@@ -683,7 +693,7 @@ function seccionOriginalidad() {
       tooltip: tooltips(["Item", "NivelMedio"]),
     },
   }, (d) => abrirDetalle(rotuloItem(d.Item), { item: d.Item, estado: "evaluada" }))
-    : el("p", { class: "tenue" }, "Hace falta más de una semana para ver la evolución.");
+    : el("p", { class: "tenue" }, `Hace falta más de una ${unidad(1)} para ver la evolución.`);
 
   const itemsOrden = [...new Set(porItem.map((f) => f.Item))];
   const gComposicion = porItem.length ? grafico({
@@ -692,7 +702,7 @@ function seccionOriginalidad() {
     encoding: {
       x: campo("Item", "ordinal", ejeItem({ sort: itemsOrden })),
       y: campo("Porcentaje", "quantitative", {
-        title: "% de las evaluadas esa semana", stack: "normalize", axis: { format: "%" } }),
+        title: `% de las evaluadas en esa ${unidad(1)}`, stack: "normalize", axis: { format: "%" } }),
       color: campo("Originalidad", "nominal", { scale: escala, sort: etiquetas, title: "Originalidad" }),
       order: campo("Nivel", "quantitative"),
       tooltip: tooltips(["Item", "Originalidad", "Evaluaciones", "Porcentaje"]),
@@ -715,8 +725,8 @@ function seccionOriginalidad() {
   return [
     kpis,
     el("div", { class: "grilla2" },
-      tarjeta("Nivel medio de originalidad por semana", gLinea),
-      tarjeta("Composición por semana", gComposicion)),
+      tarjeta(`Nivel medio de originalidad por ${unidad(1)}`, gLinea),
+      tarjeta(`Composición por ${unidad(1)}`, gComposicion)),
     tarjeta("Nota media según la originalidad que se le vio", gVsNota, {
       pie: "Cuántas evaluaciones hay detrás de cada barra: en la tabla de abajo.",
     }),
@@ -726,7 +736,7 @@ function seccionOriginalidad() {
         tabla(acumulado, ["Originalidad", "Evaluaciones", "Porcentaje"])),
       el("div", {}, el("h4", {}, "Originalidad contra nota"),
         tabla(vsNota, ["Originalidad", "Evaluaciones", "NotaMedia", "NotaMin", "NotaMax"]))),
-    desplegable("Ver el detalle por semana", tabla(porItem)),
+    desplegable(`Ver el detalle por ${unidad(1)}`, tabla(porItem)),
   ];
 }
 
@@ -1084,7 +1094,7 @@ function fichaAlumno(correo) {
 
   const serie = f.Casillas.filter((c) => hay(c.Nota));
   if (serie.length >= 2) {
-    partes.push(tarjeta("Sus notas por semana", grafico({
+    partes.push(tarjeta(`Sus notas por ${unidad(1)}`, grafico({
       height: 220, data: { values: serie },
       mark: { type: "line", point: true },
       encoding: {
@@ -1095,7 +1105,7 @@ function fichaAlumno(correo) {
     })));
   }
 
-  partes.push(el("h4", {}, "Semana a semana"));
+  partes.push(el("h4", {}, formatoNuevo() ? "Instancia por instancia" : "Semana a semana"));
   // Si arriba se eligieron algunas semanas (no todas), esas parten abiertas.
   const elegidas = estado.selItems.size && estado.selItems.size < estado.items.length ? estado.selItems : null;
   const grupo = f.Grupo === "tratamiento" ? "tratamiento" : "control";
@@ -1233,18 +1243,18 @@ function seccionPendientes() {
     el("h4", {}, `Respondieron y nadie las ha corregido — ${pend.length}`),
     pend.length ? [
       el("p", { class: "nota-pie" }, "Pueden ser respuestas fuera de plazo. Se evalúan en ",
-        el("a", { href: "/tests#evaluar" }, "Tests Semanales › Evaluar respuestas"), "."),
+        el("a", { href: "/tests#evaluar" }, "Tests › Evaluar respuestas"), "."),
       pend.map(tarjetaCasilla),
     ] : caja("exito", "No hay respuestas pendientes de evaluación."),
     porRevisar.length ? [
       el("hr"),
       el("h4", {}, `Corregidas, esperando revisión — ${porRevisar.length}`),
       el("p", { class: "nota-pie" }, "Todavía no son nota: el alumno no ha recibido el feedback. Se revisan en ",
-        el("a", { href: "/tests#revisar" }, "Tests Semanales › Revisar"), "."),
+        el("a", { href: "/tests#revisar" }, "Tests › Revisar"), "."),
       porRevisar.map(tarjetaCasilla),
     ] : null,
     el("hr"),
-    el("h4", {}, `${deEnCurso.length ? "Sin responder en semanas ya evaluadas" : "Sin responder"} — ${cerradas.length}`),
+    el("h4", {}, `${deEnCurso.length ? `Sin responder en ${yaEvaluadas()}` : "Sin responder"} — ${cerradas.length}`),
     cerradas.length ? listaPorAlumno(cerradas) : caja("exito", "Todos respondieron lo que se les envió."),
     deEnCurso.length ? desplegable(`${rotuloItem(enCurso)}, aún sin evaluar: ${plural(deEnCurso.length, "alumno", "alumnos")} `
       + "sin respuesta registrada (puede estar en el buzón)", listaPorAlumno(deEnCurso)) : null,
@@ -1255,7 +1265,7 @@ function seccionDescargar() {
   return [
     el("section", { class: "opcion-descarga" },
       el("h3", {}, "Datos de esta página"),
-      el("p", { class: "nota-pie" }, "Una fila por alumno y semana, con los filtros de arriba."),
+      el("p", { class: "nota-pie" }, `Una fila por alumno y ${unidad(1)}, con los filtros de arriba.`),
       el("button", { class: "descarga", type: "button", onclick: descargarCsv }, "Descargar estos datos (CSV)")),
     el("hr"),
     sabanaDe(estado.semestre),
@@ -1290,7 +1300,7 @@ function descargarCsv() {
 // Una selección vacía no filtra (son todas): se muestra con todas marcadas, y
 // la última marcada no se puede desmarcar, para que nunca se vea vacía.
 let clicPendiente = null;
-function chips(opciones, seleccion) {
+function chips(opciones, seleccion, rotulo = String) {
   const marcada = (o) => !seleccion.size || seleccion.has(o);
   const todas = opciones.every(marcada);
   const alternar = todas ? null : el("button", {
@@ -1318,7 +1328,7 @@ function chips(opciones, seleccion) {
       }, 250);
       clicPendiente = { o, seleccion, reloj };
     },
-  }, o)));
+  }, rotulo(o))));
 }
 
 let contenedorPestana = null;
@@ -1350,7 +1360,7 @@ function fechaDatos(sem) {
 
 function textoFiltros() {
   const sem = estado.selItems.size && estado.selItems.size < estado.items.length
-    ? `${estado.selItems.size} de ${estado.items.length} semanas` : "todas las semanas";
+    ? `${estado.selItems.size} de ${estado.items.length} ${unidad(2)}` : `todas las ${unidad(2)}`;
   const gru = estado.selGrupos.size && estado.selGrupos.size < estado.grupos.length
     ? [...estado.selGrupos].join(", ") : "todos los grupos";
   return `Filtros: ${sem} · ${gru}`;
@@ -1383,7 +1393,8 @@ function dibujar() {
   },
     el("summary", {}, textoFiltros()),
     el("div", { class: "filtros" },
-      el("div", { class: "filtro" }, el("span", {}, "Semanas"), chips(estado.items, estado.selItems)),
+      el("div", { class: "filtro" }, el("span", {}, formatoNuevo() ? "Instancias" : "Semanas"),
+        chips(estado.items, estado.selItems, formatoNuevo() ? rotuloItem : String)),
       el("div", { class: "filtro" }, el("span", {}, "Grupos"), chips(estado.grupos, estado.selGrupos))));
 
   // La semana en curso y lo que requiere atención están en Inicio: aquí solo los resultados.
@@ -1417,7 +1428,7 @@ function dibujar() {
 
   const nGrupos = estado.selGrupos.size || estado.grupos.length;
   const meta = el("p", { class: "meta-vista" }, [
-    plural(r.Alumnos, "alumno", "alumnos"), plural(r.Items, "semana", "semanas"), plural(nGrupos, "grupo", "grupos"),
+    plural(r.Alumnos, "alumno", "alumnos"), plural(r.Items, unidad(1), unidad(2)), plural(nGrupos, "grupo", "grupos"),
     r.Modelos && r.Modelos.length ? `evaluadas con ${r.Modelos.join(", ")}` : null,
   ].filter(Boolean).join(" · "));
 
@@ -1440,10 +1451,10 @@ function dibujar() {
     kpi({
       etiqueta: "Sin responder", valor: entero(sinRespCerradas),
       sub: sinRespEnCurso
-        ? ["en semanas ya evaluadas", `${mencionItem(enCurso)} se cuenta al evaluarla`]
+        ? [`en ${yaEvaluadas()}`, `${mencionItem(enCurso)} se cuenta al evaluarla`]
         : "se les envió y no respondieron",
       accion: sinRespCerradas ? "ver quiénes →" : null,
-      alClic: sinRespCerradas ? () => abrirDetalle(enCurso ? "Sin responder en semanas ya evaluadas" : "Sin responder",
+      alClic: sinRespCerradas ? () => abrirDetalle(enCurso ? `Sin responder en ${yaEvaluadas()}` : "Sin responder",
         { estado: "sin_responder" }, { excluirItem: enCurso }) : null,
     }));
 
