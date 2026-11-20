@@ -107,8 +107,26 @@ def _ajuste(a: dict) -> list[str]:
     motivo = " ".join(str(a.get("motivo", "")).split())
     if len(motivo) > 500:
         raise ValueError("El motivo es muy largo (más de 500 caracteres).")
+    # Con aviso el ajuste manda un correo: tiene que pedirse como real, y solo
+    # existe para Tests (Tareas no tiene la plantilla ni el hilo).
+    avisar = a.get("avisar", False)
+    if not isinstance(avisar, bool):
+        raise ValueError(f"'avisar' tiene que ser true o false: {avisar!r}")
+    if avisar and flujo != "test":
+        raise ValueError("El aviso de ajuste solo existe para Tests.")
+    if avisar and a.get("prueba") is not False:
+        raise ValueError("El aviso necesita prueba:false: no se cambió la nota.")
     return ["-m", "modulos.datos.ajustar", "--flujo", flujo, "--item", item, "--correo", correo,
-            "--nota", nota, "--motivo", motivo, "--por", a.get("_pedido_por") or "desconocido"]
+            "--nota", nota, "--motivo", motivo, "--por", a.get("_pedido_por") or "desconocido",
+            *(["--avisar"] if avisar else [])]
+
+
+def _sin_modelo(a: dict) -> list[str]:
+    """«Las corrijo yo»: deja la corrección vacía a nombre de quien la pidió, para revisar."""
+    v = a.get("sin_modelo", False)
+    if not isinstance(v, bool):
+        raise ValueError(f"'sin_modelo' tiene que ser true o false: {v!r}")
+    return ["--sin-modelo", "--por", a.get("_pedido_por") or "desconocido"] if v else []
 
 
 def _tarea(a: dict) -> str:
@@ -198,7 +216,11 @@ def _experimento(a: dict) -> list[str]:
 FLUJOS = {
     # Una instancia en borrador no se envía de verdad: lo frena el script (enviar.py).
     "tests.enviar": ("tests", lambda a: ["-m", "modulos.tests.enviar", _instancia(a), *_prueba(a)]),
-    "tests.evaluar": ("tests", lambda a: ["-m", "modulos.tests.evaluar", _instancia(a), *_prueba(a), *_solo(a)]),
+    "tests.evaluar": ("tests", lambda a: ["-m", "modulos.tests.evaluar", _instancia(a), *_prueba(a), *_solo(a),
+                                         *_sin_modelo(a)]),
+    # Manda las correcciones aprobadas en Tests › Revisar (y registra los descartes).
+    "tests.feedback": ("tests", lambda a: ["-m", "modulos.tests.feedback", _instancia(a), *_prueba(a),
+                                           "--por", a.get("_pedido_por") or "desconocido"]),
     "tests.tutoria": ("tests", lambda a: ["-m", "modulos.tests.tutoria",
                                           *([_instancia(a)] if a.get("instancia") or a.get("semana") else []),
                                           *_prueba(a)]),

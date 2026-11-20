@@ -7,13 +7,19 @@
 // En un semestre con preguntas.csv del formato nuevo (columna Instancia) se
 // elige la instancia por su nombre («Control 2») y el trabajo lleva
 // `instancia`; en uno antiguo, el número de semana y `semana`, como siempre.
+//
+// Qué pasa después de corregir lo dice configuracion.json: en automático el
+// feedback sale en el mismo trabajo; en revisión, las correcciones esperan en
+// la pestaña Revisar (revision.js). Sin el archivo rige lo de antes.
 
 import {
   api, barraPestanas, caja, chipSemestre, confirmar, el, elegirCandidatos, enCuanto, fechaCorta, historialTrabajos,
   idDe, navegacion, nombreInstancia, pedirTrabajo, seguirTrabajo,
 } from "./comun.js";
 import { diaMes, leerCiclo } from "./ciclo.js";
+import { cargarConfiguracion, describirModo, REVISAR } from "./configuracion.js";
 import { leerSemana, resumenSemana, semanasDe } from "./preguntas.js";
+import { pestanaRevisar } from "./revision.js";
 
 document.getElementById("nav").replaceWith(navegacion());
 const app = document.getElementById("app");
@@ -28,6 +34,11 @@ let trabajos = [];
 let estadoCurso;
 // La pestaña abierta vuelve a mirar sus avisos cuando cambian los datos.
 let alCambiarDatos = () => {};
+// configuracion.json del semestre (configuracion.js); null mientras no se lea.
+let configuracion = null;
+const enRevision = () => configuracion?.modo === REVISAR;
+// Un texto de PESTANAS puede depender del modo: entonces es una función.
+const segunModo = (v, ...a) => (typeof v === "function" ? v(...a) : v);
 
 // Formato antiguo (columna Semana) mientras no se sepa otra cosa.
 const legado = () => !estadoCurso || estadoCurso.legado !== false;
@@ -56,13 +67,21 @@ const PESTANAS = [
     id: "evaluar", titulo: "2 · Evaluar respuestas", flujo: "tests.evaluar",
     prueba: "Solo simular",
     botonPrueba: "Simular evaluación",
-    botonReal: "Evaluar y mandar feedback",
-    alerta: "Se llama al modelo, la nota queda guardada y cada alumno recibe su feedback por correo.",
-    confirmar: (a) => `Vas a evaluar las respuestas de ${mencion(idDe(a))} y mandarle el feedback a cada `
-      + "alumno. Son correos reales y la nota queda guardada.",
+    botonReal: () => (enRevision() ? "Corregir y dejar para revisión" : "Evaluar y mandar feedback"),
+    alerta: () => (enRevision()
+      ? "Se llama al modelo y cada corrección queda esperando en Revisar. El alumno no recibe nada todavía, salvo "
+        + "el correo de duplicado si respondió dos veces."
+      : "Se llama al modelo, la nota queda guardada y cada alumno recibe su feedback por correo."),
+    confirmar: (a) => (enRevision()
+      ? `Vas a corregir las respuestas de ${mencion(idDe(a))}. Las correcciones quedan esperando tu revisión en `
+        + "Tests › Revisar: el alumno no recibe nada todavía, salvo el correo de duplicado a quien respondió dos veces."
+      : `Vas a evaluar las respuestas de ${mencion(idDe(a))} y mandarle el feedback a cada `
+        + "alumno. Son correos reales y la nota queda guardada."),
   },
+  // Revisar no pide un trabajo al abrirla: muestra las correcciones (revision.js).
+  { id: "revisar", titulo: "3 · Revisar", revisar: true },
   {
-    id: "resumen", titulo: "3 · Resumen semana", flujo: "tests.resumen",
+    id: "resumen", titulo: "4 · Resumen semana", flujo: "tests.resumen",
     texto: "Resumen de la semana para el equipo docente, a partir de las evaluaciones.",
     info: "Llama al modelo. No manda correos.",
     boton: "Generar resumen",
@@ -83,13 +102,23 @@ const PESTANAS = [
 // Probar criterio vivía acá; ahora está en Configuración › La IA.
 if (location.hash === "#experimento") location.replace("/datos#datos/probar");
 
-let pestana = PESTANAS.find((p) => p.id === location.hash.slice(1)) || PESTANAS[0];
+/** «#revisar/12» → { id: "revisar", n: 12 }. El id de la instancia solo va en la URL de Revisar. */
+const leerHash = () => {
+  const [id, n] = location.hash.slice(1).split("/");
+  return { id, n: Number(n) >= 1 ? Number(n) : null };
+};
+let pestana = PESTANAS.find((p) => p.id === leerHash().id) || PESTANAS[0];
+// La instancia abierta en Revisar; null: la primera con algo pendiente.
+let revisarId = leerHash().n;
+
+const hashDe = (id) => (id === "revisar" && revisarId ? `#revisar/${revisarId}` : `#${id}`);
 
 /** Abre una pestaña: en esa semana o, sin decir cuál, en la que le corresponde. */
 function irA(id, semana) {
   pestana = PESTANAS.find((p) => p.id === id) || pestana;
   semanaElegida = semana || semanaPorDefecto(pestana.id);
-  history.replaceState(null, "", `#${pestana.id}`);
+  if (pestana.id === "revisar" && semana) revisarId = semana;
+  history.replaceState(null, "", hashDe(pestana.id));
   dibujar();
 }
 
@@ -97,14 +126,19 @@ function irA(id, semana) {
 // pestaña. irA usa replaceState, que no dispara hashchange: no hay bucle.
 window.addEventListener("hashchange", () => {
   if (location.hash === "#experimento") { location.replace("/datos#datos/probar"); return; }
-  const id = location.hash.slice(1);
-  if (semestre && id !== pestana.id && PESTANAS.some((p) => p.id === id)) irA(id);
+  const { id, n } = leerHash();
+  if (!semestre || !PESTANAS.some((p) => p.id === id)) return;
+  if (id !== pestana.id) irA(id, id === "revisar" ? n : undefined);
+  else if (id === "revisar" && n && n !== revisarId) irA(id, n);
 });
 
 // ---------------------------------------------------------------- en qué va el curso
 // La lectura vive en ciclo.js, que la comparte con Inicio.
 
-const estadoDe = (n) => (estadoCurso ? estadoCurso.estadoDe(n) : { enviados: 0, primerEnvio: "", evaluadas: 0, sinNota: 0 });
+const estadoDe = (n) => (estadoCurso ? estadoCurso.estadoDe(n)
+  : { enviados: 0, primerEnvio: "", evaluadas: 0, sinNota: 0, porRevisar: 0, descartadas: 0, corregidas: 0 });
+/** Cuántas correcciones esperan revisión en todo el semestre. */
+const totalPorRevisar = () => (estadoCurso?.porRevisar ? estadoCurso.porRevisar().reduce((s, [, k]) => s + k, 0) : 0);
 const semanasEnviadas = () => (estadoCurso ? estadoCurso.enviadas() : []);
 const entregaDe = (n) => (estadoCurso ? estadoCurso.entregaDe(n) : { texto: "", fecha: null });
 const proximoPaso = () => (estadoCurso ? estadoCurso.proximoPaso() : null);
@@ -158,8 +192,10 @@ function lineaEstado() {
   const ultima = semanasEnviadas().at(-1);
   const cuando = p.borrador ? ", que está en borrador: confírmala en Configuración › Preguntas."
     : p.cuando && !p.ya ? `, ${legado() ? "hacia" : "programado para"} el ${fechaCorta(p.cuando)} (${enCuanto(p.cuando)}).` : ".";
+  const porRevisar = ultima ? estadoDe(ultima).porRevisar : 0;
   return el("p", { class: "estado-curso" },
-    ultima ? [el("strong", {}, `${nombre(ultima)}: `), `evaluada, ${estadoDe(ultima).evaluadas} con nota. `] : "",
+    ultima ? [el("strong", {}, `${nombre(ultima)}: `), `evaluada, ${estadoDe(ultima).evaluadas} con nota`,
+      porRevisar ? [" y ", irEn(`${porRevisar} por revisar`, "revisar", ultima)] : "", ". "] : "",
     "Lo próximo es ", irEn(`enviar ${mencion(p.semana)}`, "enviar", p.semana), cuando);
 }
 
@@ -169,7 +205,10 @@ function pestanasDeTests() {
   const enviadas = semanasEnviadas();
   const ultima = enviadas.at(-1);
   const ultimaEvaluada = enviadas.filter((n) => estadoDe(n).evaluadas).at(-1);
-  const detalle = { enviar: null, evaluar: null, resumen: "Opcional" };
+  const ultimaCorregida = enviadas.filter((n) => estadoDe(n).corregidas).at(-1);
+  const porRevisar = totalPorRevisar();
+  const detalle = { enviar: null, evaluar: null, resumen: "Opcional",
+    revisar: porRevisar ? `${porRevisar} por revisar` : enRevision() ? "Nada pendiente" : null };
   const hecho = { enviar: false, evaluar: false, resumen: false };
   if (estadoCurso) {
     if (prox?.paso === "enviar") {
@@ -182,8 +221,11 @@ function pestanasDeTests() {
     }
     if (prox?.paso === "evaluar") {
       detalle.evaluar = `${nombre(prox.semana)} · ${prox.cuando && !prox.ya ? `desde ${fechaCorta(prox.cuando)}` : "ahora"}`;
-    } else if (ultimaEvaluada) {
-      detalle.evaluar = `${nombre(ultimaEvaluada)} · ${estadoDe(ultimaEvaluada).evaluadas} con nota`;
+    } else if (ultimaCorregida) {
+      // En revisión, «corregida» todavía no es nota: la nota existe cuando sale el feedback.
+      const s = estadoDe(ultimaCorregida);
+      detalle.evaluar = `${nombre(ultimaCorregida)} · ${s.porRevisar ? `${s.corregidas} corregidas`
+        : `${s.evaluadas} con nota`}`;
       hecho.evaluar = true;
     }
     if (ultimaEvaluada) {
@@ -199,7 +241,8 @@ function pestanasDeTests() {
           toca: prox?.paso === "enviar" },
         { id: "evaluar", numero: 2, titulo: "Evaluar respuestas", detalle: detalle.evaluar, hecho: hecho.evaluar,
           toca: prox?.paso === "evaluar" },
-        { id: "resumen", numero: 3, titulo: "Resumen", detalle: detalle.resumen, hecho: hecho.resumen },
+        { id: "revisar", numero: 3, titulo: "Revisar", detalle: detalle.revisar, toca: porRevisar > 0 },
+        { id: "resumen", numero: 4, titulo: "Resumen", detalle: detalle.resumen, hecho: hecho.resumen },
       ] },
       { rotulo: "Cuando quieras", pestanas: [
         { id: "tutoria", titulo: "Responder dudas" },
@@ -217,10 +260,11 @@ function pintarCabecera() {
 
 /** Vuelve a leer el historial y notas.csv (al entrar y cuando termina un trabajo). */
 async function refrescarEstado() {
-  const [lista, estado] = await Promise.allSettled([
-    api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`), leerCiclo(semestre)]);
+  const [lista, estado, conf] = await Promise.allSettled([
+    api(`/api/trabajos?semestre=${encodeURIComponent(semestre)}`), leerCiclo(semestre), cargarConfiguracion(semestre)]);
   if (lista.status === "fulfilled") trabajos = lista.value;
   estadoCurso = estado.status === "fulfilled" ? estado.value : false;
+  if (conf.status === "fulfilled") configuracion = conf.value;
   columnaHistorial[0] = legado() ? "Semana" : "Instancia";
   pintarCabecera();
   alCambiarDatos();
@@ -254,15 +298,19 @@ function estadoParaPestana(id, n) {
     return `${Mencion(n)} todavía no se envía.`;
   }
   if (id === "evaluar") {
-    if (s.evaluadas) {
-      return `${Mencion(n)} ya tiene ${s.evaluadas} respuestas con nota. Si la corres de nuevo, solo se evalúan `
-        + "las respuestas nuevas.";
+    if (s.corregidas) {
+      const partes = [s.evaluadas ? `${s.evaluadas} con nota` : "", s.porRevisar ? `${s.porRevisar} por revisar` : "",
+        s.descartadas ? `${s.descartadas} descartadas` : ""].filter(Boolean);
+      return `${Mencion(n)} ya tiene ${s.corregidas} respuestas corregidas (${partes.join(", ")}). Si la corres de `
+        + "nuevo, solo se corrigen las respuestas nuevas.";
     }
     if (!s.enviados) return `${Mencion(n)} todavía no se envía: no hay respuestas que evaluar.`;
     if (fecha && fecha > new Date()) {
       return `La entrega de ${mencion(n)} cierra el ${fechaCorta(fecha)} (${enCuanto(fecha)}). Si evalúas antes, `
         + "las respuestas que lleguen después quedan para otra corrida."
-        + (info?.estado === "confirmada" ? " Al cierre se evalúa sola." : "");
+        + (info?.estado !== "confirmada" ? "" : enRevision()
+          ? " Al cierre se corrige sola y las correcciones quedan esperando en Revisar."
+          : " Al cierre se evalúa sola.");
     }
     if (!fecha && !texto) return `${Mencion(n)} no tiene fecha de entrega en preguntas.csv: evalúa cuando corresponda.`;
     return `La entrega de ${mencion(n)} ya cerró${fecha ? ` (${fechaCorta(fecha)})` : ` (${texto})`}.`;
@@ -283,11 +331,16 @@ function descarga(t) {
     // El semestre y la lista son los de esta revisión, no los del selector.
     const semana = idDe(t.argumentos);
     const clave = t.argumentos.instancia ? "instancia" : "semana";
+    // En revisión no sale feedback: los textos lo dicen y se puede corregir a mano.
+    const revisar = enRevision();
     return elegirCandidatos({
-      semestre: t.semestre, ruta: `tests_semanales/cache/candidatos_${semana}_${t.id}.json`, verbo: "Evaluar",
-      alProcesar: async (solo) => {
+      semestre: t.semestre, ruta: `tests_semanales/cache/candidatos_${semana}_${t.id}.json`,
+      verbo: revisar ? "Corregir con IA" : "Evaluar", mandaFeedback: !revisar, aMano: revisar,
+      textoConfirmar: revisar ? (nombres) => `Vas a corregir con IA a: ${nombres}.\n\nNo sale feedback todavía: cada `
+        + "corrección espera tu revisión en Tests › Revisar. Las demás quedan como están. ¿Confirmas?" : undefined,
+      alProcesar: async (solo, extra = {}) => {
         const destino = document.getElementById("resultado");
-        const id = await pedirTrabajo(t.semestre, "tests.evaluar", { [clave]: semana, prueba: false, solo });
+        const id = await pedirTrabajo(t.semestre, "tests.evaluar", { [clave]: semana, prueba: false, solo, ...extra });
         await seguir(id, destino);
       },
     });
@@ -340,7 +393,7 @@ function formulario(p, destino) {
     const bloqueado = real && !todas?.checked && enBorrador(Number(semana.value));
     alerta.replaceChildren(bloqueado ? caja("aviso", `${Mencion(Number(semana.value))} está en borrador. Confírmala en `
       + "Configuración › Preguntas antes de mandarla de verdad; en borrador solo se puede simular.")
-      : real ? el("div", { class: "nota-real" }, el("strong", {}, p.alerta),
+      : real ? el("div", { class: "nota-real" }, el("strong", {}, segunModo(p.alerta)),
         sinSimular ? el("p", { class: "precondicion" },
           `No simulaste ${legado() ? "esta semana" : "esta instancia"}: no verás antes qué respuestas se evaluarán.`)
           : null) : "");
@@ -348,7 +401,7 @@ function formulario(p, destino) {
     if (bloqueado || boton.classList.contains("bloqueado")) boton.disabled = Boolean(bloqueado);
     boton.classList.toggle("bloqueado", Boolean(bloqueado));
     boton.classList.toggle("real", Boolean(real));
-    if (prueba) boton.textContent = real ? p.botonReal : p.botonPrueba;
+    if (prueba) boton.textContent = real ? segunModo(p.botonReal) : p.botonPrueba;
     estadoSemana.textContent = todas?.checked ? "" : estadoParaPestana(p.id, Number(semana.value));
   };
   todas?.addEventListener("change", actualizar);
@@ -381,7 +434,7 @@ function formulario(p, destino) {
     if (p.confirmar && prueba && !prueba.checked) {
       // Desde el celular es fácil tocar sin querer, y el costo del error es
       // mandarle correos a todo el curso. El modo prueba no pide confirmación.
-      if (!await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, p.botonReal, "real")) return;
+      if (!await confirmar(`${p.confirmar(argumentos)}\n\n¿Confirmas?`, segunModo(p.botonReal), "real")) return;
     }
     boton.disabled = true;
     try {
@@ -401,6 +454,7 @@ function formulario(p, destino) {
     p.texto ? el("p", {}, p.texto) : null,
     p.info ? caja("info", p.info) : null,
     p.nota ? el("p", { class: "nota-pie" }, p.nota) : null,
+    p.id === "evaluar" ? lineaModo() : null,
     el("div", { class: "form-trabajo" },
       todas ? el("label", { class: "interruptor" }, todas, legado() ? "Todas las semanas" : "Todas") : null,
       campoSemana,
@@ -430,13 +484,40 @@ const historial = historialTrabajos({
 
 // ---------------------------------------------------------------- pantalla
 
+/** Qué pasa después de corregir, según configuracion.json. Se cambia en Configuración › Semestre. */
+function lineaModo() {
+  if (!configuracion) return null;
+  const cambiar = el("a", { href: "/datos#datos/semestre" }, "Configuración › Semestre");
+  if (!configuracion.existe) {
+    return el("p", { class: "nota-pie" }, "Este semestre usa la configuración de antes: cada corrección se le manda "
+      + "al alumno apenas queda lista.");
+  }
+  return el("p", { class: "nota-pie" }, `Después de corregir, ${describirModo(configuracion.modo)}. Se cambia en `,
+    cambiar, ".");
+}
+
+/** La pestaña Revisar: las correcciones de una instancia (revision.js). */
+function vistaRevisar() {
+  alCambiarDatos = () => {};
+  return pestanaRevisar({
+    semestre, ciclo: estadoCurso || null, id: revisarId,
+    alCambiarId: (n) => {
+      revisarId = n;
+      if (pestana.id === "revisar") history.replaceState(null, "", hashDe("revisar"));
+    },
+    // Un envío o un descarte cambia los números de las pestañas y de la línea de arriba.
+    alCambiar: () => refrescarEstado(),
+  });
+}
+
 function dibujar() {
   const resultado = el("div", { id: "resultado" });
   pintarCabecera();
   app.replaceChildren(
     el("div", { class: "cabeza-operacion" }, chipSemestre(semestre)),
     zonaEstado, zonaPestanas,
-    ...formulario(pestana, resultado).filter(Boolean), resultado, el("hr"), historial.nodo);
+    ...(pestana.revisar ? [vistaRevisar()] : formulario(pestana, resultado).filter(Boolean)),
+    resultado, el("hr"), historial.nodo);
   historial.dibujar(semestre);
 }
 

@@ -1,6 +1,7 @@
 """
 Cambiar una nota a mano: queda en notas.csv, en el log con motivo y nota
-anterior, y sobrevive a una reconstrucción desde el log. No manda correos.
+anterior, y sobrevive a una reconstrucción desde el log. Sin aviso no manda
+correos; con aviso, uno en el hilo del último feedback.
 """
 
 import sys
@@ -21,7 +22,8 @@ with semestre_desechable(sid="_tmp_ajuste") as (sid, tmp), sin_red():
     titulo("1. el ajuste cambia la nota y deja constancia")
     r = ajustar.ajustar(datos.TESTS, item, correo, "6.5", "el modelo castigó la firma del correo",
                         "profe@x.cl", sid)
-    check("devuelve la nota anterior y la nueva, con coma", r == {"antes": antes, "despues": "6,5"}, r)
+    check("devuelve la nota anterior y la nueva, con coma",
+          (r["antes"], r["despues"], r["aviso"]) == (antes, "6,5", None), r)
     check("notas.csv tiene la nota nueva",
           datos.notas.estado(correo, datos.TESTS, item, sid)["Nota"] == "6,5")
     ev = [e for e in datos.log.leer(sid, evento="ajuste") if e["Correo"] == correo.lower()]
@@ -49,5 +51,54 @@ with semestre_desechable(sid="_tmp_ajuste") as (sid, tmp), sin_red():
         check("un alumno sin registro en esa semana", False)
     except ValueError:
         check("un alumno sin registro en esa semana", True)
+
+    titulo("4. con aviso: un correo en el hilo del último feedback, sin la etiqueta NOTA FINAL")
+    from comun import mensajes
+    datos.log.registrar("evaluacion", datos.TESTS, item, correo, sid,
+                        MessageId="<feedback-aviso@correo.test>", Nota="6,0")
+    enviados.clear()
+    mensajes.clear()
+    r = ajustar.ajustar(datos.TESTS, item, correo, "6,8", "revisión del equipo", "profe@x.cl", sid,
+                        avisar=True)
+    check("sale un correo al alumno", enviados == [correo], enviados)
+    m = mensajes[-1] if mensajes else {}
+    cuerpo = m.get_payload()[0].get_payload(decode=True).decode("utf-8") if mensajes else ""
+    check("responde en el hilo del último feedback",
+          mensajes and m["In-Reply-To"] == "<feedback-aviso@correo.test>", mensajes and m["In-Reply-To"])
+    check("con el asunto de la instancia", mensajes and m["Subject"].startswith("Re: "), mensajes and m["Subject"])
+    check("dice la nota nueva y no usa NOTA FINAL", "6,8" in cuerpo and "NOTA FINAL" not in cuerpo.upper(), cuerpo)
+    ev = [e for e in datos.log.leer(sid, evento="ajuste") if e["Correo"] == correo.lower()]
+    check("el ajuste guarda el Message-ID del aviso", ev and ev[-1]["MessageId"] == r["aviso"] and r["aviso"], ev[-1:])
+
+    titulo("5. sin feedback con Message-ID, el aviso sale como correo nuevo")
+    otra = next(x for x in con_nota if x["Correo"] != correo)
+    mensajes.clear()
+    with_id = [e for e in datos.log.leer(sid, flujo=datos.TESTS, item=otra["Item"])
+               if e["Correo"] == otra["Correo"].lower() and e.get("MessageId") and e["Evento"] in ("evaluacion", "ajuste")]
+    if not with_id:
+        ajustar.ajustar(datos.TESTS, otra["Item"], otra["Correo"], "5,5", "", "profe@x.cl", sid, avisar=True)
+        check("sin In-Reply-To", mensajes and not mensajes[-1]["In-Reply-To"], mensajes and mensajes[-1]["In-Reply-To"])
+    else:
+        check("(la copia ya trae feedback con Message-ID: el caso no aplica)", True)
+
+    titulo("6. una corrección por revisar no se ajusta")
+    sin_nota = next(x for x in datos.notas.leer(sid, datos.TESTS) if not (x.get("Nota") or "").strip())
+    datos.notas.marcar_corregido(sin_nota["Correo"], datos.TESTS, sin_nota["Item"], semestre_id=sid)
+    enviados.clear()
+    try:
+        ajustar.ajustar(datos.TESTS, sin_nota["Item"], sin_nota["Correo"], "6,0", "", "profe@x.cl", sid, avisar=True)
+        check("se rechaza y dice dónde se cambia", False)
+    except ValueError as e:
+        check("se rechaza y dice dónde se cambia", "Revisar" in str(e), str(e))
+    check("y no sale ningún correo", enviados == [], enviados)
+
+    titulo("7. el aviso es solo de Tests")
+    tarea = next((x for x in datos.notas.leer(sid, datos.TAREAS) if (x.get("Nota") or "").strip()), None)
+    if tarea:
+        try:
+            ajustar.ajustar(datos.TAREAS, tarea["Item"], tarea["Correo"], "5,0", "", "profe@x.cl", sid, avisar=True)
+            check("tareas con aviso se rechaza", False)
+        except ValueError:
+            check("tareas con aviso se rechaza", True)
 
 sys.exit(resultado())

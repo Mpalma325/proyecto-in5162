@@ -16,6 +16,8 @@ from .ia_prompts import evaluar_respuesta
 from .preguntas import asunto as _asunto, cargar_semana, SemanaInfo
 from .respuestas import criterio as _criterio_respuestas
 from modulos.progreso import avanzar
+from modulos.semestre import configuracion as _configuracion
+from . import decisiones as _decisiones
 
 
 def _normalizar_html_gpt(html: str) -> str:
@@ -58,29 +60,12 @@ def _construir_cuerpo_duplicado(template: str, nombre: str) -> str:
     return template.replace("{NOMBRE}", nombre_corto)
 
 
-def _cargar_template_correccion() -> str | None:
-    """El correo que envuelve la corrección de la IA, si el semestre lo tiene.
-
-    Lo fijo del correo (el cierre con las dudas y la nota a la corrección) va
-    en correo_correccion.md y no en el prompt: así la IA solo corrige y no
-    tiene que copiar párrafos al pie de la letra. Un semestre sin ese archivo
-    manda la corrección sola, como antes.
-    """
-    ruta = config.PROMPTS / "correo_correccion.md"
-    return ruta.read_text(encoding="utf-8") if ruta.exists() else None
-
-
-def _construir_cuerpo_correccion(template: str | None, evaluacion_html: str, nombre: str) -> str:
-    evaluacion = _normalizar_html_gpt(evaluacion_html)
-    if not template:
-        return evaluacion
-    nombre_corto = nombre.split()[0] if nombre else "estudiante"
-    # La corrección entra al final: si trajera "{NOMBRE}" escrito, no se toca.
-    return template.replace("{NOMBRE}", nombre_corto).replace("{EVALUACION}", evaluacion)
-
-
-def _construir_asunto_respuesta(info: SemanaInfo) -> str:
-    return f"Re: {_asunto(info)}"
+# El armado del correo de corrección se mudó a feedback.py (fase 3): el envío
+# ya no es parte de corregir. Se reexportan para quien los importaba de aquí.
+from . import feedback as _feedback  # noqa: E402
+from .feedback import (  # noqa: E402,F401
+    _cargar_template_correccion, _construir_cuerpo_correccion, _construir_asunto_respuesta,
+)
 
 
 def _mapa_correos(filas_alumnos: list[dict]) -> dict:
@@ -170,31 +155,75 @@ def _ya_corregido_texto(estado: dict) -> str:
     return "ya estaba corregido, por revisar"
 
 
-def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> None:
-    """`solo`: si se pasa, evalúa solo a esos correos; el resto queda sin leer."""
+def _estado_candidato(fila: dict | None) -> str:
+    """Para la lista de elegidos: «con nota 6,0», «por revisar», «descartada» o vacío."""
+    fila = fila or {}
+    nota = (fila.get("Nota") or "").strip()
+    if nota:
+        return f"con nota {nota}"
+    if (fila.get("Descartada") or "").strip():
+        return "descartada"
+    if (fila.get("Corregido") or "").strip():
+        return "por revisar"
+    return ""
+
+
+def _modo_de_la_corrida(sin_modelo: bool) -> str:
+    """El modo de esta corrida: el de configuracion.json, salvo «Las corrijo yo», que siempre revisa."""
+    modo = _configuracion.modo_revision()
+    # Una corrección a mano está vacía: en automático se le mandaría eso al alumno.
+    return _configuracion.REVISAR if sin_modelo else modo
+
+
+def main(semana: int, dry_run: bool = False, solo: set[str] | None = None,
+         sin_modelo: bool = False, por: str = "") -> None:
+    """Corrige las respuestas de una instancia.
+
+    `solo`: si se pasa, corrige solo a esos correos; el resto queda sin leer.
+    `sin_modelo`: no llama al modelo; deja una corrección vacía a nombre del
+    docente (`por`) para que la complete en Tests › Revisar.
+
+    El modo sale de configuracion.json al momento de correr: en `auto` cada
+    corrección se manda apenas queda (feedback.enviar_una); en `revisar` queda
+    esperando la revisión. La primera línea de la salida dice cuál es.
+    """
+    modo = _modo_de_la_corrida(sin_modelo)
+    print(_configuracion.describir(modo)
+          + (" Corrección a mano: no se llama al modelo." if sin_modelo else ""))
     _anunciar_semestre()
     info = cargar_semana(semana)
     if info.borrador and not dry_run:
         print(f"✗ {info.nombre} está en borrador: no se envió, no hay nada que evaluar.")
         return
     filas = [a for a in _datos.alumnos.leer() if a.get("Correo", "").strip()]
+    if not dry_run:
+        # Si un corte dejó una evaluacion en el log sin su Nota en la tabla, se
+        # completa antes de decidir a quién corregir o reenviar.
+        _datos.notas.sincronizar_desde_log()
 
     correos = buscar_respuestas_semana(semana, **_criterio_respuestas(info))
     print(f"{f'Módulo {semana}' if info.legado else info.nombre} — {len(correos)} respuesta(s) encontrada(s)")
 
     template_duplicado = _cargar_template_duplicado()
-    template_correccion = _cargar_template_correccion()
-    if template_correccion is None:
+    automatico = modo == _configuracion.AUTO
+    plantilla = _feedback.Plantilla(dry_run) if automatico else None
+    if automatico and plantilla.texto is None:
         print("Sin correo_correccion.md: el correo lleva solo la corrección de la IA.")
-    # La plantilla también es parte de lo que recibe el alumno: va al log junto
-    # al prompt y la pauta. Una simulación no guarda versiones.
-    if dry_run:
-        version_correo = ""
-    elif template_correccion is None:
-        version_correo = "sin correo_correccion.md"
-    else:
-        version_correo = versiones.anotar(config.PROMPTS / "correo_correccion.md", template_correccion)
     asunto_respuesta = _construir_asunto_respuesta(info)
+
+    # En automático, primero lo que quedó corregido y sin mandar en una corrida
+    # anterior (falló el envío): el alumno ya esperó una vez.
+    if automatico:
+        if dry_run:
+            pendientes = _feedback.seleccionar(semana, modo, solo_automaticas=True)["enviar"]
+            if pendientes:
+                print(f"{len(pendientes)} corrección(es) de una corrida anterior quedaron sin enviar: "
+                      f"se enviarían ahora.")
+        else:
+            previas = _feedback.enviar_pendientes(info, modo, solo_automaticas=True, plantilla=plantilla)
+            if previas["enviados"] or previas["fallidos"]:
+                print(f"Reenvío de correcciones anteriores: {previas['enviados']} enviada(s), "
+                      f"{previas['fallidos']} fallida(s).")
 
     procesados = []
     evaluados = 0
@@ -237,11 +266,11 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
 
         nombre = alumno.get("Nombre", "?")
         correo_alumno = alumno.get("Correo", "").strip()
+        estado_previo = _datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {}
         candidatos.append({
             "correo": correo_alumno.lower(), "nombre": nombre,
             "grupo": alumno.get("Grupo", ""), "llegada": corr.get("fecha"),
-            "ya_tiene_nota": (_datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {})
-            .get("Nota", "").strip(),
+            "estado": _estado_candidato(estado_previo),
             "respuesta": corr.get("texto", "").strip()[:3000],
         })
 
@@ -252,11 +281,10 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
 
         # No se re-corrige a quien ya está corregido (con nota, por revisar o
         # descartado): gasta API y le manda un correo repetido al alumno.
-        estado_previo = _datos.notas.estado(correo_alumno, _datos.TESTS, semana) or {}
         if _datos.notas.esta_corregida(estado_previo) or correo_alumno.lower() in ya_evaluados_en_esta_corrida:
             duplicados += 1
             motivo = (_ya_corregido_texto(estado_previo) if _datos.notas.esta_corregida(estado_previo)
-                      else "ya tenía nota (evaluado en esta corrida)")
+                      else "ya estaba corregido (en esta corrida)")
             print(f"  ⊘ {nombre:30s} {motivo}")
 
             if not dry_run:
@@ -299,71 +327,77 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
         grupo_info = info.para_grupo(grupo)
 
         if dry_run:
-            print(f"→ {nombre}: evaluaría ({len(respuesta_alumno)} chars) [{grupo}]")
+            verbo = "dejaría para corregir a mano" if sin_modelo else "evaluaría"
+            print(f"→ {nombre}: {verbo} ({len(respuesta_alumno)} chars) [{grupo}]")
             # Como en la corrida real: una segunda respuesta suya recibe el
             # correo de duplicado, y la simulación tiene que mostrarlo.
             ya_evaluados_en_esta_corrida.add(correo_alumno.lower())
             continue
 
-        try:
-            html_eval = evaluar_respuesta(grupo_info.preguntas, grupo_info.pautas, respuesta_alumno)
-        except Exception as e:
-            fallidos += 1
-            print(f"✗ {nombre}: error GPT: {e}")
-            continue
+        if sin_modelo:
+            html_eval, nota, originalidad, meta = "", "", "", {}
+            modelo = f"{_decisiones.DOCENTE}{por or 'desconocido'}"
+        else:
+            try:
+                html_eval = evaluar_respuesta(grupo_info.preguntas, grupo_info.pautas, respuesta_alumno)
+            except Exception as e:
+                fallidos += 1
+                print(f"✗ {nombre}: error GPT: {e}")
+                continue
+            nota, originalidad = extraer_nota_y_originalidad(html_eval)
+            # El texto del modelo trae encima lo que costó producirlo. Puede venir
+            # un str pelado (una prueba con mocks), así que se pide con getattr.
+            meta = getattr(html_eval, "meta", {}) or {}
+            modelo = meta.get("modelo") or config.MODELO
 
-        nota, originalidad = extraer_nota_y_originalidad(html_eval)
-        # El texto del modelo trae encima lo que costó producirlo. Puede venir
-        # un str pelado (una prueba con mocks), así que se pide con getattr.
-        meta = getattr(html_eval, "meta", {}) or {}
-
-        id_feedback = None
+        # La corrección queda registrada antes de mandar nada: la API ya se
+        # gastó, y si el envío falla la corrida siguiente la manda sin volver
+        # a corregir.
+        _c = correo_alumno.lower()
+        correccion = {
+            "Modelo": modelo,
+            "Versiones": versiones.juntar(meta.get("versiones")),
+            "Nota": nota, "Originalidad": originalidad,
+            "EvaluacionIA": html_eval,
+            "Detalle": f"modo={modo}",
+        }
+        logro = _feedback._logro_de(nota)
         try:
-            id_feedback = enviar_correo(
-                correo_alumno,
-                asunto_respuesta,
-                _construir_cuerpo_correccion(template_correccion, html_eval, nombre),
-                html=True,
-                in_reply_to=corr.get("in_reply_to") or None,
-            )
-        except Exception as e:
-            fallidos += 1
-            print(f"✗ {nombre}: GPT OK pero falló envío: {e}")
-
-        # Se registra apenas se corrige: el correo ya salió y la API ya se
-        # gastó, así que perder esto obligaría a repetir todo.
-        try:
-            _c = correo_alumno.lower()
             _fecha = corr.get("fecha").isoformat() if corr.get("fecha") else None
             _datos.notas.marcar_respondio(_c, _datos.TESTS, semana, _fecha)
-            _datos.notas.registrar_nota(_c, _datos.TESTS, semana, nota, originalidad)
             # Con su Message-ID se reconoce después si el correo vuelve a
-            # aparecer sin leer; RespondeA dice a qué envío contestó.
+            # aparecer sin leer; RespondeA dice a qué envío contestó, y es el
+            # hilo en que sale el feedback.
             _datos.log.registrar("respuesta", _datos.TESTS, semana, _c,
                                  Ronda=0, MessageId=corr.get("message_id") or "",
                                  RespondeA=corr.get("in_reply_to") or "",
                                  Respuesta=respuesta_alumno)
-            # El MessageId del feedback es lo que después permite reconocer una
-            # repregunta del alumno sobre esta corrección. Antes se generaba y
-            # se descartaba, y por eso una repregunta era indistinguible de una
-            # respuesta atrasada.
-            _datos.log.registrar("evaluacion", _datos.TESTS, semana, _c,
+            _datos.log.registrar("correccion", _datos.TESTS, semana, _c,
                                  Ronda=0,
-                                 MessageId=id_feedback or "",
-                                 Modelo=meta.get("modelo") or config.MODELO,
-                                 Versiones=versiones.juntar(meta.get("versiones"), version_correo),
                                  TokensEntrada=meta.get("prompt_tokens") or "",
                                  TokensSalida=meta.get("completion_tokens") or "",
-                                 Nota=nota, Originalidad=originalidad,
-                                 EvaluacionIA=html_eval)
+                                 Logro=logro, **correccion)
+            _datos.notas.marcar_corregido(_c, _datos.TESTS, semana, logro=logro)
         except Exception as _e:  # noqa: BLE001
-            print(f"     ⚠ no pude registrar en el esquema nuevo: {_e}")
+            print(f"     ⚠ no pude registrar la corrección: {_e}")
 
-        ya_evaluados_en_esta_corrida.add(correo_alumno.lower())
+        ya_evaluados_en_esta_corrida.add(_c)
         evaluados += 1
-
-        print(f"✓ {nombre}: nota {nota or '?'}, originalidad {originalidad or '?'}")
         procesados.append(corr["uid"])
+
+        if automatico:
+            id_feedback = _feedback.enviar_una(info, _c, nombre, correccion, None, plantilla,
+                                               in_reply_to=corr.get("in_reply_to") or None)
+            if id_feedback is None:
+                fallidos += 1
+                print(f"✗ {nombre}: corregido (nota {nota or '?'}), pero el feedback no salió")
+                continue
+            print(f"✓ {nombre}: nota {nota or '?'}, originalidad {originalidad or '?'}")
+        elif sin_modelo:
+            print(f"✓ {nombre}: queda para corregir a mano en Tests › Revisar")
+        else:
+            print(f"✓ {nombre}: corregido, espera revisión (nota propuesta {nota or '?'}, "
+                  f"originalidad {originalidad or '?'})")
 
     if not dry_run and procesados:
         # Marcar como leídos es lo último y lo menos importante: si falla, todo
@@ -374,8 +408,8 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             marcar_leidos(procesados)
         except Exception as e:
             print(f"⚠ No pude marcar los correos como leídos: {e}")
-            print(f"  Las {evaluados} evaluaciones SÍ quedaron guardadas y los "
-                  f"correos ya se enviaron. No hay que repetir nada.")
+            print(f"  Las {evaluados} correcciones SÍ quedaron guardadas"
+                  + (" y los correos ya se enviaron." if automatico else ".") + " No hay que repetir nada.")
             print(f"  Quedan {len(procesados)} correos sin marcar en el buzón. "
                   f"Volver a correr este paso es seguro: los que ya se procesaron "
                   f"se reconocen y solo se marcan, sin mandar nada.")
@@ -391,16 +425,18 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
               + (f"  Ya procesados antes: {ya_procesados}" if ya_procesados else ""))
         if repreguntas:
             print(f"Repreguntas sobre el feedback: {repreguntas} (sin leer; las atiende: python -m modulos.tests.tutoria {semana})")
+        if not automatico and evaluados and not dry_run:
+            print(f"Las {evaluados} corrección(es) esperan en Tests › Revisar: el alumno no recibe nada todavía.")
 
     estados = {e["Correo"]: e for e in _datos.notas.leer(flujo=_datos.TESTS, item=semana)}
-    # Quien tiene nota entregó, aunque "Respondio" esté vacío (pasa con datos
-    # migrados). Sin esto salía a la vez evaluado y "no entregó".
+    # Quien tiene nota (o corrección) entregó, aunque "Respondio" esté vacío
+    # (pasa con datos migrados). Sin esto salía a la vez evaluado y "no entregó".
     sin_entregar = [
         f for f in filas
         if (est := estados.get(f["Correo"].strip().lower()))
         and est.get("Enviado", "").strip()
         and not est.get("Respondio", "").strip()
-        and not est.get("Nota", "").strip()
+        and not _datos.notas.esta_corregida(est)
     ]
     if sin_entregar:
         print()
@@ -408,17 +444,29 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
             print(f"→ {f.get('Nombre', '?'):30s}: no entregó")
 
 
-def _parsear_args() -> tuple[int, bool]:
-    args = sys.argv[1:]
+def _parsear_args(argv: list[str] | None = None) -> tuple[int, bool, bool, str]:
+    args = sys.argv[1:] if argv is None else argv
     semana = None
     dry_run = False
+    sin_modelo = False
+    por = ""
 
-    for a in args:
+    i = 0
+    while i < len(args):
+        a = args[i]
         al = a.lower()
         if al == "--dry-run":
             dry_run = True
+        elif al == "--sin-modelo":
+            sin_modelo = True
+        elif al == "--por" and i + 1 < len(args):
+            por = args[i + 1].strip()
+            i += 1
+        elif al.startswith("--por="):
+            por = a[len("--por="):].strip()
         elif a.isdigit() and semana is None:
             semana = int(a)
+        i += 1
 
     if semana is None:
         try:
@@ -427,9 +475,9 @@ def _parsear_args() -> tuple[int, bool]:
             print("Semana inválida.")
             sys.exit(1)
 
-    return semana, dry_run
+    return semana, dry_run, sin_modelo, por
 
 
 if __name__ == "__main__":
-    semana, dry_run = _parsear_args()
-    main(semana, dry_run, solo=_candidatos.solo_de_argv())
+    semana, dry_run, sin_modelo, por = _parsear_args()
+    main(semana, dry_run, solo=_candidatos.solo_de_argv(), sin_modelo=sin_modelo, por=por)

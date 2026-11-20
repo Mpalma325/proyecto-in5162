@@ -72,8 +72,8 @@ const BOOLEANAS = new Set([
 // Los flujos que se pueden pedir desde la página. Los argumentos los valida el
 // motor, que es quien arma el comando; acá solo se filtra el nombre.
 const FLUJOS = new Set([
-  "tests.enviar", "tests.evaluar", "tests.resumen", "tests.tutoria", "tests.chequeo", "tests.experimento",
-  "datos.panel", "datos.ajustar", "datos.sabana",
+  "tests.enviar", "tests.evaluar", "tests.feedback", "tests.resumen", "tests.tutoria", "tests.chequeo",
+  "tests.experimento", "datos.panel", "datos.ajustar", "datos.sabana",
   "tareas.chequeo", "tareas.generar", "tareas.enviar", "tareas.recolectar", "tareas.corregir",
   "tareas.feedback", "tareas.segunda",
 ]);
@@ -117,6 +117,11 @@ const EDITABLES = [
   // Las preguntas y pautas de cada alumno, que se pueden corregir antes de
   // enviarlas, y las correcciones que esperan revisión antes de mandarse.
   /^tareas\/data\/salidas\/feedback_T\d{1,2}\.csv$/,
+  // La configuración del semestre (modo de revisión, qué muestra el correo) y
+  // las decisiones de Tests › Revisar, una por instancia. Las escribe solo la
+  // página; los trabajos las leen.
+  /^configuracion\.json$/,
+  /^tests_semanales\/revision\/[1-9][0-9]{0,2}\.json$/,
   // El contexto del curso para el modelo: clases renderizadas, apuntes, código.
   CONTEXTO,
 ];

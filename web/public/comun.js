@@ -445,7 +445,8 @@ const sinPrefijo = (flujo) => flujo.replace(/^[a-z]+\./, "");
 
 // Cómo se llama cada flujo en pantalla: el nombre de su pestaña. El id no cambia.
 const NOMBRE_FLUJO = {
-  "tests.enviar": "Enviar preguntas", "tests.evaluar": "Evaluar respuestas", "tests.resumen": "Resumen semana",
+  "tests.enviar": "Enviar preguntas", "tests.evaluar": "Evaluar respuestas", "tests.feedback": "Mandar feedback",
+  "tests.resumen": "Resumen semana",
   "tests.tutoria": "Responder dudas", "tests.experimento": "Probar criterio",
   "tareas.chequeo": "Revisar entregas", "tareas.generar": "Generar preguntas", "tareas.enviar": "Enviar preguntas",
   "tareas.recolectar": "Recolectar respuestas", "tareas.corregir": "Corregir", "tareas.segunda": "Segunda oportunidad",
@@ -498,7 +499,7 @@ export function resumenCsv(columnas, antes, despues) {
 // notas. Los demás (resumen, generar, recolectar, preparar...) quedan con
 // prueba = 1 porque nadie lo pide en falso, pero sí llaman al modelo o
 // escriben archivos: de ellos no se puede decir "no se hizo nada".
-const SIMULABLES = new Set(["tests.enviar", "tests.evaluar", "tests.tutoria", "tests.experimento",
+const SIMULABLES = new Set(["tests.enviar", "tests.evaluar", "tests.feedback", "tests.tutoria", "tests.experimento",
   "tareas.enviar", "tareas.corregir", "tareas.feedback"]);
 const simula = (t) => (t.flujo === "tareas.segunda" ? t.argumentos?.paso === "enviar" : SIMULABLES.has(t.flujo));
 
@@ -555,8 +556,13 @@ function inicioDe(t) {
   return Number.isNaN(a_las) ? creado : Math.max(creado, a_las);
 }
 
-/** Si el trabajo, corrido de verdad, manda correos a los alumnos. */
+/**
+ * Si el trabajo, corrido de verdad, manda correos a los alumnos. tests.evaluar
+ * cuenta también en modo revisión: manda el correo de duplicado a quien
+ * responde dos veces. El ajuste de nota escribe solo con «Avisarle al alumno».
+ */
 function mandaCorreos(t) {
+  if (t.flujo === "datos.ajustar") return !t.prueba && t.argumentos?.avisar === true;
   if (t.prueba || !simula(t) || t.flujo === "tests.experimento") return false;
   return !(t.flujo === "tareas.corregir" && t.argumentos?.no_enviar);
 }
@@ -961,9 +967,15 @@ function cuando(texto) {
  * antes de mandarlas, y los textos lo dicen.
  *
  * Quien respondió fuera de plazo (tareas) viene marcado y sin elegir: se
- * corrige solo si alguien lo marca.
+ * corrige solo si alguien lo marca. Lo mismo quien ya está corregido (con
+ * nota, por revisar o descartado): `estadoCandidato` lo dice.
+ *
+ * `textoConfirmar(nombres)`, si se pasa, reemplaza el texto de la
+ * confirmación. `aMano`, si se pasa, agrega «Las corrijo yo»: pide el trabajo
+ * con `alProcesar(elegidos, { sin_modelo: true })`.
  */
-export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedback = true }) {
+export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedback = true, textoConfirmar,
+  aMano = false }) {
   const nodo = el("div", { class: "candidatos" }, el("p", { class: "cargando" }, "Cargando las respuestas…"));
   const url = `/api/archivo/${encodeURIComponent(semestre)}/${ruta.split("/").map(encodeURIComponent).join("/")}`;
   // El script deja la lista siempre, aunque esté vacía. Que falte el archivo
@@ -983,7 +995,7 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
       nodo.replaceChildren(caja("info", `Ninguna respuesta nueva: la simulación no encontró nada que ${verbo.toLowerCase()}.`));
       return;
     }
-    const casillas = lista.map((c) => el("input", { type: "checkbox", checked: !c.ya_tiene_nota && !c.fuera_de_plazo,
+    const casillas = lista.map((c) => el("input", { type: "checkbox", checked: !estadoCandidato(c) && !c.fuera_de_plazo,
       value: c.correo }));
     const boton = el("button", { class: "primario real", type: "button" });
     const actualizar = () => {
@@ -991,14 +1003,16 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
       boton.textContent = n === 0 ? `${verbo}: marca al menos una`
         : `${verbo} ${n === 1 ? "la elegida" : `las ${n} elegidas`}${mandaFeedback ? " y mandar feedback" : ""}`;
       boton.disabled = n === 0;
+      if (manual) manual.disabled = n === 0;
     };
+    const manual = aMano ? el("button", { class: "secundario", type: "button" }, "Las corrijo yo") : null;
     casillas.forEach((x) => x.addEventListener("change", actualizar));
     const todas = (v) => { casillas.forEach((x) => { x.checked = v; }); actualizar(); };
     const aviso = el("div");
     boton.addEventListener("click", async () => {
       const elegidos = casillas.filter((x) => x.checked).map((x) => x.value);
       const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
-      if (!await confirmar(mandaFeedback
+      if (!await confirmar(textoConfirmar ? textoConfirmar(nombres) : mandaFeedback
         ? `Vas a ${verbo.toLowerCase()} y mandarle el feedback por correo a: ${nombres}.\n\nLas demás quedan como están. ¿Confirmas?`
         : `Vas a ${verbo.toLowerCase()} a: ${nombres}.\n\nLas correcciones esperan tu revisión antes de mandarse, `
           + "y ninguna nota cuenta hasta que sale su correo. Las demás quedan como están. ¿Confirmas?",
@@ -1010,6 +1024,21 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
       } catch (e) {
         aviso.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
         boton.disabled = false;
+      }
+    });
+    manual?.addEventListener("click", async () => {
+      const elegidos = casillas.filter((x) => x.checked).map((x) => x.value);
+      const nombres = lista.filter((c) => elegidos.includes(c.correo)).map((c) => c.nombre).join(", ");
+      if (!await confirmar(`Vas a dejar para corregir a mano a: ${nombres}.\n\nNo se llama al modelo y no sale `
+        + "feedback: cada una queda vacía en Tests › Revisar para que la corrijas ahí. ¿Confirmas?",
+      "Las corrijo yo", "real")) return;
+      manual.disabled = true;
+      aviso.replaceChildren();
+      try {
+        await alProcesar(elegidos, { sin_modelo: true });
+      } catch (e) {
+        aviso.replaceChildren(caja("aviso", `No pude pedir el trabajo: ${e.message}`));
+        manual.disabled = false;
       }
     });
     actualizar();
@@ -1025,11 +1054,20 @@ export function elegirCandidatos({ semestre, ruta, verbo, alProcesar, mandaFeedb
         el("summary", {}, el("label", { class: "interruptor", onclick: (e) => e.stopPropagation() }, casillas[i],
           el("strong", {}, c.nombre)),
           el("span", { class: "tenue" }, [cuando(c.llegada), c.grupo, c.pregunta].filter(Boolean).join(" · ")),
-          c.ya_tiene_nota ? el("span", { class: "estado fallido" }, `ya tiene nota ${c.ya_tiene_nota}`) : null,
+          estadoCandidato(c) ? el("span", { class: "estado fallido" }, estadoCandidato(c)) : null,
           c.fuera_de_plazo ? el("span", { class: "estado fallido", title: "Respondió después del plazo del correo" },
             "fuera de plazo") : null),
         el("div", { class: "contenido respuesta" }, respuestaLegible(c.respuesta)))),
-      el("div", { class: "acciones" }, boton), aviso);
+      el("div", { class: "acciones" }, boton, manual), aviso);
   }).catch(() => noPude("no hubo conexión o el archivo vino dañado"));
   return nodo;
+}
+
+/**
+ * «con nota 6,0», «por revisar», «descartada» o "": si el candidato ya está
+ * corregido. Los trabajos de antes de la revisión dejaban `ya_tiene_nota`.
+ */
+export function estadoCandidato(c) {
+  if (c?.estado) return c.estado;
+  return c?.ya_tiene_nota ? `ya tiene nota ${c.ya_tiene_nota}` : "";
 }

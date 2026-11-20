@@ -11,7 +11,8 @@ import {
   seguirTrabajo, vistaCorreo,
 } from "./comun.js";
 import { descargar, exportarCsv, leerCsv } from "./csv.js";
-import { leerSemana } from "./preguntas.js";
+import { asuntoDe, esLegado, leerSemana, nombreDe, semanasDe } from "./preguntas.js";
+import { cuerpoAviso } from "./revision.js";
 import { seccionSabana } from "./sabana.js";
 import { expressionInterpreter } from "./vega-interpreter.js";
 
@@ -106,14 +107,44 @@ const TITULOS = {
   NotaMin: "Nota mín.", NotaMax: "Nota máx.", Porcentaje: "%", Nivel: "Nivel",
 };
 
+// ---------------------------------------------------------------- semanas e instancias
+// En un semestre del formato nuevo (preguntas.csv con Instancia) el docente ve
+// «Control 2», no el id que va en Item. En uno antiguo, «Semana 4» como siempre.
+
+const formatoNuevo = () => Boolean(estado.preguntas) && !esLegado(estado.preguntas);
+/** «Semana» o «Instancia»: el título de la columna y de los ejes. */
+const palabraItem = () => (formatoNuevo() ? "Instancia" : "Semana");
+/** «Control 2», o «Semana 4» en el formato antiguo. */
+function rotuloItem(item) {
+  if (!formatoNuevo()) return `Semana ${item}`;
+  const s = leerSemana(estado.preguntas, Number(item));
+  return s ? nombreDe(s) : `Instancia ${item}`;
+}
+/** Para meterlo en una frase: «la semana 4» o «Control 2». */
+const mencionItem = (item) => (formatoNuevo() ? rotuloItem(item) : `la semana ${item}`);
+/** «Semanas 3, 4» o «Control 2, Control 3». */
+const listaItems = (items) => (formatoNuevo() ? items.map(rotuloItem).join(", ")
+  : `${items.length === 1 ? "Semana" : "Semanas"} ${items.join(", ")}`);
+
+/**
+ * El eje de las semanas: en el formato nuevo, con el nombre de cada instancia
+ * en vez del id (labelExpr, que corre el intérprete de vega-interpreter.js).
+ */
+function ejeItem(extra = {}) {
+  if (!formatoNuevo()) return { title: "Semana", ...extra };
+  const nombres = Object.fromEntries(semanasDe(estado.preguntas).map((x) => [String(x.numero), x.nombre]));
+  return { ...extra, title: "Instancia",
+    axis: { ...(extra.axis || {}), labelExpr: `(${JSON.stringify(nombres)})[datum.label] || datum.label` } };
+}
+
 function tabla(filas, columnas = null) {
   if (!filas.length) return el("p", { class: "tenue" }, "Sin filas.");
   const cols = columnas || Object.keys(filas[0]);
   return el("div", { class: "tabla-envoltura" },
     el("table", {},
-      el("thead", {}, el("tr", {}, cols.map((c) => el("th", {}, TITULOS[c] || c)))),
+      el("thead", {}, el("tr", {}, cols.map((c) => el("th", {}, c === "Item" ? palabraItem() : TITULOS[c] || c)))),
       el("tbody", {}, filas.map((f) =>
-        el("tr", {}, cols.map((c) => el("td", {}, formatear(f[c]))))))));
+        el("tr", {}, cols.map((c) => el("td", {}, c === "Item" && formatoNuevo() ? rotuloItem(f[c]) : formatear(f[c]))))))));
 }
 
 function formatear(v) {
@@ -163,7 +194,7 @@ function correoEvaluacion(c) {
   const nombre = (c.Nombre && c.Nombre !== c.Correo && c.Nombre.trim().split(/\s+/)[0]) || "estudiante";
   const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
   return vistaCorreo({
-    asunto: semana ? `Re: Evaluación de Progreso Individual Módulo ${c.Item}: ${semana.tema}` : "",
+    asunto: semana ? `Re: ${asuntoDe(semana)}` : "",
     para: c.Correo, nombre: c.Nombre, html: true,
     // Con función: como texto de reemplazo, un "$&" o "$'" de la evaluación se interpretaría.
     cuerpo: plantilla ? plantilla.replaceAll("{NOMBRE}", () => nombre).replaceAll("{EVALUACION}", () => evaluacion)
@@ -240,7 +271,7 @@ function grafico(spec, alClic = null) {
 const campo = (field, type, extra = {}) => ({ field, type, ...extra });
 // Un eje que cuenta cosas: sin fracciones (0,2 evaluaciones no existe).
 const EJE_CONTEO = { tickMinStep: 1, format: "d" };
-const tooltips = (campos) => campos.map((c) => ({ field: c }));
+const tooltips = (campos) => campos.filter((c) => c !== "Item" || !formatoNuevo()).map((c) => ({ field: c }));
 
 /** Eje de notas ajustado a los datos con medio punto de margen, dentro de 1 a 7. */
 function dominioNotas(valores) {
@@ -265,7 +296,7 @@ function linea(filas, y, tituloEje, { dominio = null, alClic = null, enCurso = n
   return grafico({
     height: ALTO,
     encoding: {
-      x: campo("Item", "ordinal", { title: "Semana", scale: { domain: semanas } }),
+      x: campo("Item", "ordinal", ejeItem({ scale: { domain: semanas } })),
       y: campo(y, "quantitative", { title: tituloEje, scale: dominio ? { domain: dominio } : { zero: false } }),
       tooltip: tooltips(Object.keys(filas[0])),
     },
@@ -306,8 +337,9 @@ def _cargar(j):
     # llegan como int. En Python la nota es siempre float: sin esto la página
     # mostraría "7" donde Streamlit muestra "7.0".
     for f in _TODAS:
-        if f.get("Nota") is not None:
-            f["Nota"] = float(f["Nota"])
+        for c in ("Nota", "NotaModelo", "Logro"):
+            if f.get(c) is not None:
+                f[c] = float(f[c])
     return json.dumps({"items": items(_TODAS), "grupos": grupos(_TODAS)})
 
 def _filtrar(items_j, grupos_j):
@@ -384,7 +416,8 @@ async function cargarSemestre(id) {
     .then((texto) => {
       if (!texto || estado.semestre !== id) return;
       estado.preguntas = leerCsv(texto);
-      if (estado.pestana === "Alumnos") dibujarPestana();
+      // En el formato nuevo, los ejes y títulos pasan del id al nombre de cada instancia.
+      if (estado.pestana === "Alumnos" || formatoNuevo()) dibujarPestana();
     })
     .catch(() => {});
 }
@@ -449,7 +482,7 @@ function tarjetaCasilla(c) {
       el("span", { class: "nota" }, nota),
       el("span", { class: "orig" },
         c.Originalidad ? el("span", { class: "etiqueta-orig", style: colorOriginalidad(c.Nivel) }, c.Originalidad) : null),
-      el("span", { class: "meta" }, `semana ${c.Item} · ${c.Grupo || "sin grupo"}`)),
+      el("span", { class: "meta" }, `${formatoNuevo() ? rotuloItem(c.Item) : `semana ${c.Item}`} · ${c.Grupo || "sin grupo"}`)),
     el("div", { class: "contenido" },
       c.Respuesta
         ? [el("p", {}, el("strong", {}, "Lo que respondió")), el("div", { class: "respuesta" }, respuestaLegible(c.Respuesta))]
@@ -553,8 +586,8 @@ function seccionCurso() {
   if (!porItem.length) return [caja("info", "Todavía no hay datos para graficar.")];
 
   const enCurso = porItem.some((f) => f.Item === itemEnCurso()) ? itemEnCurso() : null;
-  const verSemana = (d) => abrirDetalle(`Semana ${d.Item}`, { item: d.Item });
-  const verSinResponder = (d) => abrirDetalle(`Semana ${d.Item} · sin responder`,
+  const verSemana = (d) => abrirDetalle(rotuloItem(d.Item), { item: d.Item });
+  const verSinResponder = (d) => abrirDetalle(`${rotuloItem(d.Item)} · sin responder`,
     { item: d.Item, estado: "sin_responder" });
   const dominio = dominioNotas(porItem.map((f) => f.NotaMedia));
   const g1 = linea(porItem, "NotaMedia", "Nota media", { dominio, alClic: verSemana });
@@ -585,8 +618,8 @@ function seccionCurso() {
     : el("p", { class: "tenue" }, "Sin datos de originalidad.");
 
   const pieNotas = sinNotas.length
-    ? `${sinNotas.length === 1 ? "Semana" : "Semanas"} ${sinNotas.join(", ")} sin notas todavía.` : null;
-  const pieTasa = enCurso ? `Semana ${enCurso} (punto hueco): aún sin evaluar.` : null;
+    ? `${listaItems(sinNotas)} sin notas todavía.` : null;
+  const pieTasa = enCurso ? `${rotuloItem(enCurso)} (punto hueco): aún sin evaluar.` : null;
 
   return [
     el("div", { class: "grilla2" },
@@ -630,11 +663,11 @@ function seccionOriginalidad() {
     height: ALTO, data: { values: nivelMedio },
     mark: { type: "line", point: true, strokeWidth: 2, color: rampa()[4] },
     encoding: {
-      x: campo("Item", "ordinal", { title: "Semana", sort: nivelMedio.map((f) => f.Item) }),
+      x: campo("Item", "ordinal", ejeItem({ sort: nivelMedio.map((f) => f.Item) })),
       y: campo("NivelMedio", "quantitative", { title: "Nivel (1 a 5)", scale: { domain: [1, 5] } }),
       tooltip: tooltips(["Item", "NivelMedio"]),
     },
-  }, (d) => abrirDetalle(`Semana ${d.Item}`, { item: d.Item, estado: "evaluada" }))
+  }, (d) => abrirDetalle(rotuloItem(d.Item), { item: d.Item, estado: "evaluada" }))
     : el("p", { class: "tenue" }, "Hace falta más de una semana para ver la evolución.");
 
   const itemsOrden = [...new Set(porItem.map((f) => f.Item))];
@@ -642,14 +675,14 @@ function seccionOriginalidad() {
     height: ALTO, data: { values: porItem },
     mark: { type: "bar", stroke: c.caja, strokeWidth: 2 },
     encoding: {
-      x: campo("Item", "ordinal", { title: "Semana", sort: itemsOrden }),
+      x: campo("Item", "ordinal", ejeItem({ sort: itemsOrden })),
       y: campo("Porcentaje", "quantitative", {
         title: "% de las evaluadas esa semana", stack: "normalize", axis: { format: "%" } }),
       color: campo("Originalidad", "nominal", { scale: escala, sort: etiquetas, title: "Originalidad" }),
       order: campo("Nivel", "quantitative"),
       tooltip: tooltips(["Item", "Originalidad", "Evaluaciones", "Porcentaje"]),
     },
-  }, (d) => abrirDetalle(`Semana ${d.Item} · originalidad ${d.Originalidad}`,
+  }, (d) => abrirDetalle(`${rotuloItem(d.Item)} · originalidad ${d.Originalidad}`,
     { item: d.Item, originalidad: d.Originalidad })) : null;
 
   const vsNota = calc("originalidad_vs_nota");
@@ -703,12 +736,12 @@ function seccionGrupos() {
     return grafico({
       height: ALTO, data: { values: sub }, mark: { type: "line", point: true },
       encoding: {
-        x: campo("Item", "ordinal", { title: "Semana", sort: itemsOrden, scale: { domain: itemsOrden } }),
+        x: campo("Item", "ordinal", ejeItem({ sort: itemsOrden, scale: { domain: itemsOrden } })),
         y: campo(y, "quantitative", { title: tituloEje, scale: { domain: dominio } }),
         color: campo("Grupo", "nominal", { title: "Grupo" }),
         tooltip: tooltips(["Item", "Grupo", "NotaMedia", "TasaRespuesta", "Evaluados"]),
       },
-    }, (d) => abrirDetalle(`Semana ${d.Item} · ${d.Grupo}`, { item: d.Item, grupo: d.Grupo }));
+    }, (d) => abrirDetalle(`${rotuloItem(d.Item)} · ${d.Grupo}`, { item: d.Item, grupo: d.Grupo }));
   };
 
   // La diferencia entre brazos es el número que interesa del estudio. Es solo
@@ -727,18 +760,18 @@ function seccionGrupos() {
     height: 200, data: { values: pivote },
     mark: "bar",
     encoding: {
-      x: campo("Item", "ordinal", { title: "Semana", sort: itemsOrden }),
+      x: campo("Item", "ordinal", ejeItem({ sort: itemsOrden })),
       y: campo("Diferencia", "quantitative", { title: "Puntos de nota" }),
       color: { condition: { test: "datum.Diferencia > 0", value: c.ok }, value: c.rojo },
       tooltip: tooltips(["Item", "control", "tratamiento", "Diferencia"]),
     },
-  }, (d) => abrirDetalle(`Semana ${d.Item} · los dos grupos`, { item: d.Item, estado: "evaluada" })) : null;
+  }, (d) => abrirDetalle(`${rotuloItem(d.Item)} · los dos grupos`, { item: d.Item, estado: "evaluada" })) : null;
 
   return [
     el("div", { class: "grilla2" },
       tarjeta("Nota media por grupo", porGrupo("NotaMedia", "Nota media", dominioNotas(pg.map((f) => f.NotaMedia)))),
       tarjeta("Tasa de respuesta por grupo", porGrupo("TasaRespuesta", "% que respondió", [0, 100]), {
-        pie: enCurso ? `Semana ${enCurso}: aún sin evaluar.` : null,
+        pie: enCurso ? `${rotuloItem(enCurso)}: aún sin evaluar.` : null,
       })),
     tarjeta("Diferencia de nota (Tratamiento − Control)", gDif, {
       pie: "Sobre cero, mejor nota media en Tratamiento.",
@@ -1029,7 +1062,8 @@ function fichaAlumno(correo) {
       kpi({ etiqueta: "Nota media", valor: numero(r.NotaMedia, 1),
         sub: hay(r.NotaMin) ? `mín ${numero(r.NotaMin)} · máx ${numero(r.NotaMax)}` : null }),
       kpi({ etiqueta: "Respondió", valor: `${r.Respondieron} de ${r.Enviados}`,
-        sub: enCursoAbierta ? `semanas que la recibió, sin contar la semana ${enCursoAbierta} (en curso)` : "semanas que la recibió" }),
+        sub: enCursoAbierta ? `${formatoNuevo() ? "tests" : "semanas"} que recibió, sin contar ${mencionItem(enCursoAbierta)} (en curso)`
+          : `${formatoNuevo() ? "tests" : "semanas"} que recibió` }),
       kpi({ etiqueta: "Con nota", valor: entero(r.Evaluados) })),
   ];
 
@@ -1039,7 +1073,7 @@ function fichaAlumno(correo) {
       height: 220, data: { values: serie },
       mark: { type: "line", point: true },
       encoding: {
-        x: campo("Item", "ordinal", { title: "Semana", sort: f.Casillas.map((c) => c.Item) }),
+        x: campo("Item", "ordinal", ejeItem({ sort: f.Casillas.map((c) => c.Item) })),
         y: campo("Nota", "quantitative", { scale: { domain: dominioNotas(serie.map((c) => c.Nota)) } }),
         tooltip: tooltips(["Item", "Nota", "Originalidad"]),
       },
@@ -1052,7 +1086,7 @@ function fichaAlumno(correo) {
   const grupo = f.Grupo === "tratamiento" ? "tratamiento" : "control";
   for (const c of f.Casillas) {
     const est = c.NotaTexto ? `nota ${c.NotaTexto}` : c.Respondio ? "respondió, sin evaluar"
-      : c.Item === itemEnCurso() ? "semana en curso, aún sin evaluar" : "sin responder";
+      : c.Item === itemEnCurso() ? "en curso, aún sin evaluar" : "sin responder";
     const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
     const enunciados = semana ? semana.preguntas.map((p) => p[grupo].texto).filter((x) => x.trim()) : [];
     // Las que abrió el docente siguen abiertas al redibujar (cambio de tema, girar el celular).
@@ -1067,7 +1101,7 @@ function fichaAlumno(correo) {
       },
       "data-item": c.Item,
     },
-      el("summary", {}, `Semana ${c.Item} — ${est}`),
+      el("summary", {}, `${rotuloItem(c.Item)} — ${est}`),
       el("div", { class: "contenido" },
       enunciados.length
         ? [el("p", {}, el("strong", {}, "Lo que se le preguntó")),
@@ -1085,16 +1119,43 @@ function fichaAlumno(correo) {
   return partes;
 }
 
+/** correo_ajuste.md del semestre, o null si no lo tiene (se usa el texto fijo). Se lee una vez. */
+function plantillaAjuste() {
+  if (estado.plantillaAjuste?.semestre !== estado.semestre) {
+    const semestre = estado.semestre;
+    estado.plantillaAjuste = { semestre, texto: fetch(`/api/archivo/${encodeURIComponent(semestre)}/`
+      + "tests_semanales/prompts/correo_ajuste.md", { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : null)).catch(() => null) };
+  }
+  return estado.plantillaAjuste.texto;
+}
+
 /**
  * Cambiar la nota a mano cuando el modelo se equivocó. Queda en el log con el
- * motivo, la nota anterior y quién lo hizo, y no se le escribe al alumno
- * (modulos/datos/ajustar.py).
+ * motivo, la nota anterior y quién lo hizo (modulos/datos/ajustar.py). Con
+ * «Avisarle al alumno» le llega un correo con la nota nueva, en el hilo del
+ * feedback; sin la casilla no se le escribe.
  */
 function formularioAjuste(c) {
   const nota = el("input", { type: "text", size: 5, placeholder: "6,5", "aria-label": "Nota nueva" });
   const motivo = el("input", { type: "text", size: 40, placeholder: "opcional", "aria-label": "Motivo (opcional)" });
+  const avisar = el("input", { type: "checkbox" });
+  const vista = el("div", { class: "vista-aviso", hidden: true });
   const destino = el("div");
   const boton = el("button", { class: "descarga", type: "button" }, "Guardar ajuste");
+  const semana = estado.preguntas ? leerSemana(estado.preguntas, Number(c.Item)) : null;
+  // La vista previa del aviso, con lo que está escrito: lo mismo que arma ajustar.py.
+  const pintarAviso = async () => {
+    vista.hidden = !avisar.checked;
+    if (!avisar.checked) return;
+    const plantilla = await plantillaAjuste();
+    const n = nota.value.trim().replace(".", ",") || "6,5";
+    vista.replaceChildren(vistaCorreo({
+      asunto: semana ? `Re: ${asuntoDe(semana)}` : "", para: c.Correo, nombre: c.Nombre, html: true,
+      cuerpo: cuerpoAviso(plantilla, c.Nombre, n, motivo.value.trim()),
+    }, { aviso: plantilla === null ? "Texto fijo: el semestre no tiene correo_ajuste.md." : null }));
+  };
+  [avisar, nota, motivo].forEach((x) => x.addEventListener(x === avisar ? "change" : "input", pintarAviso));
   boton.addEventListener("click", async () => {
     const n = nota.value.trim().replace(".", ",");
     const v = Number(n.replace(",", "."));
@@ -1102,13 +1163,17 @@ function formularioAjuste(c) {
       destino.replaceChildren(caja("aviso", "La nota se escribe como 6,5 (entre 1,0 y 7,0)."));
       return;
     }
-    if (!await confirmar(`Cambiar la nota de ${c.Nombre}, semana ${c.Item}: ${c.NotaTexto || "sin nota"} → ${n}.
-`
-      + "No se le envía ningún correo. ¿Confirmas?", "Cambiar la nota")) return;
+    const conAviso = avisar.checked;
+    if (!await confirmar(`Cambiar la nota de ${c.Nombre}, ${mencionItem(c.Item)}: ${c.NotaTexto || "sin nota"} → ${n}.\n\n`
+      + (conAviso ? "Se le manda un correo con la nota nueva, en el hilo de su feedback. Es un correo real. ¿Confirmas?"
+        : "No se le envía ningún correo. ¿Confirmas?"),
+    conAviso ? "Cambiar y avisar" : "Cambiar la nota", conAviso ? "real" : "")) return;
     boton.disabled = true;
     try {
       const id = await pedirTrabajo(estado.semestre, "datos.ajustar",
-        { flujo: "test", item: String(c.Item), correo: c.Correo, nota: n, motivo: motivo.value.trim() });
+        { flujo: "test", item: String(c.Item), correo: c.Correo, nota: n, motivo: motivo.value.trim(),
+          // Con aviso manda un correo: el motor lo exige pedido como real.
+          ...(conAviso ? { avisar: true, prueba: false } : {}) });
       await seguirTrabajo(id, destino, {
         alTerminar: (t) => {
           boton.disabled = false;
@@ -1125,9 +1190,12 @@ function formularioAjuste(c) {
   });
   return el("details", { class: "ajuste" }, el("summary", {}, "Ajustar nota a mano"),
     el("div", { class: "contenido" },
-      el("p", { class: "nota-pie" }, "Queda registrado, con el motivo si lo escribes. No se envía correo."),
+      el("p", { class: "nota-pie" }, "Queda registrado, con el motivo si lo escribes. Sin la casilla no se le "
+        + "envía correo. Con ella, la vista previa muestra el aviso tal como le llega."),
       el("div", { class: "fila-campos" }, el("label", { class: "campo" }, "Nota nueva", nota),
         el("label", { class: "campo" }, "Motivo (opcional)", motivo), boton),
+      el("label", { class: "interruptor" }, avisar, "Avisarle al alumno por correo"),
+      vista,
       destino));
 }
 
@@ -1138,19 +1206,29 @@ function seccionPendientes() {
   const enCurso = itemEnCurso();
   const sinResp = llamar("_casillas", JSON.stringify({ estado: "sin_responder" }));
   const pend = llamar("_casillas", JSON.stringify({ estado: "sin_nota" }));
+  // Corregidas que esperan la revisión docente: no son nota todavía (la nota
+  // cuenta cuando sale el correo), y tampoco hay que volver a corregirlas.
+  const porRevisar = llamar("_casillas", JSON.stringify({ estado: "por_revisar" }));
   const cerradas = sinResp.filter((c) => c.Item !== enCurso);
   const deEnCurso = sinResp.filter((c) => c.Item === enCurso);
   return [
-    el("h4", {}, `Respondieron pero no tienen nota — ${pend.length}`),
+    el("h4", {}, `Respondieron y nadie las ha corregido — ${pend.length}`),
     pend.length ? [
       el("p", { class: "nota-pie" }, "Pueden ser respuestas fuera de plazo. Se evalúan en ",
         el("a", { href: "/tests#evaluar" }, "Tests Semanales › Evaluar respuestas"), "."),
       pend.map(tarjetaCasilla),
     ] : caja("exito", "No hay respuestas pendientes de evaluación."),
+    porRevisar.length ? [
+      el("hr"),
+      el("h4", {}, `Corregidas, esperando revisión — ${porRevisar.length}`),
+      el("p", { class: "nota-pie" }, "Todavía no son nota: el alumno no ha recibido el feedback. Se revisan en ",
+        el("a", { href: "/tests#revisar" }, "Tests Semanales › Revisar"), "."),
+      porRevisar.map(tarjetaCasilla),
+    ] : null,
     el("hr"),
     el("h4", {}, `${deEnCurso.length ? "Sin responder en semanas ya evaluadas" : "Sin responder"} — ${cerradas.length}`),
     cerradas.length ? listaPorAlumno(cerradas) : caja("exito", "Todos respondieron lo que se les envió."),
-    deEnCurso.length ? desplegable(`Semana ${enCurso}, aún sin evaluar: ${plural(deEnCurso.length, "alumno", "alumnos")} `
+    deEnCurso.length ? desplegable(`${rotuloItem(enCurso)}, aún sin evaluar: ${plural(deEnCurso.length, "alumno", "alumnos")} `
       + "sin respuesta registrada (puede estar en el buzón)", listaPorAlumno(deEnCurso)) : null,
   ];
 }
@@ -1329,7 +1407,7 @@ function dibujar() {
     kpi({
       etiqueta: "Tasa de respuesta", valor: hay(r.TasaRespuesta) ? `${numero(r.TasaRespuesta)} %` : null,
       sub: [`respondieron ${entero(r.Respondieron)} de ${entero(r.Enviados)} envíos`,
-        hay(tasaCerradas) ? `${numero(tasaCerradas)} % sin contar la semana ${enCurso}, aún sin evaluar` : null],
+        hay(tasaCerradas) ? `${numero(tasaCerradas)} % sin contar ${mencionItem(enCurso)}, aún sin evaluar` : null],
     }),
     kpi({
       etiqueta: "Nota media", valor: numero(r.NotaMedia, 2),
@@ -1344,7 +1422,7 @@ function dibujar() {
     kpi({
       etiqueta: "Sin responder", valor: entero(sinRespCerradas),
       sub: sinRespEnCurso
-        ? ["en semanas ya evaluadas", `la semana ${enCurso} se cuenta al evaluarla`]
+        ? ["en semanas ya evaluadas", `${mencionItem(enCurso)} se cuenta al evaluarla`]
         : "se les envió y no respondieron",
       accion: sinRespCerradas ? "ver quiénes →" : null,
       alClic: sinRespCerradas ? () => abrirDetalle(enCurso ? "Sin responder en semanas ya evaluadas" : "Sin responder",

@@ -152,7 +152,28 @@ def leer_archivo(ruta: Path | None = None) -> ArchivoPreguntas:
             problemas.append(f"{columna} {i} está repetida (fila {n})")
             continue
         por_id[i] = fila
+    if columna == "Instancia":
+        problemas.extend(_nombres_repetidos(por_id))
     return ArchivoPreguntas(columna, por_id, problemas, repetidos)
+
+
+def _nombres_repetidos(por_id: dict[int, dict]) -> list[str]:
+    """Dos instancias con el mismo Tipo y Número: se llaman igual en la página y en el asunto.
+
+    Las dos filas se siguen usando (tienen ids distintos), pero el alumno no
+    distingue los correos y la página muestra dos «Control 2». Se avisa.
+    """
+    vistos: dict[tuple[str, int], int] = {}
+    problemas = []
+    for i, fila in por_id.items():
+        tipo = (fila.get("Tipo") or TIPO_POR_DEFECTO).strip()
+        clave = (" ".join(tipo.split()).casefold(), _numero(fila.get("Numero", ""), i))
+        if clave in vistos:
+            problemas.append(f"{tipo} {clave[1]} aparece dos veces (ids {vistos[clave]} y {i}): "
+                             "cambia el número de una de las dos")
+        else:
+            vistos[clave] = i
+    return problemas
 
 
 def texto_fecha(iso: str) -> str:

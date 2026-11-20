@@ -47,6 +47,12 @@ function atencion(c, trabajos, consumo, precios) {
     items.push(el("li", {}, `${sinNota} ${sinNota === 1 ? "respuesta" : "respuestas"} sin nota. `,
       el("a", { href: "/resultados#Pendientes" }, "Ver")));
   }
+  // Las correcciones que esperan al docente: no salen solas (ni en automático
+  // si el semestre pasó a revisión). Las descartadas ya están cerradas.
+  for (const [n, cuantas] of c.porRevisar ? c.porRevisar() : []) {
+    items.push(el("li", {}, avisoPorRevisar(cuantas, c.nombre(n)), " ",
+      el("a", { href: `/tests#revisar/${n}` }, "Revisar")));
+  }
   for (const f of fallidosSinResolver(trabajos)) {
     const sobre = f.argumentos?.instancia ? ` de ${sobreQue(f.argumentos)}`
       : f.argumentos?.semana ? ` de la semana ${f.argumentos.semana}` : f.argumentos?.tarea ? ` de ${f.argumentos.tarea}` : "";
@@ -63,8 +69,14 @@ function atencion(c, trabajos, consumo, precios) {
     el("ul", {}, items)) : null;
 }
 
+/** «12 correcciones esperando revisión (Control 2)». */
+export function avisoPorRevisar(cuantas, nombre) {
+  return `${cuantas} ${cuantas === 1 ? "corrección esperando" : "correcciones esperando"} revisión (${nombre}).`;
+}
+
 const NOMBRES = {
-  "tests.enviar": "el envío", "tests.evaluar": "la evaluación", "tests.resumen": "el resumen",
+  "tests.enviar": "el envío", "tests.evaluar": "la evaluación", "tests.feedback": "el envío del feedback",
+  "tests.resumen": "el resumen",
   "tests.tutoria": "la respuesta a dudas", "tests.experimento": "la prueba de criterio",
   "tareas.generar": "la generación de preguntas", "tareas.enviar": "el envío", "tareas.recolectar": "la recolección",
   "tareas.corregir": "la corrección", "tareas.segunda": "la segunda oportunidad", "datos.ajustar": "el ajuste de nota",

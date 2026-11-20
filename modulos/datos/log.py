@@ -219,7 +219,10 @@ def como_interacciones(semestre_id: str | None = None) -> list[dict]:
 
     Se usa para análisis y para exportar; el flujo del curso no la necesita.
     """
+    import re as _re
+
     filas: dict = {}
+    con_correccion: set = set()
     for e in leer(semestre_id):
         clave = (e.get("Flujo", ""), e.get("Item", ""), e.get("Correo", ""))
         fila = filas.setdefault(clave, {
@@ -228,6 +231,9 @@ def como_interacciones(semestre_id: str | None = None) -> list[dict]:
             "Respuesta": "", "EvaluacionIA": "",
             "Nota": "", "Originalidad": "", "Modelo": "",
             "FechaEnvio": "", "FechaRespuesta": "",
+            # La nota que propuso quien corrigió (modelo o docente), antes de
+            # la revisión; en filas anteriores a la revisión, la del feedback.
+            "NotaModelo": "", "RevisadoPor": "",
         })
         ev, ts = e.get("Evento"), e.get("Timestamp", "")
         if ev == "envio":
@@ -238,11 +244,20 @@ def como_interacciones(semestre_id: str | None = None) -> list[dict]:
             fila["FechaRespuesta"] = ts
             if e.get("Respuesta", "").strip():
                 fila["Respuesta"] = e["Respuesta"]
+        elif ev == "correccion":
+            con_correccion.add(clave)
+            fila["NotaModelo"] = e.get("Nota", "")
+            if not fila["Modelo"]:
+                fila["Modelo"] = e.get("Modelo", "")
         elif ev == "evaluacion":
             fila["EvaluacionIA"] = e.get("EvaluacionIA", "")
             fila["Nota"] = e.get("Nota", "")
             fila["Originalidad"] = e.get("Originalidad", "")
             fila["Modelo"] = e.get("Modelo", "")
+            if clave not in con_correccion:
+                fila["NotaModelo"] = e.get("Nota", "")
+            m = _re.match(r"\s*revisado por ([^;]+)", e.get("Detalle") or "")
+            fila["RevisadoPor"] = m.group(1).strip() if m else ""
     return sorted(filas.values(),
                   key=lambda f: (f["Flujo"], f["Item"], f["Correo"]))
 

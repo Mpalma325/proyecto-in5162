@@ -99,15 +99,30 @@ def responder_duda(preguntas: list[str], pautas: list[str], respuesta_alumno: st
     return resp.con_meta()
 
 
-def generar_resumen(preguntas: list[str], pautas: list[str],
-                    evaluaciones_html: list[str]) -> str:
+def generar_resumen(control, tratamiento, evaluaciones: list[str]) -> str:
+    """Una llamada con todas las correcciones de la instancia.
+
+    `control` y `tratamiento` son los GrupoPreguntas de cada grupo: van los
+    dos, rotulados, y cada corrección dice de qué grupo es, para que el
+    resumen no mezcle preguntas de un grupo con respuestas del otro.
+    """
     system_prompt = (config.PROMPTS / "resumen_respuestas.md").read_text(encoding="utf-8")
 
+    def seccion(titulo: str, items: list[str]) -> str:
+        return f"=== {titulo} ===\n{_bloque(items)}\n\n"
+
+    if list(control.preguntas) == list(tratamiento.preguntas) and list(control.pautas) == list(tratamiento.pautas):
+        bloques = (seccion("PREGUNTAS (las mismas para los dos grupos)", control.preguntas)
+                   + seccion("PAUTAS", control.pautas))
+    else:
+        bloques = (seccion("PREGUNTAS DEL GRUPO CONTROL", control.preguntas)
+                   + seccion("PAUTAS DEL GRUPO CONTROL", control.pautas)
+                   + seccion("PREGUNTAS DEL GRUPO TRATAMIENTO", tratamiento.preguntas)
+                   + seccion("PAUTAS DEL GRUPO TRATAMIENTO", tratamiento.pautas))
     user_msg = (
-        f"=== PREGUNTAS DE LA SEMANA ===\n{_bloque(preguntas)}\n\n"
-        f"=== PAUTAS ===\n{_bloque(pautas)}\n\n"
-        f"=== EVALUACIONES DE TODOS LOS ESTUDIANTES ===\n"
-        + "\n\n---\n\n".join(evaluaciones_html)
+        bloques
+        + "=== CORRECCIONES DE TODOS LOS ESTUDIANTES (cada una dice su grupo) ===\n"
+        + "\n\n---\n\n".join(evaluaciones)
     )
 
     # el resumen usa valores propios, distintos a los de la evaluación

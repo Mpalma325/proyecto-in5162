@@ -17,6 +17,7 @@ from modulos import datos
 from . import config
 from modulos.mail import buscar_respuestas_semana
 from .evaluar import _mapa_correos
+from modulos.semestre import configuracion as _configuracion
 from .preguntas import cargar_semana
 from .respuestas import criterio as _criterio_respuestas
 
@@ -67,11 +68,26 @@ def main(semana: int) -> int:
 
     # 3. el curso
     con_correo = [a for a in datos.alumnos.leer() if a.get("Correo", "").strip()]
-    con_nota = {e["Correo"] for e in datos.notas.leer(flujo=datos.TESTS, item=semana)
-                if e.get("Nota", "").strip()}
-    ya_con_nota = [f for f in con_correo if f["Correo"].strip().lower() in con_nota]
+    # Quien ya está corregido (con nota, por revisar o descartado) no se vuelve
+    # a corregir: si escribe otra vez recibe el correo de duplicado.
+    estados = {e["Correo"].strip().lower(): e for e in datos.notas.leer(flujo=datos.TESTS, item=semana)}
+
+    def clase(correo: str) -> str:
+        e = estados.get(correo) or {}
+        if (e.get("Nota") or "").strip():
+            return "con nota"
+        if (e.get("Descartada") or "").strip():
+            return "descartada"
+        if (e.get("Corregido") or "").strip():
+            return "por revisar"
+        return ""
+
+    clases = [clase(f["Correo"].strip().lower()) for f in con_correo]
     print(f"  alumnos             {len(con_correo)}")
-    print(f"  ya tienen nota      {len(ya_con_nota)}")
+    print(f"  ya tienen nota      {clases.count('con nota')}")
+    if clases.count("por revisar") or clases.count("descartada"):
+        print(f"  por revisar         {clases.count('por revisar')}")
+        print(f"  descartadas         {clases.count('descartada')}")
 
     # 4. el buzón (solo lectura)
     print("\n  revisando el buzón...")
@@ -81,16 +97,19 @@ def main(semana: int) -> int:
         print(f"  ✗ no pude leer el buzón: {e}")
         return 1
 
-    conocidos = set(_mapa_correos(con_correo))
-    de_alumnos = [c for c in correos if c["remitente"] in conocidos]
-    ajenos = [c for c in correos if c["remitente"] not in conocidos]
-    ya_evaluados = [c for c in de_alumnos
-                    if c["remitente"] in {f["Correo"].strip().lower() for f in ya_con_nota}]
-    a_evaluar = [c for c in de_alumnos if c not in ya_evaluados]
+    mapa = _mapa_correos(con_correo)
+    de_alumnos = [c for c in correos if c["remitente"] in mapa]
+    ajenos = [c for c in correos if c["remitente"] not in mapa]
+    por_clase: dict[str, list] = {"con nota": [], "por revisar": [], "descartada": [], "": []}
+    for c in de_alumnos:
+        por_clase[clase(mapa[c["remitente"]]["Correo"].strip().lower())].append(c)
+    a_evaluar = por_clase[""]
 
     print(f"  sin leer {f'del módulo {semana}' if info.legado else f'de {info.nombre}'}: {len(correos)}")
     print(f"     de alumnos del curso   {len(de_alumnos)}")
-    print(f"     ya tienen nota         {len(ya_evaluados)}  (se les avisa, no se re-evalúan)")
+    print(f"     ya tienen nota         {len(por_clase['con nota'])}  (se les avisa, no se re-evalúan)")
+    print(f"     por revisar            {len(por_clase['por revisar'])}  (ídem: ya están corregidos)")
+    print(f"     descartadas            {len(por_clase['descartada'])}  (ídem)")
     print(f"     SE VAN A EVALUAR       {len(a_evaluar)}")
     if ajenos:
         print(f"     ⚠ de remitentes desconocidos: {len(ajenos)}")
@@ -109,11 +128,16 @@ def main(semana: int) -> int:
         for p in problemas:
             print(f"    - {p}")
     if not a_evaluar:
-        print("  Nada que evaluar: o no llegaron respuestas nuevas, o ya están todas con nota.")
+        print("  Nada que evaluar: o no llegaron respuestas nuevas, o ya están todas corregidas.")
     else:
+        duplicados = len(de_alumnos) - len(a_evaluar)
         print(f"  Listo para evaluar {len(a_evaluar)} respuesta(s).")
-        print(f"  Eso manda {len(a_evaluar)} correo(s) de feedback y "
-              f"{len(ya_evaluados)} aviso(s) de 'ya tenías nota'.")
+        if _configuracion.modo_revision() == _configuracion.AUTO:
+            print(f"  Eso manda {len(a_evaluar)} correo(s) de feedback y "
+                  f"{duplicados} aviso(s) de 'ya respondiste'.")
+        else:
+            print(f"  Las correcciones quedan para revisar (no sale feedback todavía); "
+                  f"salen {duplicados} aviso(s) de 'ya respondiste'.")
         print(f"\n  Para correrlo:  python -m modulos.tests.evaluar {semana}")
     return 0
 

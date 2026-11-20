@@ -13,6 +13,7 @@ import {
 } from "./historial-prompts.js";
 import { escribirCsv, leerCsv, textoDeArchivo } from "./csv.js";
 import { cambiosProhibidos, editorPreguntas, enviosDeNotas } from "./preguntas.js";
+import { AUTO, cargarConfiguracion, describirModo, REVISAR, RUTA_CONFIGURACION } from "./configuracion.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
 import { leerPrecios } from "./consumo.js";
 import {
@@ -1290,6 +1291,80 @@ function vistaPreguntas() {
     })];
 }
 
+// ---------------------------------------------------------------- semestre
+
+// Qué números puede mostrar el correo de corrección. Por ahora sale siempre
+// «puntajes y nota»; las otras dos llegan con el formato nuevo de corrección.
+const MUESTRAS = [["nota", "Puntajes y nota"], ["puntajes", "Solo puntajes"], ["nada", "Ningún número"]];
+
+/**
+ * configuracion.json: qué pasa después de corregir y qué muestra el correo.
+ * Un semestre sin el archivo (2026-2 y anteriores) usa la configuración de
+ * antes y no se le ofrece cambiarla: así ningún semestre en curso cambia por
+ * un clic.
+ */
+function vistaSemestre() {
+  const nodo = el("div", {}, el("p", { class: "cargando" }, "Leyendo configuracion.json…"));
+  cargarConfiguracion(semestre).then((conf) => {
+    if (!conf.existe) {
+      nodo.replaceChildren(
+        el("p", {}, `${semestre} usa la configuración de antes: cada corrección de Tests se le manda al alumno `
+          + "apenas queda lista, con puntajes y nota."),
+        el("p", { class: "nota-pie" }, "Los semestres nuevos traen configuracion.json desde la plantilla, en modo "
+          + "revisión, y ahí se cambia."));
+      return;
+    }
+    const datos = conf.datos || {};
+    const radios = [[AUTO, "Enviar el feedback automáticamente"], [REVISAR, "Revisar antes de enviar"]].map(([v, t]) =>
+      el("label", { class: "interruptor" }, el("input", { type: "radio", name: "modo-revision", value: v,
+        checked: conf.modo === v }), t));
+    const muestra = el("select", {}, MUESTRAS.map(([v, t]) => el("option", { value: v, selected: conf.muestra === v,
+      disabled: v !== "nota" }, v === "nota" ? t : `${t} (todavía no)`)));
+    const guardar = el("button", { class: "primario", type: "button", disabled: true }, "Guardar");
+    const mensaje = el("div");
+    const modoElegido = () => radios.map((r) => r.querySelector("input")).find((r) => r.checked)?.value;
+    const cambio = () => {
+      const hay = modoElegido() !== conf.modo || muestra.value !== conf.muestra || conf.ilegible;
+      guardar.disabled = !hay;
+      sinGuardar = Boolean(hay);
+    };
+    nodo.addEventListener("change", cambio);
+    guardar.addEventListener("click", async () => {
+      const modo = modoElegido();
+      const efecto = modo === AUTO
+        ? "Desde ahora cada corrección nueva se le manda al alumno apenas queda lista. Las que ya están por "
+          + "revisar siguen esperando tu decisión."
+        : "Desde ahora las correcciones esperan en Tests › Revisar y el alumno no recibe nada hasta que las "
+          + "apruebes. Las automáticas cuyo feedback no salió también quedan esperando.";
+      if (modo !== conf.modo && !await confirmar(`${efecto}\n\nLa evaluación programada al cierre usa el modo que haya `
+        + "cuando corra. ¿Guardar?", "Guardar")) return;
+      guardar.disabled = true;
+      try {
+        const nuevo = { ...datos, revision: modo, correo_muestra: muestra.value };
+        await guardarArchivo(RUTA_CONFIGURACION, `${JSON.stringify(nuevo, null, 2)}\n`, "application/json; charset=utf-8",
+          `Configuración del semestre: ${modo === AUTO ? "feedback automático" : "revisar antes de enviar"}`);
+        sinGuardar = false;
+        Object.assign(conf, { modo, muestra: muestra.value, ilegible: false });
+        mensaje.replaceChildren(caja("exito", `Guardado: ${describirModo(modo)}.`));
+      } catch (e) {
+        mensaje.replaceChildren(caja("aviso", `No pude guardar: ${e.message}`));
+        guardar.disabled = false;
+      }
+    });
+    // replaceChildren escribe un null como el texto "null": se filtra.
+    nodo.replaceChildren(...[
+      conf.ilegible ? caja("aviso", "configuracion.json no se puede leer: los trabajos están en modo revisión. "
+        + "Guardar lo reemplaza.") : null,
+      el("h4", {}, "Después de la corrección de la IA"),
+      el("div", { class: "opciones-modo" }, radios),
+      el("p", { class: "nota-pie" }, "Vale para Tests. Una corrección que hiciste a mano siempre espera tu revisión."),
+      el("h4", {}, "En el correo de corrección, mostrar"),
+      el("label", { class: "campo" }, muestra),
+      el("div", { class: "acciones" }, guardar), mensaje].filter(Boolean));
+  }).catch((e) => nodo.replaceChildren(caja("aviso", `No pude leer configuracion.json: ${e.message}`)));
+  return [nodo];
+}
+
 // ---------------------------------------------------------------- pantalla
 
 // Las pestañas, agrupadas por para qué se usan. Los ids son los de siempre:
@@ -1308,6 +1383,9 @@ const SECCIONES = [
     ["prompts", "Prompts", vistaPrompts],
     ["probar", "Probar criterio", () => vistaProbarCriterio({ semestre, archivos, alCambiar: (hay) => { sinGuardar = hay; } })],
     ["parametros", "Parámetros", vistaParametros],
+  ]],
+  ["Semestre", [
+    ["semestre", "Revisión y correo", vistaSemestre],
   ]],
   ["Registro", [
     ["historial", "Historial", vistaHistorial],

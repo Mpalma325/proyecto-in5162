@@ -48,6 +48,7 @@ from .agregaciones import (  # noqa: F401  (se reexportan)
     palabras,
     pendientes_de_evaluar,
     por_alumno,
+    por_revisar,
     por_grupo,
     por_item,
     resumen,
@@ -115,9 +116,9 @@ def panel(semestre_id: str | None = None, flujo: str = TESTS) -> list[dict]:
             # en COLUMNAS (web/src/index.ts) y en la tabla panel (web/migrations/).
             # Logro, de 0 a 1; vacío mientras nadie corrija con puntajes.
             "Logro": nota_a_float(estado.get("Logro")),
-            # La nota que propuso el modelo, antes de la revisión. Queda vacía
-            # hasta que exista el evento `correccion` en el log.
-            "NotaModelo": None,
+            # La nota que propuso el modelo (o el docente que corrigió a
+            # mano), antes de la revisión; en filas viejas, la del feedback.
+            "NotaModelo": nota_a_float(extra.get("NotaModelo")),
             "PorRevisar": _notas.esta_por_revisar(estado),
             "Descartada": _hay(estado.get("Descartada")),
         })
