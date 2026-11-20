@@ -136,4 +136,24 @@ with semestre_desechable(base="_template", sid="_tmp_chequeo_correos") as (sid, 
     storage.agregar_filas("T8", [dict(fila), dict(fila), dict(fila)])
     check("entra una sola vez", len(storage.leer_csv("T8")) == 1, storage.leer_csv("T8"))
 
+    titulo("7. nombre y dos apellidos en la tabla, nombre y uno en la lista")
+    from modulos.tareas.alumnos import buscar_correo
+    lista = [{"nombre": "Ana Rojo", "correo": "ana@x.cl"}, {"nombre": "Leo Soto", "correo": "leo@x.cl"},
+             {"nombre": "Ana Rojas", "correo": "anar@x.cl"}, {"nombre": "Rojo Soto", "correo": "rs@x.cl"}]
+    check("el caso del informe: «Ana Rojo Soto» es Ana Rojo",
+          buscar_correo("Ana Rojo Soto", lista)[0] == "ana@x.cl", buscar_correo("Ana Rojo Soto", lista))
+    check("con tildes y mayúsculas distintas también",
+          buscar_correo("ANA ROJO SOTÓ", lista)[0] == "ana@x.cl", buscar_correo("ANA ROJO SOTÓ", lista))
+    check("un apellido igual con otro nombre no calza («Rojo Soto» no es «Ana Rojo Soto»)",
+          buscar_correo("Luis Rojo Soto", lista)[0] is None, buscar_correo("Luis Rojo Soto", lista))
+    check("si dos de la lista caben en el nombre de la tabla, no se elige",
+          buscar_correo("Ana Rojo Soto", lista + [{"nombre": "Ana Soto", "correo": "anas@x.cl"}])[0] is None)
+    check("un casi homónimo («Ana Rojas Vera») no toma a Ana Rojo",
+          buscar_correo("Ana Rojas Vera", [lista[0], lista[1]])[0] is None,
+          buscar_correo("Ana Rojas Vera", [lista[0], lista[1]]))
+    check("lo de antes sigue: la tabla con menos apellidos que la lista",
+          buscar_correo("Daniel Fuentes", [{"nombre": "Daniel Fuentes Vera", "correo": "daniel@x.cl"},
+                                           {"nombre": "Dana Fuentes", "correo": "dana@x.cl"}])[0] == "daniel@x.cl")
+    check("el nombre suelto sigue sin calzar solo", buscar_correo("Rojo", lista)[0] is None)
+
 sys.exit(resultado())

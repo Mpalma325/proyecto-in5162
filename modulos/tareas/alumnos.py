@@ -46,14 +46,42 @@ def _por_nombre_incompleto(nombre_html: str, alumnos: list[dict]) -> str | None:
     al menos dos, y ningún otro alumno cumple lo mismo. Pedir dos tokens deja
     fuera el apellido suelto, que es justo donde el emparejamiento se equivoca, y
     exigir unicidad evita elegir entre dos alumnos que comparten el primer nombre.
+
+    También al revés: la tabla trae nombre y dos apellidos y el roster nombre y
+    uno (T2 de 2026-2, similitud 0.81 con umbral 0.82). Ahí se pide además que
+    el primer nombre sea el mismo, para no tomar "Rojo Soto" por "Ana Rojo".
     """
     tokens = _tokens(nombre_html)
     if len(tokens) < 2:
         return None
-    contenidos = [a for a in alumnos if tokens <= _tokens(a['nombre'])]
+    primero = _normalizar(nombre_html).replace('.', ' ').replace('-', ' ').split()[0]
+
+    def del_roster_en_la_tabla(a: dict) -> bool:
+        suyos = _tokens(a['nombre'])
+        return (len(suyos) >= 2 and suyos < tokens
+                and _normalizar(a['nombre']).replace('.', ' ').replace('-', ' ').split()[0] == primero)
+
+    contenidos = [a for a in alumnos
+                  if tokens <= _tokens(a['nombre']) or del_roster_en_la_tabla(a)]
     if len(contenidos) == 1:
         return contenidos[0]['correo']
     return None
+
+
+def nombre_de_pila(correo: str, nombre_tabla: str = "") -> str:
+    """
+    El nombre con que se saluda al alumno: el primero de la nómina.
+
+    Antes salía de la tabla de roles, y quien firmó solo con el apellido
+    recibía "Hola Rojo," (T1 de la prueba del 19/11/2026). Si el correo no está
+    en la nómina, queda la primera palabra de la tabla.
+    """
+    fila = datos.alumnos.por_correo().get((correo or "").strip().lower()) or {}
+    nombre = (fila.get('Nombre') or '').strip()
+    if ',' in nombre:  # "Apellido Apellido, Nombre"
+        nombre = nombre.split(',', 1)[1].strip()
+    palabras = (nombre or nombre_tabla or '').split()
+    return palabras[0] if palabras else "estudiante"
 
 
 def cargar_alumnos() -> list[dict]:

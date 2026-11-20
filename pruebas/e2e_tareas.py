@@ -227,4 +227,45 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
           corregir_una.call_count == 1 and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Nota"]
           and not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Nota"], texto)
 
+    titulo("12. el plazo escrito a mano en la plantilla no sale callado")
+    from modulos.tareas import config as config_tareas
+    plantilla = config_tareas.PROMPTS / "correo_pregunta.md"
+    original = plantilla.read_text(encoding="utf-8")
+    sembrar_preguntas(tmp, "T5", (("Gina Toro", "gina@x.cl"),))
+    plantilla.write_text("Hola {nombre},\n\n{pregunta}\n\nPlazo de respuesta: hoy lunes 3 de agosto de 2026, "
+                         "hasta las 10:20 hrs.\n", encoding="utf-8")
+    enviados.clear()
+    texto = salida_de(enviar.main, "T5", dry_run=True)
+    check("en simulación avisa que la fecha está escrita a mano", "{plazo}" in texto and "3 de agosto" in texto
+          and enviados == [], texto[-500:])
+    texto = salida_de(enviar.main, "T5", dry_run=False)
+    check("y no envía nada de verdad", enviados == [] and "No se envía" in texto, texto[-500:])
+    check("ni marca el envío", not datos.notas.ya_enviado("gina@x.cl", datos.TAREAS, "T5", sid))
+    check("y termina en error (el trabajo de la página queda como fallido)",
+          enviar.main("T5", dry_run=False) is False)
+    plazo_envio = enviar.calcular_plazo(datetime.now().astimezone(), 20)
+    revisar = enviar.revisar_plazo_plantilla
+    check("si la fecha escrita es justo la de este envío, pasa con un aviso",
+          revisar(f"Plazo: {enviar.texto_plazo(plazo_envio)} hrs.", plazo_envio)[1] is False)
+    aviso, detener = revisar("Tienes 20 minutos para responder.", plazo_envio)
+    check("sin fecha ni hora («tienes 20 minutos»), se envía con un aviso", not detener and "{plazo}" in aviso, aviso)
+    check("con {plazo}, nada que decir", revisar("Plazo: {plazo} hrs.", plazo_envio) == ("", False))
+    plantilla.write_text(original, encoding="utf-8")
+
+    titulo("13. el saludo usa el nombre de la nómina")
+    with (tmp / "alumnos.csv").open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Nombre", "Correo", "Grupo"])
+        w.writerow(["Gina Paz Toro", "gina@x.cl", ""])
+    storage.actualizar_fila("T5", "g1.html", "Gina Toro", {"alumno_nombre": "Toro"})
+    mensajes.clear()
+    enviar.main("T5", dry_run=False)
+    cuerpo = mensajes[-1].get_payload()[0].get_payload(decode=True).decode("utf-8") if mensajes else ""
+    check("quien firmó con el apellido recibe «Hola Gina,»", cuerpo.startswith("Hola Gina,"), cuerpo[:40])
+    fila_gina = {**storage.leer_csv("T5")[0], "respuesta": "R", "comentario": "C", "nota": "0.3"}
+    check("el feedback también", corregir._construir_cuerpo_feedback("Hola {nombre}:", fila_gina) == "Hola Gina:")
+    check("si no está en la nómina, la primera palabra de la tabla",
+          corregir._construir_cuerpo_feedback("Hola {nombre}:", {**fila_gina, "alumno_correo": "nadie@x.cl"})
+          == "Hola Toro:")
+
 sys.exit(resultado())
