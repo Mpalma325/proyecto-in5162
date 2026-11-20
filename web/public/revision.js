@@ -878,8 +878,10 @@ export function pestanaRevisar({ semestre, ciclo, id = null, alCambiarId = () =>
         }, `Aprobó ${plural(enBloque.length, "corrección", "correcciones")} de una vez (${nombre(n)})`);
         dibujar();
         if (saltadas) {
-          resultado.replaceChildren(caja("aviso", `${plural(saltadas, "corrección", "correcciones")} no se `
-            + "aprobaron: otra persona las cambió mientras tanto y quedaron como las dejó. Revísalas en la lista."));
+          resultado.replaceChildren(caja("aviso", saltadas === 1
+            ? "1 corrección no se aprobó: otra persona la cambió mientras tanto y quedó como la dejó. Revísala en la lista."
+            : `${saltadas} correcciones no se aprobaron: otra persona las cambió mientras tanto y quedaron como las `
+              + "dejó. Revísalas en la lista."));
         }
       } catch (e) {
         estado.textContent = `No pude guardarlas: ${e.message}`;
