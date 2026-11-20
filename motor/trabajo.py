@@ -38,11 +38,20 @@ REPO = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------- qué se ejecuta
 
 
-def _semana(a: dict) -> str:
-    s = int(a.get("semana", 0))
-    if not 1 <= s <= 52:
-        raise ValueError(f"Semana fuera de rango: {s}")
-    return str(s)
+def _hay_instancia(a: dict) -> bool:
+    return a.get("instancia") is not None or a.get("semana") is not None
+
+
+def _instancia(a: dict) -> str:
+    """El id de la instancia de test: "instancia" o, en trabajos de antes, "semana".
+
+    Es el entero oculto de preguntas.csv (1 a 999), no el número visible
+    («Control 2»). Se pasa al script como texto ya validado.
+    """
+    v = a.get("instancia") if a.get("instancia") is not None else a.get("semana", 0)
+    if isinstance(v, bool) or not re.fullmatch(r"[1-9][0-9]{0,2}", str(v).strip()):
+        raise ValueError(f"Instancia fuera de rango (1 a 999): {v!r}")
+    return str(int(str(v).strip()))
 
 
 def _prueba(a: dict) -> list[str]:
@@ -84,7 +93,7 @@ def _ajuste(a: dict) -> list[str]:
     if flujo not in ("test", "tarea"):
         raise ValueError(f"Flujo inválido: {flujo!r}")
     item = str(a.get("item", ""))
-    if not re.fullmatch(r"\d{1,2}" if flujo == "test" else r"T\d{1,2}", item):
+    if not re.fullmatch(r"[1-9]\d{0,2}" if flujo == "test" else r"T\d{1,2}", item):
         raise ValueError(f"Ítem inválido: {item!r}")
     correo = str(a.get("correo", ""))
     if not re.fullmatch(r"[^@\s,]+@[^@\s,]+\.[^@\s,]+", correo):
@@ -176,23 +185,25 @@ def _experimento(a: dict) -> list[str]:
     if not (1 <= n <= 300 and 0 <= semilla <= 99999):
         raise ValueError("Cantidad o semilla fuera de rango.")
     cmd = ["-c", _EXPERIMENTO, prompt, "-n", str(n), "--semilla", str(semilla)]
-    # Sin semana son todas; una semana 0 o vacía es un error, no "todas".
-    if a.get("semana") is not None:
-        cmd += ["--semana", _semana(a)]
+    # Sin instancia son todas; una instancia 0 o vacía es un error, no "todas".
+    if _hay_instancia(a):
+        cmd += ["--semana", _instancia(a)]
     # Aquí "prueba" es "solo mostrar la muestra": no llama al modelo.
     return cmd + _prueba(a)
 
 
 # flujo -> (perfil de archivos que necesita, cómo se arma el comando)
 FLUJOS = {
-    "tests.enviar": ("tests", lambda a: ["-m", "modulos.tests.enviar", _semana(a), *_prueba(a)]),
-    "tests.evaluar": ("tests", lambda a: ["-m", "modulos.tests.evaluar", _semana(a), *_prueba(a), *_solo(a)]),
+    # Una instancia en borrador no se envía de verdad: lo frena el script (enviar.py).
+    "tests.enviar": ("tests", lambda a: ["-m", "modulos.tests.enviar", _instancia(a), *_prueba(a)]),
+    "tests.evaluar": ("tests", lambda a: ["-m", "modulos.tests.evaluar", _instancia(a), *_prueba(a), *_solo(a)]),
     "tests.tutoria": ("tests", lambda a: ["-m", "modulos.tests.tutoria",
-                                          *([_semana(a)] if a.get("semana") else []), *_prueba(a)]),
+                                          *([_instancia(a)] if a.get("instancia") or a.get("semana") else []),
+                                          *_prueba(a)]),
     # No manda correos ni modifica el curso: solo lee y cuenta.
-    "tests.chequeo": ("tests", lambda a: ["-m", "modulos.tests.chequeo", _semana(a)]),
+    "tests.chequeo": ("tests", lambda a: ["-m", "modulos.tests.chequeo", _instancia(a)]),
     # No manda correos, pero sí llama al modelo: gasta API aunque sea "prueba".
-    "tests.resumen": ("tests", lambda a: ["-m", "modulos.tests.resumen", _semana(a)]),
+    "tests.resumen": ("tests", lambda a: ["-m", "modulos.tests.resumen", _instancia(a)]),
     # No manda correos ni cambia notas; sin modo prueba, gasta una llamada por respuesta.
     "tests.experimento": ("tests", _experimento),
     # Solo recalcula la reportería, después de editar alumnos o notas a mano.
