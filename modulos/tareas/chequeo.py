@@ -148,7 +148,7 @@ def imprimir(informe: dict) -> int:
 
     if not informe["grupos"]:
         print("No hay HTMLs en esa carpeta. Súbelos desde la app, en "
-              "Datos y Configuración → Entregas (Tareas).")
+              "Configuración › Tareas › Entregas.")
         return 1
 
     pendientes = 0
