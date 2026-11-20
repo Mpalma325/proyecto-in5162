@@ -52,11 +52,23 @@ que se lo elija con `--solo` (con `--sin-tarde` queda fuera igual). `recolectar`
 también acepta `--solo`, para buscar solo las respuestas de un envío a un grupo
 chico. "Hasta las 10:25" incluye todo ese minuto.
 
-`corregir --no-enviar` guarda la nota en datos y deja en `feedback_<T>.csv` el
-comentario, la marca de IA y la justificación del modelo, con
-`feedback_pendiente`. En la página se leen y se editan; `feedback` manda lo que
-quedó escrito y, si la nota cambió, la registra como ajuste. La marca de IA y la
-justificación nunca van al correo del alumno.
+Una nota cuenta cuando sale el correo con el feedback. `corregir` deja la
+propuesta del modelo en el log (evento `correccion`, con el JSON completo),
+marca `Corregido` en `notas.csv` y copia nota, comentario, marca de IA y
+justificación a `feedback_<T>.csv`, con `feedback_pendiente`. Sin
+`--no-enviar` manda el correo enseguida; con `--no-enviar` la corrección espera
+revisión. En la página se leen y se editan, y `feedback` manda lo que quedó
+escrito. Quien manda (`corregir` o `feedback`), después de que el correo sale,
+registra el evento `evaluacion` (Message-ID, nota y comentario enviados; en
+`Detalle`, quién lo revisó y qué cambió) y recién entonces la nota. La marca
+de IA y la justificación nunca van al correo del alumno.
+
+`feedback` decide con el log quién espera su correo (la última `correccion`
+sin `evaluacion` posterior), porque `feedback_<T>.csv` lo escriben también la
+página y puede quedar atrasado: no reenvía lo que el log dice que salió y copia
+al CSV la corrección que el log tiene y el CSV no. Las filas de 2026-2 no
+tienen `correccion`; para esas decide `feedback_pendiente`, salvo que el log ya
+tenga su evento `feedback` de entonces.
 
 El correo de quien no calzó con la lista de alumnos se elige en el chequeo de
 la página y queda en `entregas/<T>/correos_<T>.csv`; generar y enviar lo leen

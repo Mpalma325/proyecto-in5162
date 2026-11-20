@@ -45,7 +45,8 @@ EVENTOS = (
     "repregunta",   # el alumno preguntó algo sobre ese feedback
     "tutoria",      # el agente le respondió la duda, sin tocar la nota
     "ajuste",       # alguien del equipo docente cambió la nota a mano (motivo en Detalle)
-    "feedback",     # salió el correo de una corrección que se guardó para revisarla antes (tareas)
+    "feedback",     # salió el correo de una corrección que se guardó para revisarla antes
+                    # (tareas, 2026-2). Ya no se escribe: ahora es una 'evaluacion' con MessageId.
     "error",
     "correccion",   # la corrección propuesta (del modelo o del docente), antes de mandarla
     "descarte",     # el docente decidió no mandar feedback (motivo y quién en Detalle)

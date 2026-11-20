@@ -53,7 +53,7 @@ la conexión abierta hasta 30 minutos.
 | `tareas.generar` | `modulos.tareas.generar --no-interactivo` con los HTML elegidos | llama al modelo |
 | `tareas.enviar`, `tareas.corregir` | los scripts de `modulos/tareas/` | correos reales solo con `prueba: false` |
 | `tareas.recolectar` | `modulos.tareas.recolectar` | lee el buzón |
-| `tareas.feedback` | `modulos.tareas.feedback`: manda las correcciones que `corregir` con `no_enviar` dejó para revisar, con lo que se haya editado en la página | correos reales solo con `prueba: false` |
+| `tareas.feedback` | `modulos.tareas.feedback --por <pedido_por>`: manda las correcciones que `corregir` con `no_enviar` dejó para revisar, con lo que se haya editado en la página; quién lo pidió queda en el log | correos reales solo con `prueba: false` |
 | `tareas.segunda` | segunda oportunidad: `preparar` genera las preguntas nuevas; `enviar` en modo prueba arma los borradores | preparar llama al modelo; enviar manda correos solo con `prueba: false` |
 | `datos.panel` | nada: solo recalcula la reportería después de editar alumnos o preguntas | ninguno |
 
