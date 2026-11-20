@@ -15,8 +15,8 @@ const GRUPOS = [
   ["Pregunta", ["Tema", "FechaEntrega", "NumPreguntas", "Pregunta", "Pauta", "SegundaOportunidad"]],
   ["Envío y respuesta", ["Estado", "Enviado", "FechaEnvio", "MessageIdEnvio", "Respondio", "FechaRespuesta",
     "Respuesta", "LargoRespuesta"]],
-  ["Evaluación", ["FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad", "Modelo", "Versiones",
-    "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML", "AjusteManual", "MotivoAjuste"]],
+  ["Evaluación", ["FechaEvaluacion", "FechaFeedback", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad", "Modelo",
+    "Versiones", "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML", "AjusteManual", "MotivoAjuste"]],
   ["Tutoría", ["Repreguntas", "Tutorias"]],
 ];
 // Qué trae cada columna, al pasar el mouse por su nombre (sale de modulos/sabana.py).
@@ -45,9 +45,10 @@ export const DESCRIPCION = {
   Respuesta: "Lo que respondió",
   LargoRespuesta: "Largo de la respuesta, en caracteres",
   FechaEvaluacion: "Cuándo se corrigió",
+  FechaFeedback: "Cuándo salió el correo con la corrección; la nota cuenta desde ahí (tareas)",
   Nota: "Nota vigente, con los ajustes a mano",
   NotaTexto: "La nota tal como quedó escrita",
-  NotaDelModelo: "Nota que puso la IA, antes de cualquier ajuste",
+  NotaDelModelo: "Nota que propuso la IA, antes de la revisión o de un ajuste",
   Originalidad: "Originalidad que asignó la IA",
   Modelo: "Modelo de IA que corrigió",
   Versiones: "Versiones del prompt, la pauta y la plantilla con que se corrigió",
