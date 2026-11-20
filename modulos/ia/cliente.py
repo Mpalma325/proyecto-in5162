@@ -113,7 +113,7 @@ def _informar_consumo() -> None:
     if not _consumo:
         return
     # Los precios llegan del sitio como variable de entorno (Configuración ›
-    # Parámetros); sin ellos la línea dice solo los tokens.
+    # La IA › Parámetros); sin ellos la línea dice solo los tokens.
     precios = leer_precios(os.environ.get("PRECIOS_API"))
     for modelo, (llamadas, entrada, salida, cache) in sorted(_consumo.items()):
         print(linea_consumo(modelo, llamadas, entrada, salida, precios, cache), flush=True)

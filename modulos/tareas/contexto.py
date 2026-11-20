@@ -1,7 +1,7 @@
 """
 El contexto del curso que se le da al modelo al generar las preguntas de tareas.
 
-Se sube desde la página (Datos y Configuración → Contexto del curso) y vive en
+Se sube desde la página (Configuración › Tareas › Contexto) y vive en
 `tareas/data/clases/`. Sirve para cualquier curso, no solo para uno con R:
 
 - `.html` de una clase renderizada con RMarkdown: se toma solo el código R, que
@@ -91,7 +91,7 @@ def describir(r: dict | None = None) -> str:
         return "Contexto del curso: apagado (INCLUIR_CONTEXTO_CLASES=false)"
     if not r["archivos"]:
         return ("⚠ Contexto del curso: no hay ninguno. El modelo genera las preguntas sin ver el "
-                "material del curso; súbelo en Datos y Configuración → Contexto del curso.")
+                "material del curso; súbelo en Configuración › Tareas › Contexto.")
     vacios = [a["nombre"] for a in r["archivos"] if not a["caracteres"]]
     texto = (f"Contexto del curso: {len(r['archivos'])} archivo(s), "
              f"{r['caracteres'] / 1000:.0f} mil caracteres")

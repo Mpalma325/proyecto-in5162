@@ -31,7 +31,6 @@ Uso:
                                                        # que el log ya sabe
 """
 
-import csv
 import email
 import email.utils
 import imaplib
@@ -42,6 +41,7 @@ from email.utils import parseaddr
 from pathlib import Path
 
 from . import config
+from modulos.datos import lector_csv
 from modulos.mail import _decodificar_header, _extraer_cuerpo, _limpiar_respuesta
 from .evaluar import extraer_nota_y_originalidad
 
@@ -106,8 +106,7 @@ def cargar_semestres(filtro: str | None) -> dict:
                        carpeta / "tests_semanales" / "data" / "alumnos.csv"):
             if not roster.exists():
                 continue
-            with roster.open(encoding="utf-8-sig", newline="") as f:
-                filas = list(csv.DictReader(f))
+            filas = list(lector_csv(roster))
             gente = {
                 fila["Correo"].strip().lower(): fila
                 for fila in filas

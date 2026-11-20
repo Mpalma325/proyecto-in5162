@@ -13,7 +13,6 @@ Solo lee. No escribe ni corrige nada; para juntar lo que falte está
 `modulos.datos.fusionar`.
 """
 
-import csv
 import sys
 from pathlib import Path
 
@@ -30,8 +29,7 @@ _CAMPOS_CASILLA = ("Enviado", "Respondio", "Nota", "Originalidad",
 def _leer(ruta: Path) -> list[dict]:
     if not ruta.is_file():
         return []
-    with ruta.open(encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+    return list(_tablas.lector(ruta))
 
 
 def _clave_log(f: dict) -> tuple:

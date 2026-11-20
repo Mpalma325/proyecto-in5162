@@ -82,12 +82,22 @@ def main(semana: int, dry_run: bool = False) -> int:
             return 1
         print(f"({info.nombre} está en borrador: se puede simular, pero no enviar hasta confirmarla.)")
 
-    if config.GRUPO_CONTROL_TRATAMIENTO:
+    if config.GRUPO_CONTROL_TRATAMIENTO and dry_run:
+        # La simulación muestra los grupos que tocarían, sin guardarlos: el
+        # motor sube todo archivo que el trabajo cambia, y el grupo de un
+        # alumno no se cambia una vez puesto. Lo fija el primer envío real.
+        alumnos, nuevos = datos.alumnos.con_grupos(SEMILLA_GRUPOS)
+        if nuevos:
+            print(f"Asignaría grupo a {nuevos} alumno(s) nuevo(s); la simulación no lo guarda.")
+    elif config.GRUPO_CONTROL_TRATAMIENTO:
         nuevos = datos.alumnos.asignar_grupos_faltantes(SEMILLA_GRUPOS)
         if nuevos:
             print(f"Asigné grupo a {nuevos} alumno(s) nuevo(s).")
+        alumnos = datos.alumnos.leer()
+    else:
+        alumnos = datos.alumnos.leer()
 
-    alumnos = [a for a in datos.alumnos.leer() if a.get("Correo", "").strip()]
+    alumnos = [a for a in alumnos if a.get("Correo", "").strip()]
     faltan = set(datos.notas.pendientes_de_envio(
         [a["Correo"] for a in alumnos], datos.TESTS, semana))
     pendientes = [a for a in alumnos if a["Correo"].strip().lower() in faltan]

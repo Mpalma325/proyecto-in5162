@@ -8,6 +8,7 @@ Python y git.
     python3 instalar.py actualizar      # trae el código nuevo y vuelve a publicar
     python3 instalar.py estado          # qué existe y qué falta, sin cambiar nada
     python3 instalar.py credenciales    # cambiar la clave de OpenAI, la del correo o el token
+    python3 instalar.py acceso          # cambiar los correos del equipo que entran al sitio
     python3 instalar.py --simular       # muestra cada comando en vez de correrlo
 
 Las respuestas quedan en el .env de esta carpeta, que nunca se sube a git.

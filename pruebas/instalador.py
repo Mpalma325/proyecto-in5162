@@ -15,6 +15,7 @@ Nombres, correos y claves son inventados: el repositorio es público.
 """
 
 import csv
+import imaplib
 import io
 import json
 import os
@@ -131,6 +132,32 @@ class SmtpFalso:
         self.llamadas.append("send_message")
 
 
+class ImapFalso:
+    """IMAP4_SSL falso. `rechaza` es la clave que el IMAP no acepta aunque el SMTP sí."""
+    ultima = None
+    rechaza = "solo-smtp"
+
+    def __init__(self, host, puerto, timeout=None):
+        self.llamadas = [("conectar", host, puerto)]
+        ImapFalso.ultima = self
+
+    def login(self, usuario, clave):
+        self.llamadas.append("login")
+        if clave == ImapFalso.rechaza:
+            raise imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Invalid credentials (Failure)")
+
+    def logout(self):
+        self.llamadas.append("logout")
+
+    def select(self, *a, **k):
+        self.llamadas.append("select")
+
+
+class SmtpQueAceptaTodo(SmtpFalso):
+    def login(self, usuario, clave):
+        self.llamadas.append("login")
+
+
 def preguntador(respuestas):
     cola = list(respuestas)
     salida = []
@@ -174,41 +201,79 @@ check("nombre del curso y del profesor: no vacíos y sin llaves (los correos usa
 
 # ---------------------------------------------------------------- 2. correo
 
-titulo("2. el correo se prueba iniciando sesión, sin mandar nada")
-ok, msg = validar.probar_correo("curso@ejemplo.cl", "buena", smtp=SmtpFalso)
+titulo("2. el correo se prueba iniciando sesión en SMTP e IMAP, sin mandar ni leer nada")
+ok, msg = validar.probar_correo("curso@ejemplo.cl", "buena", smtp=SmtpFalso, imap=ImapFalso)
 ll = SmtpFalso.ultima.llamadas
-check("con la clave buena, ok", ok is True, msg)
+li = ImapFalso.ultima.llamadas
+check("con la clave buena, ok, y nombra los dos servidores",
+      ok is True and "smtp.gmail.com" in msg and "imap.gmail.com" in msg, msg)
 check("STARTTLS antes del login, y QUIT al final",
       ll.index("starttls") < ll.index("login") and ll[-1] == "quit", ll)
 check("no se manda ningún mensaje", "sendmail" not in ll and "send_message" not in ll, ll)
 check("va a smtp.gmail.com:587", ll[0] == ("conectar", "smtp.gmail.com", 587), ll[0])
-ok, msg = validar.probar_correo("curso@ejemplo.cl", "mala", smtp=SmtpFalso)
-check("clave rechazada: dice que es la contraseña de aplicación",
-      ok is False and "aplicación" in msg and SmtpFalso.ultima.llamadas[-1] == "quit", msg)
+check("IMAP: imap.gmail.com:993, login y LOGOUT, sin abrir el buzón",
+      li == [("conectar", "imap.gmail.com", 993), "login", "logout"], li)
+ImapFalso.ultima = None
+ok, msg = validar.probar_correo("curso@ejemplo.cl", "mala", smtp=SmtpFalso, imap=ImapFalso)
+check("SMTP rechaza: dice que es la contraseña de aplicación y que falló el envío (SMTP)",
+      ok is False and "aplicación" in msg and "SMTP" in msg and SmtpFalso.ultima.llamadas[-1] == "quit", msg)
+check("si el SMTP rechaza, el IMAP ni se intenta", ImapFalso.ultima is None)
+ok, msg = validar.probar_correo("curso@ejemplo.cl", ImapFalso.rechaza, smtp=SmtpQueAceptaTodo, imap=ImapFalso)
+check("SMTP sí e IMAP no: dice que falló la lectura (IMAP), con lo que respondió Gmail",
+      ok is False and "IMAP" in msg and "AUTHENTICATIONFAILED" in msg and "b'" not in msg
+      and ImapFalso.ultima.llamadas[-1] == "logout", msg)
 
 
 def smtp_caido(*a, **k):
     raise OSError("sin red")
 
 
-ok, msg = validar.probar_correo("curso@ejemplo.cl", "buena", smtp=smtp_caido)
-check("sin conexión no se sabe (None), no es un rechazo", ok is None, msg)
+ok, msg = validar.probar_correo("curso@ejemplo.cl", "buena", smtp=smtp_caido, imap=ImapFalso)
+check("sin conexión no se sabe (None), no es un rechazo", ok is None and "SMTP" in msg, msg)
+ok, msg = validar.probar_correo("curso@ejemplo.cl", "buena", smtp=SmtpFalso, imap=smtp_caido)
+check("IMAP sin conexión: tampoco se sabe, y dice que es el IMAP", ok is None and "IMAP" in msg, msg)
 
 # ---------------------------------------------------------------- 3. OpenAI
 
-titulo("3. la clave de OpenAI se prueba listando modelos")
-red = Red([("GET", r"api\.openai\.com/v1/models$", 200, {"data": [{"id": "gpt-5.4-mini"}]})])
+titulo("3. la clave de OpenAI se prueba con una respuesta de 1 token")
+COMPLETION = {"id": "x", "choices": [{"message": {"content": "ok"}, "finish_reason": "length"}],
+              "usage": {"prompt_tokens": 9, "completion_tokens": 1}}
+red = Red([("POST", r"api\.openai\.com/v1/chat/completions$", 200, COMPLETION)])
 ok, msg = validar.probar_openai("sk-falsa-de-prueba", Ejecutor(abrir=red))
-check("clave buena", ok is True, msg)
-check("solo un GET a /v1/models, con la clave en Authorization",
-      len(red.pedidos) == 1 and red.pedidos[0][0] == "GET"
+check("clave buena y con saldo", ok is True and "saldo" in msg, msg)
+pedido = json.loads(red.pedidos[0][2]) if red.pedidos else {}
+check("un solo POST a chat/completions, con la clave en Authorization",
+      len(red.pedidos) == 1 and red.pedidos[0][0] == "POST"
       and red.pedidos[0][3].get("Authorization") == "Bearer sk-falsa-de-prueba", red.pedidos)
-red = Red([("GET", r"/v1/models$", 401, {"error": {"message": "Incorrect API key"}})])
-ok, msg = validar.probar_openai("sk-mala", Ejecutor(abrir=red))
-check("clave mala: rechazo claro", ok is False and "rechazó" in msg, msg)
-red = Red([("GET", r"/v1/models$", 200, {"data": [{"id": "otro-modelo"}]})])
+check("con el modelo por defecto y 1 token de salida",
+      pedido.get("model") == "gpt-5.4-mini" and pedido.get("max_completion_tokens") == 1, pedido)
+SIN_SALDO = {"error": {"message": "You exceeded your current quota, please check your plan and billing details.",
+                       "type": "insufficient_quota", "code": "insufficient_quota"}}
+red = Red([("POST", r"/v1/chat/completions$", 429, SIN_SALDO)])
+ok, msg = validar.probar_openai("sk-sin-saldo", Ejecutor(abrir=red))
+check("cuenta sin saldo (429 insufficient_quota): rechazo que dice dónde cargar saldo",
+      ok is False and "saldo" in msg and "billing" in msg, msg)
+red = Red([("POST", r"/v1/chat/completions$", 429,
+            {"error": {"message": "Rate limit reached", "type": "requests", "code": "rate_limit_exceeded"}})])
 ok, msg = validar.probar_openai("sk-x", Ejecutor(abrir=red))
-check("sin el modelo por defecto: sirve, con aviso", ok is True and "gpt-5.4-mini" in msg, msg)
+check("429 por demasiadas llamadas: no se sabe (None), espera y reintenta",
+      ok is None and "429" in msg and "minuto" in msg, msg)
+red = Red([("POST", r"/v1/chat/completions$", 401,
+            {"error": {"message": "Incorrect API key provided", "code": "invalid_api_key"}})])
+ok, msg = validar.probar_openai("sk-mala", Ejecutor(abrir=red))
+check("clave mala (401): rechazo claro", ok is False and "rechazó" in msg and "api-keys" in msg, msg)
+red = Red([("POST", r"/v1/chat/completions$", 401,
+            {"error": {"message": "You have insufficient permissions for this operation. Missing scopes: "
+                                  "model.request.", "type": "invalid_request_error"}})])
+ok, msg = validar.probar_openai("sk-restringida", Ejecutor(abrir=red))
+check("clave con permisos restringidos: pide una con «Permissions» en «All»",
+      ok is False and "Permissions" in msg and "All" in msg, msg)
+red = Red([("POST", r"/v1/chat/completions$", 404,
+            {"error": {"message": "The model `gpt-5.4-mini` does not exist", "code": "model_not_found"}})])
+ok, msg = validar.probar_openai("sk-x", Ejecutor(abrir=red))
+check("sin el modelo por defecto: sirve, con aviso de dónde cambiarlo y de que el saldo no se vio",
+      ok is True and "gpt-5.4-mini" in msg and "Configuración › La IA › Parámetros" in msg
+      and "saldo" in msg, msg)
 
 # ---------------------------------------------------------------- 4. Cloudflare
 
@@ -612,7 +677,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ej = Ejecutor(simular=True, correr_proceso=prohibido, abrir=prohibido, escribir=salida.append)
     preg, cola = preguntador(RESPUESTAS)
     ctx = Contexto(ej=ej, env=Entorno(ruta_env, simular=True), preg=preg, escribir=salida.append,
-                   smtp=prohibido)
+                   smtp=prohibido, imap=prohibido)
     antes = sorted(p.name for p in (RAIZ / "web").iterdir())
     codigo = main(["--simular"], ctx)
     texto = "\n".join(map(str, salida))
@@ -668,7 +733,7 @@ def contexto_simulado(valores, respuestas=()):
     ej = Ejecutor(simular=True, correr_proceso=prohibido, abrir=prohibido, escribir=salida.append)
     preg, cola = preguntador(respuestas)
     return Contexto(ej=ej, env=Entorno(ruta, simular=True), preg=preg, escribir=salida.append,
-                    smtp=prohibido), salida
+                    smtp=prohibido, imap=prohibido), salida
 
 
 ctx, salida = contexto_simulado({"CURSO": "ZZ9999"})
@@ -706,6 +771,59 @@ with tempfile.TemporaryDirectory() as tmp:
     check("estado con un 503 de Cloudflare: marca «?» y sigue con lo demás",
           any(s.startswith("  ? sitio publicado") and "10013" in s for s in lineas)
           and any(s.startswith("  ✓ Access configurado") for s in lineas), lineas)
+
+
+def estado_con(rutas_http, valores):
+    """Corre `estado` sin simular, con gcloud y la red falsos. Devuelve las líneas."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = Entorno(Path(tmp) / ".env")
+        for k, v in valores.items():
+            env.set(k, v)
+        gcloud = Procesos([(r"^gcloud projects describe", 0, "123456789\n"),
+                           (r"billing projects describe", 0, "True\n"),
+                           (r"run services describe", 0, URL + "\n")])
+        salida = []
+        preg, _ = preguntador([])
+        ctx = Contexto(ej=Ejecutor(abrir=Red(rutas_http), correr_proceso=gcloud, escribir=salida.append),
+                       env=env, preg=preg, escribir=salida.append)
+        main(["estado"], ctx)
+        return [str(s) for s in salida]
+
+
+SIN_CF = {k: COMPLETO[k] for k in ("CURSO", "GCP_PROYECTO", "GCP_REGION", "WEB_URL", "WEB_TOKEN")}
+SALUD = {"ok": True, "flujos": ["datos.panel", "tests.enviar", "tests.evaluar"]}
+PLANTILLA = [{"ruta": "alumnos.example.csv"}, {"ruta": "tests_semanales/prompts/tutoria.md"}]
+lineas = estado_con([("GET", re.escape(URL) + r"/salud$", 200, SALUD),
+                     ("GET", r"/api/motor/archivos/_template$", 200, PLANTILLA)], SIN_CF)
+check("motor en pie: muestra el código HTTP, no el cuerpo",
+      "  ✓ motor responde  (HTTP 200)" in lineas, [s for s in lineas if "motor responde" in s])
+check("plantilla en el sitio: código HTTP y cantidad de archivos",
+      "  ✓ plantilla de semestre en el sitio  (HTTP 200, 2 archivos)" in lineas,
+      [s for s in lineas if "plantilla" in s])
+falta = next((s for s in lineas if ".env completo" in s), "")
+claves = re.findall(r"\b[A-Z][A-Z0-9_]{3,}\b", falta)
+check("cada clave que falta aparece una vez (TOKEN_WEB también es un secreto del motor)",
+      falta.startswith("  ✗ .env completo") and "TOKEN_WEB" in claves and "OPENAI_API_KEY" in claves
+      and len(claves) == len(set(claves)), falta)
+sin_tokens = {k: v for k, v in COMPLETO.items() if k not in ("WEB_TOKEN", "TOKEN_WEB")}
+ctx, salida = contexto_simulado(sin_tokens)
+main(["actualizar", "--simular"], ctx)
+aviso = next((str(s) for s in salida if "Al .env le falta" in str(s)), "")
+check("actualizar sin los tokens: los nombra una vez cada uno",
+      aviso.count("WEB_TOKEN") == 1 and aviso.count("TOKEN_WEB") == 1, aviso)
+PROHIBIDO_HTML = (b'<html><head><title>403 Forbidden</title><style>body{color:red}</style></head><body>'
+                  b'<h1>Error: Forbidden</h1><h2>Your client does not have permission to get URL '
+                  b'<code>/salud</code> from this server.</h2></body></html>')
+lineas = estado_con([("GET", re.escape(URL) + r"/salud$", 403, PROHIBIDO_HTML),
+                     ("GET", r"/api/motor/archivos/_template$", 401, {"error": "Falta el token del motor."})],
+                    SIN_CF)
+motor = next((s for s in lineas if "motor responde" in s), "")
+check("motor que responde 403: el código y un extracto corto del texto, sin HTML",
+      motor.startswith("  ✗ motor responde  (HTTP 403: ") and "Forbidden" in motor and "<" not in motor
+      and "color:red" not in motor and len(motor) < 160, motor)
+check("plantilla con 401: el código y el motivo",
+      "  ✗ plantilla de semestre en el sitio  (HTTP 401: {\"error\": \"Falta el token del motor.\"})" in lineas,
+      [s for s in lineas if "plantilla" in s])
 ctx, salida = contexto_simulado(COMPLETO, ["2", "sk-otra-falsa"])
 codigo = main(["credenciales", "--simular"], ctx)
 reg = "\n".join(ctx.ej.registro)
@@ -724,5 +842,87 @@ r = subprocess.run(["node", str(RAIZ / "web" / "scripts" / "acceso.mjs"), "--con
                    encoding="utf-8")
 check("con --config de un archivo que no existe, se detiene antes de tocar la red",
       r.returncode != 0 and "No existe" in r.stderr, r.stderr[-300:])
+
+# ---------------------------------------------------------------- 15. acceso
+
+titulo("15. acceso cambia quién entra sin reinstalar")
+EQUIPO = {**COMPLETO, "ACCESO_CORREOS": "profe@ejemplo.cl,ayudante@ejemplo.cl"}
+
+ctx, salida = contexto_simulado(EQUIPO, ["profe@ejemplo.cl, Nuevo@Ejemplo.cl"])
+codigo = main(["acceso", "--simular"], ctx)
+reg = "\n".join(ctx.ej.registro)
+check("--simular: muestra acceso.mjs con la lista nueva, en minúsculas",
+      codigo == 0 and "node scripts/acceso.mjs --config wrangler.zz9999.toml profe@ejemplo.cl nuevo@ejemplo.cl"
+      in reg, reg[-600:])
+check("--simular: no corre nada (ni motor, ni secretos, ni publicación) y no escribe el .env",
+      not re.search(r"run deploy|secrets|wrangler deploy|/query", reg)
+      and Entorno(ctx.env.ruta).get("ACCESO_CORREOS") == EQUIPO["ACCESO_CORREOS"], reg)
+check("muestra quiénes entran hoy", any("Hoy entran: profe@ejemplo.cl, ayudante@ejemplo.cl" in str(s) for s in salida))
+
+ctx, salida = contexto_simulado(EQUIPO, [""])
+main(["acceso", "--simular"], ctx)
+check("Enter deja la lista igual (y Access se vuelve a dejar con ella)",
+      "acceso.mjs --config wrangler.zz9999.toml profe@ejemplo.cl ayudante@ejemplo.cl" in "\n".join(ctx.ej.registro))
+
+ctx, salida = contexto_simulado({"CURSO": "ZZ9999", "ACCESO_CORREOS": "profe@ejemplo.cl"}, ["otro@ejemplo.cl"])
+check("sin instalación completa: se niega", main(["acceso", "--simular"], ctx) == 1
+      and "acceso.mjs" not in "\n".join(ctx.ej.registro))
+
+
+def correr_acceso(respuestas, procesos, carpeta=None):
+    """`acceso` sin simular, con node y npm falsos y la configuración en una carpeta temporal."""
+    carpeta = carpeta or Path(tempfile.mkdtemp())
+    env = Entorno(carpeta / ".env")
+    for k, v in EQUIPO.items():
+        env.set(k, v)
+    salida = []
+    preg, cola = preguntador(respuestas)
+    ctx = Contexto(ej=Ejecutor(correr_proceso=procesos, abrir=prohibido, escribir=salida.append), env=env,
+                   preg=preg, escribir=salida.append)
+    original = modulo_cf.escribir_config
+    modulo_cf.escribir_config = lambda ej_, curso, vals: original(ej_, curso, vals, carpeta)
+    try:
+        codigo = main(["acceso"], ctx)
+    finally:
+        modulo_cf.escribir_config = original
+    return codigo, Entorno(carpeta / ".env"), [str(s) for s in salida], carpeta
+
+
+NODE = (r"^node --version", 0, "v22.12.0\n")
+p = Procesos([NODE])
+codigo, env, lineas, _ = correr_acceso(["profe@", "profe@ejemplo.cl, nuevo@ejemplo.cl"], p)
+check("un correo mal escrito se vuelve a pedir", any("No parecen correos: profe@" in s for s in lineas), lineas)
+check("corre acceso.mjs con la lista nueva y la guarda en el .env",
+      codigo == 0 and p.hubo(r"node scripts/acceso\.mjs --config wrangler\.zz9999\.toml profe@ejemplo\.cl "
+                             r"nuevo@ejemplo\.cl$")
+      and env.get("ACCESO_CORREOS") == "profe@ejemplo.cl,nuevo@ejemplo.cl", (codigo, p.llamadas, lineas[-5:]))
+check("Access mantuvo la aplicación: no vuelve a publicar el sitio ni toca el motor",
+      not p.hubo(r"wrangler deploy|npm run preparar|gcloud run|gcloud secrets")
+      and any("no necesita publicarse" in s for s in lineas), p.llamadas)
+
+
+carpeta_aud = Path(tempfile.mkdtemp())
+otro = Procesos([NODE])
+
+
+def access_con_aud_nuevo(cmd, **kw):
+    """acceso.mjs que deja otro ACCESO_AUD en la configuración, como si hubiera
+    creado la aplicación de nuevo."""
+    if "scripts/acceso.mjs" in map(str, cmd):
+        ruta = carpeta_aud / "wrangler.zz9999.toml"
+        ruta.write_text(ruta.read_text(encoding="utf-8").replace('ACCESO_AUD = "aud-1"', 'ACCESO_AUD = "aud-2"'),
+                        encoding="utf-8")
+    return otro(cmd, **kw)
+
+
+codigo, env, lineas, _ = correr_acceso(["profe@ejemplo.cl"], access_con_aud_nuevo, carpeta_aud)
+check("si Access cambió el AUD: lo guarda y vuelve a publicar el sitio con él",
+      codigo == 0 and env.get("ACCESO_AUD") == "aud-2" and otro.hubo(r"npx wrangler deploy --secrets-file")
+      and not otro.hubo(r"gcloud run"), (codigo, otro.llamadas, lineas[-5:]))
+
+p = Procesos([NODE, (r"scripts/acceso\.mjs", 1, "")])
+codigo, env, lineas, _ = correr_acceso(["solo@ejemplo.cl"], p)
+check("si acceso.mjs falla, el .env sigue con la lista anterior",
+      codigo == 1 and env.get("ACCESO_CORREOS") == EQUIPO["ACCESO_CORREOS"], (codigo, lineas[-4:]))
 
 sys.exit(resultado())

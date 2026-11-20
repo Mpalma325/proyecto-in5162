@@ -7,6 +7,7 @@ tareas) los que orquestan las tres cosas.
 """
 
 from . import alumnos, log, notas, reportes
+from ._csv import lector as lector_csv
 from .esquema import TAREAS, TESTS
 
-__all__ = ["alumnos", "notas", "log", "reportes", "TESTS", "TAREAS"]
+__all__ = ["alumnos", "notas", "log", "reportes", "lector_csv", "TESTS", "TAREAS"]

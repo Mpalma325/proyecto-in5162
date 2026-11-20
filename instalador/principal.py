@@ -1,5 +1,5 @@
 """
-Los cuatro comandos de instalar.py: instalar, actualizar, estado, credenciales.
+Los cinco comandos de instalar.py: instalar, actualizar, estado, credenciales y acceso.
 
 El orden de `instalar` sale de qué necesita cada pieza:
   1. las preguntas, cada una comprobada apenas se responde;
@@ -16,6 +16,9 @@ de nuevo el mismo comando.
 from __future__ import annotations
 
 import argparse
+import imaplib
+import json
+import re
 import secrets
 import smtplib
 import subprocess
@@ -32,7 +35,7 @@ from .comun import RAIZ, WEB, Ejecutor, Entorno, Falla, Preguntador, paso
 
 DEFECTO_REGION = "us-central1"
 # Sin esto, un curso nuevo heredaría la tutoría diaria de las 18:00, que manda
-# correos reales. El profesor la prende en Datos y Configuración › Parámetros.
+# correos reales. El profesor la prende en Configuración › La IA › Parámetros.
 TUTORIA_APAGADA = ("INSERT OR IGNORE INTO parametros (clave, valor, actualizado, por) "
                    "VALUES ('TUTORIA_AUTOMATICA', 'false', ?, 'instalador')")
 
@@ -44,6 +47,7 @@ class Contexto:
     preg: Preguntador
     escribir: object = print
     smtp: object = smtplib.SMTP
+    imap: object = imaplib.IMAP4_SSL
     esperar: object = time.sleep
     # Lo que se fue sabiendo en esta corrida (no siempre va al .env).
     datos: dict = field(default_factory=dict)
@@ -125,7 +129,7 @@ def preguntar_correo(ctx: Contexto, de_nuevo: bool = False) -> None:
         return correo, clave
 
     _comprobar(ctx, "el correo", preguntar,
-               lambda c, k: validar.probar_correo(c, k, smtp=ctx.smtp))
+               lambda c, k: validar.probar_correo(c, k, smtp=ctx.smtp, imap=ctx.imap))
 
 
 def preguntar_openai(ctx: Contexto, de_nuevo: bool = False) -> None:
@@ -183,6 +187,21 @@ def preguntar_equipo(ctx: Contexto) -> list[str]:
                    revisar=lambda v: validar.lista_correos(v)[1],
                    normalizar=lambda v: ",".join(validar.lista_correos(v)[0]) or v)
     return validar.lista_correos(texto)[0]
+
+
+def pedir_equipo_nuevo(ctx: Contexto) -> list[str]:
+    """La lista nueva de correos, con la actual como valor por defecto. No la
+    guarda: el .env cambia recién cuando Access quedó con ella."""
+    actual = ",".join(validar.lista_correos(ctx.env.get("ACCESO_CORREOS"))[0])
+    if actual:
+        ctx.escribir(f"  Hoy entran: {actual.replace(',', ', ')}")
+    ctx.escribir("  La lista nueva reemplaza a la actual: quien no esté en ella deja de entrar.")
+    while True:
+        texto = ctx.preg.pedir("Correos del equipo docente, separados por coma", defecto=actual)
+        correos, error = validar.lista_correos(texto)
+        if not error:
+            return correos
+        ctx.escribir(f"  ✗ {error}")
 
 
 def tokens_internos(ctx: Contexto) -> None:
@@ -301,7 +320,7 @@ def apagar_tutoria(ctx: Contexto, cf: Cloudflare) -> None:
     profesor ya la prendió, no se toca: INSERT OR IGNORE."""
     cf.consulta_d1(ctx.env.get("CLOUDFLARE_D1_ID"), TUTORIA_APAGADA,
                    [datetime.now(timezone.utc).isoformat()])
-    ctx.escribir("  ✓ tutoría automática apagada (se prende en Datos y Configuración › Parámetros)")
+    ctx.escribir(f"  ✓ tutoría automática apagada (se prende en {validar.PARAMETROS})")
 
 
 def desplegar_motor(ctx: Contexto) -> str:
@@ -372,12 +391,12 @@ def instalar(ctx: Contexto, args) -> int:
     m = _motor(ctx)
     gcp.explicar_cuenta_por_defecto(m.proyecto, gcp.numero_proyecto(ctx.ej, m.proyecto), ctx.escribir)
     ctx.escribir("\nLo que sigue:")
-    ctx.escribir("  1. Entrar al sitio (llega un código al correo) > Datos y Configuración >")
-    ctx.escribir("     crear el semestre y dejarlo activo.")
+    ctx.escribir("  1. Entrar al sitio (llega un código al correo), abrir Configuración y crear")
+    ctx.escribir("     el semestre con «Nuevo semestre…»: queda activo.")
     ctx.escribir("  2. Subir la lista de alumnos (columnas Nombre y Correo) y las preguntas.")
     ctx.escribir("  3. Revisar los prompts: ahí está la política de corrección del curso.")
     ctx.escribir("  4. Probar en modo prueba antes del primer envío real.")
-    ctx.escribir("  5. La tutoría diaria de las 18:00 quedó apagada: se prende en Parámetros.")
+    ctx.escribir(f"  5. La tutoría diaria de las 18:00 quedó apagada: se prende en {validar.PARAMETROS}.")
     ctx.escribir("  6. Crear una alerta de presupuesto en console.cloud.google.com/billing.")
     return 0
 
@@ -389,9 +408,11 @@ def _exigir(ctx: Contexto, claves: tuple[str, ...]) -> None:
                     ". ¿Se terminó la instalación? Corre: python3 instalar.py")
 
 
-INSTALADO = ("CURSO", "NOMBRE_CURSO", "PROFESOR", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
-             "CLOUDFLARE_D1_ID", "WEB_URL", "WEB_TOKEN", "TOKEN_WEB", "GCP_PROYECTO", "GCP_REGION",
-             "MOTOR_URL", "ACCESO_EQUIPO", "ACCESO_AUD", *gcp.SECRETOS.values())
+# Cada clave una vez: los tokens internos también están entre los secretos del motor.
+INSTALADO = tuple(dict.fromkeys((
+    "CURSO", "NOMBRE_CURSO", "PROFESOR", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_D1_ID", "WEB_URL", "WEB_TOKEN", "TOKEN_WEB", "GCP_PROYECTO", "GCP_REGION",
+    "MOTOR_URL", "ACCESO_EQUIPO", "ACCESO_AUD", *gcp.SECRETOS.values())))
 
 
 def actualizar(ctx: Contexto, args) -> int:
@@ -424,6 +445,25 @@ def actualizar(ctx: Contexto, args) -> int:
     subir_plantilla(ctx)
     paso("Listo: sitio y motor con la última versión", ctx.escribir)
     return 0
+
+
+def respuesta_http(estado_http: int, cuerpo, largo: int = 100) -> str:
+    """Lo que `estado` muestra de un pedido: el código HTTP y, si no es 200, un
+    extracto del cuerpo (el texto de una página HTML, sin etiquetas ni estilos)
+    que diga por qué."""
+    if estado_http == 0:
+        return f"sin respuesta: {str(cuerpo)[:largo]}"
+    if estado_http == 200:
+        return "HTTP 200"
+    if isinstance(cuerpo, (bytes, bytearray)):
+        cuerpo = bytes(cuerpo).decode("utf-8", "replace")
+    elif isinstance(cuerpo, (dict, list)):
+        cuerpo = json.dumps(cuerpo, ensure_ascii=False)
+    texto = re.sub(r"<(style|script)\b.*?</\1\s*>", " ", str(cuerpo or ""), flags=re.S | re.I)
+    texto = " ".join(re.sub(r"<[^>]*>", " ", texto).split())
+    if len(texto) > largo:
+        texto = texto[:largo].rstrip() + "…"
+    return f"HTTP {estado_http}: {texto}" if texto else f"HTTP {estado_http}"
 
 
 def estado(ctx: Contexto, args) -> int:
@@ -479,12 +519,14 @@ def estado(ctx: Contexto, args) -> int:
             filas.append(("motor desplegado", bool(url), url))
             if url:
                 estado_http, cuerpo = ctx.ej.pedir("GET", f"{url}/salud")
-                filas.append(("motor responde", estado_http == 200, str(cuerpo)[:80]))
+                filas.append(("motor responde", estado_http == 200, respuesta_http(estado_http, cuerpo)))
     web, token_motor = ctx.env.get("WEB_URL"), ctx.env.get("WEB_TOKEN")
     if web and token_motor:
         estado_http, lista = ctx.ej.pedir("GET", f"{web}/api/motor/archivos/_template", token=token_motor)
-        n = len(lista) if estado_http == 200 and isinstance(lista, list) else 0
-        filas.append(("plantilla de semestre en el sitio", n > 0, f"{n} archivos"))
+        if estado_http == 200 and isinstance(lista, list):
+            filas.append(("plantilla de semestre en el sitio", bool(lista), f"HTTP 200, {len(lista)} archivos"))
+        else:
+            filas.append(("plantilla de semestre en el sitio", False, respuesta_http(estado_http, lista)))
 
     paso("Estado de la instalación", ctx.escribir)
     for nombre, ok, detalle in filas:
@@ -529,8 +571,36 @@ def credenciales(ctx: Contexto, args) -> int:
     return 0
 
 
+def acceso(ctx: Contexto, args) -> int:
+    """Cambiar quién entra al sitio sin reinstalar. Corre acceso.mjs con la lista
+    nueva, que reemplaza la política de la aplicación de Access, y la guarda en
+    ACCESO_CORREOS. El sitio se publica de nuevo solo si Access cambió los datos
+    con que el Worker verifica la sesión (ACCESO_EQUIPO, ACCESO_AUD)."""
+    _exigir(ctx, INSTALADO)
+    revisar_programas(ctx)
+    paso("Cambiar quién entra al sitio", ctx.escribir)
+    correos = pedir_equipo_nuevo(ctx)
+    cf = _cf(ctx)
+    antes = (ctx.env.get("ACCESO_EQUIPO"), ctx.env.get("ACCESO_AUD"))
+    configurar_access(ctx, cf, correos)
+    ctx.env.set("ACCESO_CORREOS", ",".join(correos))
+    if ctx.ej.simular:
+        ctx.escribir("  [simular] el sitio se publica de nuevo solo si cambian ACCESO_EQUIPO o ACCESO_AUD")
+    elif (ctx.env.get("ACCESO_EQUIPO"), ctx.env.get("ACCESO_AUD")) != antes:
+        ctx.escribir("  Access cambió los datos con que el sitio verifica la sesión: lo publico de nuevo.")
+        dependencias_web(ctx)
+        publicar_sitio(ctx, cf)
+    else:
+        ctx.escribir("  ✓ el sitio no necesita publicarse de nuevo: Access mantuvo la misma aplicación")
+    paso("Listo", ctx.escribir)
+    ctx.escribir(f"Entran:  {', '.join(correos)}")
+    ctx.escribir("Quien salió de la lista y tenía la sesión abierta puede seguir entrando hasta que")
+    ctx.escribir("venza su sesión (24 horas).")
+    return 0
+
+
 COMANDOS = {"instalar": instalar, "actualizar": actualizar, "estado": estado,
-            "credenciales": credenciales}
+            "credenciales": credenciales, "acceso": acceso}
 
 
 def leer_argumentos(argv: list[str] | None):
@@ -538,7 +608,7 @@ def leer_argumentos(argv: list[str] | None):
         prog="instalar.py",
         description="Instala, actualiza o revisa el sistema del curso en Cloudflare y Google Cloud.")
     p.add_argument("accion", nargs="?", default="instalar", choices=list(COMANDOS),
-                   help="instalar (por defecto), actualizar, estado o credenciales")
+                   help="instalar (por defecto), actualizar, estado, credenciales o acceso")
     p.add_argument("--simular", action="store_true",
                    help="muestra cada comando y cada pedido en vez de hacerlo; no cambia nada")
     p.add_argument("--sin-git", action="store_true", help=argparse.SUPPRESS)
