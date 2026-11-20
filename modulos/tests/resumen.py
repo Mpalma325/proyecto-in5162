@@ -1,60 +1,71 @@
+"""
+El resumen de una instancia para el equipo docente: qué entendió el curso.
+
+Toma a quien tiene la respuesta corregida (con Corregido o Nota, y no
+descartada) y le pasa al modelo las correcciones que ya están en el log: la
+última `correccion` de cada alumno o, en filas anteriores a la revisión, su
+`evaluacion`. No vuelve a corregir a nadie: es una sola llamada al modelo.
+Así también hay resumen de una instancia que todavía espera revisión.
+"""
+
 import sys
 
 from modulos import datos
 
 from . import config
-from .ia_prompts import evaluar_respuesta, generar_resumen
+from .feedback import _normalizar_html_gpt
+from .ia_prompts import generar_resumen
 from .preguntas import cargar_semana
-from modulos.progreso import avanzar
+
+
+def _correcciones(semana: int) -> dict[str, str]:
+    """Por alumno, el texto de su corrección más nueva: `correccion` si hay, si no `evaluacion`."""
+    ultima: dict[str, tuple[str, str]] = {}
+    for e in datos.log.leer(flujo=datos.TESTS, item=semana):
+        ev = e.get("Evento")
+        texto = (e.get("EvaluacionIA") or "").strip()
+        if ev not in ("correccion", "evaluacion") or not texto:
+            continue
+        correo = (e.get("Correo") or "").strip().lower()
+        previo = ultima.get(correo)
+        # Una evaluacion no reemplaza a una correccion: el resumen mira lo que
+        # dijo quien corrigió, y la corrección hecha a mano (vacía en el log)
+        # cae a lo que salió en el correo.
+        if ev == "correccion" or previo is None or previo[0] == "evaluacion":
+            ultima[correo] = (ev, texto)
+    return {c: _normalizar_html_gpt(t) for c, (_, t) in ultima.items()}
 
 
 def main(semana: int) -> None:
     info = cargar_semana(semana)
     filas = [a for a in datos.alumnos.leer() if a.get("Correo", "").strip()]
 
-    # el texto de cada respuesta vive en el log, no en la tabla de estado
-    # sin las que llegaron duplicadas: esas no se corrigieron
-    textos = {
-        e["Correo"]: e["Respuesta"]
-        for e in datos.log.leer(flujo=datos.TESTS, item=semana, evento="respuesta")
-        if e.get("Respuesta", "").strip() and not datos.log.es_duplicado(e)
+    estados = {e["Correo"].strip().lower(): e for e in datos.notas.leer(flujo=datos.TESTS, item=semana)}
+    corregidos = {
+        c for c, e in estados.items()
+        if ((e.get("Corregido") or "").strip() or (e.get("Nota") or "").strip())
+        and not (e.get("Descartada") or "").strip()
     }
-    con_nota = {
-        e["Correo"] for e in datos.notas.leer(flujo=datos.TESTS, item=semana)
-        if e.get("Nota", "").strip()
-    }
+    textos = _correcciones(semana)
 
-    con_respuesta = [
-        f for f in filas
-        if f["Correo"].strip().lower() in con_nota
-        and textos.get(f["Correo"].strip().lower())
-    ]
+    elegidos = [f for f in filas
+                if f["Correo"].strip().lower() in corregidos and textos.get(f["Correo"].strip().lower())]
 
-    if not con_respuesta:
-        print(f"No hay respuestas evaluadas para la semana {semana}.")
+    if not elegidos:
+        print(f"No hay respuestas corregidas para {f'la semana {semana}' if info.legado else info.nombre}.")
         if not textos:
-            print("(el log no tiene respuestas de esa semana; se puede "
-                  "reconstruir con: python -m herramientas.reconstruir_interacciones)")
+            print("(el log no tiene correcciones de esa instancia)")
         return
 
-    print(f"Procesando {len(con_respuesta)} respuesta(s)...")
+    print(f"Resumiendo {len(elegidos)} corrección(es) guardadas (sin volver a corregir).")
 
-    evaluaciones_html = []
-    for fila in avanzar(con_respuesta, "respuestas"):
-        nombre = fila.get("Nombre", "?")
-        respuesta = textos[fila["Correo"].strip().lower()]
-        try:
-            html = evaluar_respuesta(info.preguntas, info.pautas, respuesta)
-            evaluaciones_html.append(f"<!-- {nombre} -->\n{html}")
-        except Exception as e:
-            print(f"⚠ Error evaluando a {nombre}: {e}")
-            continue
+    evaluaciones = []
+    for fila in elegidos:
+        grupo = (fila.get("Grupo") or "control").strip().lower() or "control"
+        evaluaciones.append(f"<!-- {fila.get('Nombre', '?')} · grupo {grupo} -->\n"
+                            f"{textos[fila['Correo'].strip().lower()]}")
 
-    if not evaluaciones_html:
-        print("No se pudo procesar ninguna evaluación.")
-        return
-
-    resumen = generar_resumen(info.preguntas, info.pautas, evaluaciones_html)
+    resumen = generar_resumen(info.control, info.tratamiento, evaluaciones)
 
     salida = config.DATA / f"resumen_semana_{semana}.txt"
     salida.write_text(resumen, encoding="utf-8")

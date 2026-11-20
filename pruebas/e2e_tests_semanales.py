@@ -85,7 +85,7 @@ def ciclo_completo():
              patch("modulos.tests.evaluar.evaluar_respuesta",
                    return_value=Texto("```html\n" + nota_ia("6,0") + "\n```",
                                       {"versiones": "evaluar_respuesta.md@1a2b3c4d; pauta.md@5e6f7a8b"})), \
-             patch("modulos.tests.evaluar.enviar_correo",
+             patch("modulos.tests.feedback.enviar_correo",
                    side_effect=lambda *a, **k: (cuerpos.append(a[2]), "<id-4b@x>")[1]):
             evaluar.main(5, dry_run=False)
         check("el correo lleva la corrección y el cierre fijo",
@@ -251,15 +251,17 @@ def fallos_y_recuperacion():
         check("la tutoría no la ve como parte de la conversación",
               not any(datos.log.es_duplicado(f)
                       for f in datos.log.conversacion(curso[9], datos.TESTS, str(SEM), sid)))
-        respuestas_al_resumen = []
-        with patch("modulos.tests.resumen.evaluar_respuesta",
-                   side_effect=lambda p, pa, r: (respuestas_al_resumen.append(r), nota_ia())[1]), \
-             patch("modulos.tests.resumen.generar_resumen", return_value="resumen"):
+        al_resumen = []
+        with patch("modulos.tests.ia_prompts.evaluar_respuesta",
+                   side_effect=AssertionError("el resumen no vuelve a corregir")), \
+             patch("modulos.tests.resumen.generar_resumen",
+                   side_effect=lambda c, t, evs: (al_resumen.extend(evs), "resumen")[1]):
             from modulos.tests import resumen
             resumen.main(SEM)
-        check("el resumen usa la respuesta corregida, no la duplicada",
-              entrantes[0]["texto"] in respuestas_al_resumen
-              and not any("Se me olvido" in r for r in respuestas_al_resumen), respuestas_al_resumen[:3])
+        check("el resumen lee las correcciones guardadas, sin llamar al modelo por alumno",
+              len(al_resumen) >= 2 and all("NOTA FINAL" in e for e in al_resumen), al_resumen[:2])
+        check("cada corrección del resumen dice su grupo", all("· grupo " in e for e in al_resumen), al_resumen[:2])
+        check("el resumen no toma la respuesta duplicada", not any("Se me olvido" in e for e in al_resumen))
 
         titulo("9d. si ese duplicado vuelve a aparecer sin leer, no se le escribe otra vez")
         enviados.clear()
