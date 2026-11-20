@@ -46,7 +46,7 @@ Dos formas, según cómo se envió:
 
 ```python
 mail.buscar_respuestas_semana(semana)     # por asunto, no leídos  (tests)
-mail.buscar_respuestas(message_ids)       # por In-Reply-To        (tareas)
+mail.buscar_respuestas(message_ids)       # por In-Reply-To, todo el hilo con adjuntos (tareas)
 mail.marcar_leidos(uids)
 ```
 

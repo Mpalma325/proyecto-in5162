@@ -9,6 +9,7 @@ blanco antes de la cita y fines de línea de Windows.
 """
 
 import sys
+import textwrap
 
 sys.path.insert(0, ".")
 sys.path.insert(0, "pruebas")
@@ -109,5 +110,37 @@ c = ("El vie, 25 sep 2026 a las 12:00, Equipo IN5162 Coordinación <\nin5162@uch
      "> P1\nMi respuesta 1, bien larga para que cuente.\n> P2\nMi respuesta 2.")
 check("respuesta intercalada con encabezado partido en dos líneas: sale el encabezado",
       queda(c) == "Mi respuesta 1, bien larga para que cuente.\nMi respuesta 2.", queda(c))
+
+titulo("6. un correo que trae solo la cita (prueba de Tareas del 19/11/2026)")
+from modulos.mail.limpieza import es_solo_eco  # noqa: E402
+
+PLANTILLA = ("Hola {nombre},\n\nTe escribimos desde el curso ZZ9999 por la revisión de la {tarea}, con una "
+             "pregunta breve sobre el código que declaraste.\n\nPregunta (sobre la {pregunta_tarea} de tu grupo):"
+             "\n\n{pregunta}\n\nResponde directamente a este correo.\n\nPlazo de respuesta: {plazo} hrs. Tienes "
+             "{minutos} minutos para responder a este correo.\n\nSaludos,\nEquipo ZZ9999")
+PREGUNTA = "¿Por qué filtraste PROM_GRAL >= 10 antes de construir base_limpia?"
+VALORES = {"nombre": None, "tarea": "T1", "pregunta_tarea": "P2", "pregunta": PREGUNTA,
+           "plazo": "hoy jueves 19 de noviembre de 2026, hasta las 17:55"}
+enviado = PLANTILLA.format(nombre="Ana", tarea="T1", pregunta_tarea="P2", pregunta=PREGUNTA,
+                           plazo=VALORES["plazo"], minutos=25)
+ENCABEZADO = "El jue, 19 nov 2026 a las 17:20, Curso <curso@x.cl> escribió:"
+vacio = queda(f"\n{ENCABEZADO}\n{citado(enviado)}\n")
+check("(así queda hoy: la pregunta como si la hubiera escrito el alumno)", PREGUNTA in vacio, vacio[:120])
+check("solo la cita es eco del correo enviado", es_solo_eco(vacio, PLANTILLA, VALORES), vacio)
+# Hay clientes que cortan las líneas largas al citar, entre palabras.
+cortado = "\n".join(l for linea in enviado.splitlines() for l in (textwrap.wrap(linea, 60) or [""]))
+check("también con las líneas cortadas al citar",
+      es_solo_eco(queda(f"\n{ENCABEZADO}\n{citado(cortado)}\n"), PLANTILLA, VALORES))
+check("también sin conocer el plazo (los campos que faltan calzan con cualquier texto)",
+      es_solo_eco(vacio, PLANTILLA, {**VALORES, "plazo": None}))
+adentro = enviado.replace(PREGUNTA, PREGUNTA + "\nFiltré porque bajo 10 las notas venían en otra escala.")
+r = queda(f"\n{ENCABEZADO}\n{citado(adentro)}\n")
+check("con una línea propia escrita dentro de la cita, no es eco (y la línea se conserva)",
+      not es_solo_eco(r, PLANTILLA, VALORES) and "otra escala" in r, r)
+check("una respuesta normal no es eco",
+      not es_solo_eco("Filtré porque bajo 10 las notas venían en otra escala.", PLANTILLA, VALORES))
+check("una respuesta corta que repite palabras de la pregunta no es eco",
+      not es_solo_eco("Por base_limpia.", PLANTILLA, VALORES))
+check("un texto vacío no es eco (ya cuenta como vacío por otro lado)", not es_solo_eco("", PLANTILLA, VALORES))
 
 sys.exit(resultado())
