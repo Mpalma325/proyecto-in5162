@@ -988,6 +988,8 @@ export function editorPreguntas({ semestre, semana: inicial, usaGrupos = true,
       + `${avisosAntes.length ? `\n\nOjo: ${avisosAntes.join(" ")}` : ""}`
       + `\n\n${enviarAhora ? "" : "Hasta el envío puedes volverla a borrador, y eso anula lo programado. "}¿Confirmas?`,
     enviarAhora ? "Confirmar y enviar ahora" : "Confirmar", "real")) return;
+    // «Ahora» es al aceptar el diálogo: el Worker no programa nada que haya pasado hace más de un minuto.
+    if (enviarAhora) s.envio = isoAhora();
     let guardo = false;
     try {
       await confirmarInstancia(s, { ...sitio, guardar: async (...a) => { await sitio.guardar(...a); guardo = true; } });
