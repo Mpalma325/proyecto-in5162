@@ -7,8 +7,8 @@
 // semestre: lo único que gasta es API, y antes de correr dice cuánto.
 
 import {
-  api, caja, confirmar, el, evaluacionDeTexto, fechaCorta, historialTrabajos, pedirTrabajo, preciosApi, respuestaLegible,
-  seguirTrabajo, vistaCorreo,
+  api, caja, confirmar, el, evaluacionDeTexto, fechaCorta, historialTrabajos, nombrarInstancias, nombreInstancia,
+  pedirTrabajo, preciosApi, respuestaLegible, seguirTrabajo, vistaCorreo,
 } from "./comun.js";
 import { leerConsumo, textoConsumo } from "./consumo.js";
 import { PROMPTS, problemasDePrompt } from "./prompts.js";
@@ -17,6 +17,7 @@ import {
   semanasPorVersion, textoNota,
 } from "./criterio.js";
 import { leerCsv } from "./csv.js";
+import { esLegado, RUTA as RUTA_PREGUNTAS, semanasDe as instanciasDe } from "./preguntas.js";
 
 const VIGENTE = "tests_semanales/prompts/evaluar_respuesta.md";
 const USADOS = /^tests_semanales\/prompts_usados\/evaluar_respuesta@([0-9a-f]{8})\.md$/;
@@ -31,6 +32,12 @@ async function leerTexto(semestre, ruta) {
   if (!r.ok) throw new Error(`${r.status}`);
   return r.text();
 }
+
+// En un semestre del formato nuevo (preguntas.csv con Instancia) se elige la
+// instancia por su nombre y el trabajo lleva `instancia`; en uno antiguo, la
+// semana por número y `semana`, como siempre. Lo dice preguntas.csv al cargar.
+let instanciasConNombre = false;
+const rotuloItem = (n) => (instanciasConNombre ? nombreInstancia(n) : `semana ${n}`);
 
 /** Las filas de un CSV como objetos {columna: valor}. */
 function objetosCsv(texto) {
@@ -63,7 +70,7 @@ function filaComparacion(f) {
   const cuerpo = el("div", { class: "detalle-comparacion" });
   const d = el("details", { class: "fila-comparacion" },
     el("summary", {},
-      el("span", { class: "quien" }, f.Nombre || f.Correo, el("span", { class: "tenue" }, ` · semana ${f.Semana}`)),
+      el("span", { class: "quien" }, f.Nombre || f.Correo, el("span", { class: "tenue" }, ` · ${rotuloItem(f.Semana)}`)),
       el("span", { class: "cambio" }, "Nota ", textoNota(f.NotaAntes), " ", flecha(f.NotaAntes, f.NotaDespues), " ",
         f.FormatoOK === "NO" ? el("strong", { class: "aviso-texto" }, "sin nota legible") : textoNota(f.NotaDespues),
         " ", delta(f.DeltaNota)),
@@ -134,13 +141,17 @@ function comparacion(semestre, ruta) {
  * se perderían al salir (como los demás editores de Configuración).
  */
 export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }) {
+  instanciasConNombre = false;
   const resultado = el("div", { id: "resultado-criterio" });
   const area = el("textarea", { class: "prompt", spellcheck: "false", disabled: true }, "Cargando el prompt vigente…");
   const origen = el("select", {}, el("option", { value: VIGENTE }, "El prompt vigente del semestre"));
   const n = el("input", { type: "number", min: "1", max: String(MAXIMO), step: "1", value: "20" });
   const todas = el("input", { type: "checkbox", checked: true });
-  const semana = el("input", { type: "number", min: "1", max: "52", value: "1" });
-  const campoSemana = el("label", { hidden: true }, "Semana", semana);
+  // En el formato nuevo se reemplaza por la lista de instancias (al leer preguntas.csv).
+  let semana = el("input", { type: "number", min: "1", max: "52", value: "1" });
+  const rotuloSemana = el("span", {}, "Semana");
+  const rotuloTodas = el("span", {}, "Todas las semanas");
+  const campoSemana = el("label", { hidden: true }, rotuloSemana, semana);
   const semilla = el("input", { type: "number", min: "0", max: "99999", value: "19",
     title: "La misma semilla elige las mismas respuestas: así dos prompts se comparan sobre la misma muestra." });
   const costo = el("p", { class: "costo-estimado" });
@@ -203,7 +214,8 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
     const x = Number(semilla.value);
     return [
       !(Number.isInteger(cuantas) && cuantas >= 1 && cuantas <= MAXIMO) ? `Elige entre 1 y ${MAXIMO} respuestas, sin decimales.` : null,
-      !todas.checked && !(Number.isInteger(s) && s >= 1 && s <= 52) ? "Elige una semana entre 1 y 52." : null,
+      !todas.checked && !(Number.isInteger(s) && s >= 1 && s <= (instanciasConNombre ? 999 : 52))
+        ? (instanciasConNombre ? "Elige una instancia." : "Elige una semana entre 1 y 52.") : null,
       semilla.value === "" || !(Number.isInteger(x) && x >= 0 && x <= 99999) ? "La semilla va de 0 a 99999, sin decimales." : null,
       area.value.length > 30000 ? "El prompt pasa de 30.000 caracteres." : null,
     ].filter(Boolean);
@@ -259,7 +271,7 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
 
   async function pedir(prueba) {
     const argumentos = { prompt: area.value, n: Number(n.value), semilla: Number(semilla.value), prueba };
-    if (!todas.checked) argumentos.semana = Number(semana.value);
+    if (!todas.checked) argumentos[instanciasConNombre ? "instancia" : "semana"] = Number(semana.value);
     if (!argumentos.prompt.trim()) { resultado.replaceChildren(caja("aviso", "El prompt está vacío.")); return; }
     const malos = [...errores(), ...(prueba ? [] : faltanEtiquetas())];
     if (malos.length) { resultado.replaceChildren(caja("aviso", malos.join(" "))); return; }
@@ -287,7 +299,8 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
   const historial = historialTrabajos({
     prefijo: "tests.experimento",
     incluye: (t) => t.flujo === "tests.experimento",
-    columna: ["Respuestas", (a) => `${a.n ?? "?"}${a.semana ? ` · sem. ${a.semana}` : ""}`],
+    columna: ["Respuestas", (a) => `${a.n ?? "?"}${a.instancia ? ` · ${nombreInstancia(a.instancia)}`
+      : a.semana ? ` · sem. ${a.semana}` : ""}`],
     alElegir: (t) => { seguir(t.id); resultado.scrollIntoView({ behavior: "smooth", block: "start" }); },
   });
 
@@ -311,6 +324,24 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
       pintarVersiones();
     }).catch(() => {});
   }
+  // Formato nuevo: la lista de instancias por su nombre en vez del número.
+  leerTexto(semestre, RUTA_PREGUNTAS).then((texto) => {
+    const tabla = leerCsv(texto);
+    if (esLegado(tabla)) return;
+    const lista = instanciasDe(tabla);
+    nombrarInstancias(lista.map((x) => [x.numero, x.nombre]));
+    instanciasConNombre = true;
+    const elegir = el("select", {}, lista.map((x) => el("option", { value: String(x.numero) }, x.nombre)));
+    elegir.disabled = semana.disabled;
+    elegir.addEventListener("change", actualizar);
+    semana.replaceWith(elegir);
+    semana = elegir;
+    rotuloSemana.textContent = "Instancia";
+    rotuloTodas.textContent = "Todas";
+    actualizar();
+    // El historial y las comparaciones ya dibujadas pasan a decir el nombre.
+    historial.dibujar(semestre);
+  }).catch(() => {});
   historial.dibujar(semestre);
   actualizar();
 
@@ -322,7 +353,7 @@ export function vistaProbarCriterio({ semestre, archivos, alCambiar = () => {} }
     el("label", { class: "campo" }, "Prompt candidato", area),
     el("div", { class: "form-trabajo" },
       el("label", {}, "Cuántas respuestas", n),
-      el("label", { class: "interruptor" }, todas, "Todas las semanas"),
+      el("label", { class: "interruptor" }, todas, rotuloTodas),
       campoSemana,
       el("label", {}, "Semilla", semilla)),
     costo,
