@@ -7,11 +7,16 @@ dos alumnos, que es lo que dejaría el paso de generar preguntas.
 La T2 repite el ciclo como se hace desde la página desde 2026-2: un correo
 elegido a mano en el chequeo, un plazo que enviar guarda, una respuesta que
 llega tarde, correcciones que esperan revisión y se mandan después, editadas.
+
+La nota cuenta cuando sale el correo: corregir deja la propuesta (`correccion`,
+Corregido) y solo el envío deja la `evaluacion` y la Nota. Quién espera su
+correo lo decide el log, aunque el CSV de la tarea diga otra cosa.
 """
 
 import contextlib
 import csv
 import io
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -76,7 +81,11 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
     check("feedback a los 2", len(enviados) == 2, enviados)
     check("notas.csv con nota",
           sum(1 for f in datos.notas.leer(sid, datos.TAREAS, "T1") if f["Nota"]) == 2)
-    check("log: 2 evaluaciones", len(datos.log.leer(sid, evento="evaluacion")) == 2)
+    check("log: 2 correcciones y 2 evaluaciones",
+          len(datos.log.leer(sid, evento="correccion")) == 2 and len(datos.log.leer(sid, evento="evaluacion")) == 2)
+    salidos = {m["Message-ID"] for m in mensajes[-2:]}
+    check("cada evaluación guarda el Message-ID del correo que salió",
+          {e["MessageId"] for e in datos.log.leer(sid, evento="evaluacion")} == salidos, salidos)
     anotadas = {e.get("Versiones", "") for e in datos.log.leer(sid, evento="evaluacion")}
     check("log: cada evaluación anota con qué prompt, pauta, escala y correo se hizo",
           len(anotadas) >= 1 and all(p in a for a in anotadas
@@ -84,6 +93,12 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
           anotadas)
     check("con --no-enviar no se anota un correo que no salió",
           "correo_feedback" not in corregir._versiones({"pregunta": "¿P?", "pauta": "pauta"}, None))
+    escala = tmp / "tareas" / "prompts" / "escala.json"
+    escala.write_text('{"valores": [-0.2, 0.0, 0.2]}', encoding="utf-8")
+    con_escala = corregir._versiones({"pregunta": "¿P?", "pauta": "pauta"}, None)
+    escala.unlink()
+    check("con escala.json se anota esa escala, no NOTA_MIN-NOTA_MAX",
+          "escala.json@" in con_escala and "escala=" not in con_escala, con_escala)
 
     titulo("4. tests y tareas conviven en las mismas tablas")
     datos.notas.marcar_enviado("ana@x.cl", datos.TESTS, "1", semestre_id=sid)
@@ -139,16 +154,30 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
     check("la marca de IA y la justificación quedan para el equipo docente",
           filas["Dario Rojas"]["senales_ia"] == "sí" and filas["Dario Rojas"]["justificacion"] == "Frases genéricas."
           and not filas["Carla Diaz"]["senales_ia"])
-    evaluaciones = {e["Correo"]: e for e in datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="evaluacion")}
-    check("el log guarda la justificación y la marca de IA en Detalle",
-          evaluaciones["dario@x.cl"]["Detalle"] == "Señales de IA. Frases genéricas.", evaluaciones.get("dario@x.cl"))
+    correcciones = {e["Correo"]: e for e in datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="correccion")}
+    propuesta = json.loads(correcciones["dario@x.cl"]["EvaluacionIA"])
+    check("el log guarda la propuesta con el JSON completo, justificación y marca de IA incluidas",
+          correcciones["dario@x.cl"]["Nota"] == "5.0" and propuesta["justificacion_interna"] == "Frases genéricas."
+          and propuesta["señales_copia_ia"] is True and correcciones["dario@x.cl"]["Detalle"] == "modo=revisar",
+          correcciones.get("dario@x.cl"))
+    carla = datos.notas.estado("carla@x.cl", datos.TAREAS, "T2", sid)
+    check("sin mandar el feedback no hay nota: queda Corregido y ninguna evaluación",
+          carla["Corregido"] and not carla["Nota"]
+          and not datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="evaluacion"), carla)
+    check("rearmar el estado desde el log tampoco le pone nota",
+          datos.log.reconstruir_estado(sid)[("carla@x.cl", datos.TAREAS, "T2")]["Nota"] == ""
+          and datos.notas.sincronizar_desde_log(sid, simular=True)["Nota"] == 0)
+    with patch("modulos.tareas.corregir._corregir_una", return_value=resultado_modelo) as corregir_una:
+        texto = salida_de(corregir.main, "T2", dry_run=False, enviar=False)
+    check("una segunda corrida no vuelve a llamar al modelo para las que esperan revisión",
+          corregir_una.call_count == 0 and len(datos.log.leer(sid, item="T2", evento="correccion")) == 2, texto)
 
     titulo("7. T2: las correcciones se editan y se mandan después")
     texto = salida_de(feedback.main, "T2", dry_run=True)
     check("simular no manda nada ni las saca de la revisión",
           enviados == [] and all(f["feedback_pendiente"] for f in storage.leer_csv("T2") if f["nota"]), texto[-300:])
     storage.actualizar_fila("T2", "g1.html", "Dario Rojas", {"nota": "5.5", "comentario": "Revisado a mano."})
-    texto = salida_de(feedback.main, "T2", solo={"dario@x.cl"})
+    texto = salida_de(feedback.main, "T2", solo={"dario@x.cl"}, por="profe@x.cl")
     check("--solo manda solo a los elegidos", enviados == ["dario@x.cl"], enviados)
     m = mensajes[-1]
     mid = next(f["message_id"] for f in storage.leer_csv("T2") if f["alumno_nombre"] == "Dario Rojas")
@@ -157,20 +186,38 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
           (m["In-Reply-To"], m["Subject"], mid))
     check("la nota editada se registra en datos",
           datos.notas.estado("dario@x.cl", datos.TAREAS, "T2", sid)["Nota"] == "5.5")
-    ajustes = datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="ajuste")
-    check("y queda un ajuste con lo que había puesto el modelo",
-          len(ajustes) == 1 and "5.0" in ajustes[0]["Detalle"] and ajustes[0]["EvaluacionIA"] == "Revisado a mano.",
-          ajustes)
-    feedback.main("T2")
+    salio = datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="evaluacion")
+    check("queda una evaluación con lo que salió, el Message-ID y quién la revisó",
+          len(salio) == 1 and salio[0]["MessageId"] == m["Message-ID"] and salio[0]["Nota"] == "5.5"
+          and salio[0]["EvaluacionIA"] == "Revisado a mano."
+          and salio[0]["Detalle"] == "revisado por profe@x.cl; nota 5.0 → 5.5; comentario editado"
+          and "correo_feedback.md@" in salio[0]["Versiones"], salio)
+    check("ya no se anotan 'ajuste' ni 'feedback'",
+          not datos.log.leer(sid, item="T2", evento="ajuste") and not datos.log.leer(sid, item="T2", evento="feedback"))
+    feedback.main("T2", por="profe@x.cl")
     check("después sale el resto", enviados == ["dario@x.cl", "carla@x.cl"], enviados)
-    salidos = datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="feedback")
-    check("cada correo que sale queda como evento 'feedback'", len(salidos) == 2, salidos)
-    check("una corrección no editada no deja ajuste",
-          len(datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="ajuste")) == 1)
+    salio = {e["Correo"]: e for e in datos.log.leer(sid, flujo=datos.TAREAS, item="T2", evento="evaluacion")}
+    check("cada correo que sale queda como evaluación", len(salio) == 2, salio)
+    check("una corrección no editada solo dice quién la revisó",
+          salio["carla@x.cl"]["Detalle"] == "revisado por profe@x.cl", salio["carla@x.cl"]["Detalle"])
     check("ya no queda nada esperando revisión", not any(f["feedback_pendiente"] for f in storage.leer_csv("T2")))
     enviados.clear()
     feedback.main("T2")
     check("mandar otra vez no repite correos", enviados == [], enviados)
+
+    titulo("7b. T2: el CSV dice pendiente pero el log ya tiene la evaluación (R12)")
+    # La página guardó el CSV mientras corría el envío: el CSV del trabajo no
+    # se subió (etag) y la nube conserva feedback_pendiente = "sí".
+    storage.actualizar_fila("T2", "g1.html", "Carla Diaz", {"feedback_pendiente": "sí"})
+    texto = salida_de(feedback.main, "T2", dry_run=True)
+    check("simular no la muestra como correo por salir ni toca el CSV",
+          enviados == [] and "ya salió" in texto and "Para:" not in texto
+          and storage.leer_csv("T2")[0]["feedback_pendiente"] == "sí", texto)
+    texto = salida_de(feedback.main, "T2", solo={"carla@x.cl"}, por="profe@x.cl")
+    check("en real no se reenvía", enviados == [] and len(datos.log.leer(sid, item="T2", evento="evaluacion")) == 2,
+          texto)
+    check("y deja de figurar como pendiente en el CSV",
+          not any(f["feedback_pendiente"] for f in storage.leer_csv("T2")))
 
     titulo("8. un envío programado cuenta el plazo desde la hora programada")
     ahora = datetime.now().astimezone().replace(microsecond=0)
@@ -224,8 +271,70 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
         texto = salida_de(corregir.main, "T3", dry_run=False, enviar=False,
                           solo={"hugo@x.cl", "gina@x.cl"}, sin_tarde=True)
     check("corregir con 'solo' y sin_tarde deja fuera lo que llegó tarde",
-          corregir_una.call_count == 1 and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Nota"]
-          and not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Nota"], texto)
+          corregir_una.call_count == 1 and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Corregido"]
+          and not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Corregido"], texto)
+
+    titulo("10. T3: la corrección que el CSV perdió se recupera del log")
+    # corregir guardó en el log y en notas.csv, pero su CSV no se subió porque
+    # la página lo guardó entretanto (etag).
+    storage.actualizar_fila("T3", "g2.html", "Hugo Vera",
+                            {"nota": "", "comentario": "", "justificacion": "", "feedback_pendiente": ""})
+    enviados.clear()
+    texto = salida_de(feedback.main, "T3", dry_run=True)
+    hugo = next(f for f in storage.leer_csv("T3") if f["alumno_correo"] == "hugo@x.cl")
+    check("simular la muestra con la corrección del log, sin escribir el CSV",
+          enviados == [] and "al mandar de verdad se copia" in texto and "Bien explicado." in texto
+          and not hugo["feedback_pendiente"], texto[-400:])
+    texto = salida_de(feedback.main, "T3", solo={"nadie@x.cl"}, por="profe@x.cl")
+    hugo = next(f for f in storage.leer_csv("T3") if f["alumno_correo"] == "hugo@x.cl")
+    check("en real la copia al CSV, sin mandar a quien no se eligió",
+          enviados == [] and hugo["feedback_pendiente"] == "sí" and hugo["nota"] == "6.0"
+          and hugo["comentario"] == "Bien explicado." and hugo["justificacion"] == "Entiende el escalamiento.",
+          (hugo, texto))
+
+    titulo("11. T3: un envío que falla no deja nota y se reintenta")
+    with patch("modulos.tareas.corregir.enviar_correo", side_effect=OSError("SMTP caído")):
+        texto = salida_de(feedback.main, "T3", por="profe@x.cl")
+    hugo = datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)
+    check("sin correo no hay evaluación ni nota, y sigue pendiente",
+          "Sigue pendiente" in texto and not hugo["Nota"] and hugo["Corregido"]
+          and not datos.log.leer(sid, item="T3", evento="evaluacion")
+          and any(f["feedback_pendiente"] for f in storage.leer_csv("T3")), texto)
+    feedback.main("T3", por="profe@x.cl")
+    check("la corrida siguiente lo manda", enviados == ["hugo@x.cl"]
+          and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Nota"] == "6.0", enviados)
+
+    titulo("12. filas de antes (2026-2): Nota al corregir, y 'feedback' al mandar")
+    # corregir --no-enviar registraba una evaluacion sin Message-ID y la Nota;
+    # feedback.py anotaba 'feedback' al mandar. Iris espera su correo; Juan ya
+    # lo recibió, pero el CSV no alcanzó a quitarle el pendiente.
+    sembrar_preguntas(tmp, "T4", (("Iris Mora", "iris@x.cl"), ("Juan Paz", "juan@x.cl")))
+    for nombre, correo in (("Iris Mora", "iris@x.cl"), ("Juan Paz", "juan@x.cl")):
+        datos.notas.marcar_enviado(correo, datos.TAREAS, "T4", semestre_id=sid)
+        datos.notas.marcar_respondio(correo, datos.TAREAS, "T4", semestre_id=sid)
+        datos.notas.registrar_nota(correo, datos.TAREAS, "T4", "5.0", semestre_id=sid)
+        datos.log.registrar("respuesta", datos.TAREAS, "T4", correo, sid, Respuesta="Respuesta antigua.")
+        datos.log.registrar("evaluacion", datos.TAREAS, "T4", correo, sid, Modelo="gpt-viejo", Nota="5.0",
+                            EvaluacionIA="Comentario del modelo.")
+        storage.actualizar_fila("T4", "g1.html", nombre,
+                                {"nota": "5.0", "comentario": "Comentario del modelo.", "feedback_pendiente": "sí"})
+    datos.log.registrar("feedback", datos.TAREAS, "T4", "juan@x.cl", sid, Nota="5.0",
+                        EvaluacionIA="Comentario del modelo.")
+    with patch("modulos.tareas.corregir._corregir_una", return_value=resultado_modelo) as corregir_una:
+        corregir.main("T4", dry_run=False, enviar=False)
+    check("con Nota de antes no se vuelve a corregir", corregir_una.call_count == 0)
+    storage.actualizar_fila("T4", "g1.html", "Iris Mora", {"nota": "5.5"})
+    enviados.clear()
+    texto = salida_de(feedback.main, "T4", por="profe@x.cl")
+    nuevas = datos.log.leer(sid, item="T4", evento="evaluacion")[-1:]
+    check("sale la de Iris, que esperaba; la de Juan no se repite", enviados == ["iris@x.cl"], (enviados, texto))
+    check("y queda como evaluación con Message-ID, comparada con la nota de antes",
+          nuevas and nuevas[0]["Correo"] == "iris@x.cl" and nuevas[0]["MessageId"] == mensajes[-1]["Message-ID"]
+          and nuevas[0]["Detalle"] == "revisado por profe@x.cl; nota 5.0 → 5.5" and nuevas[0]["Modelo"] == "gpt-viejo"
+          and datos.notas.estado("iris@x.cl", datos.TAREAS, "T4", sid)["Nota"] == "5.5", nuevas)
+    check("el 'feedback' de antes se sigue leyendo: Juan ya no figura pendiente",
+          not any(f["feedback_pendiente"] for f in storage.leer_csv("T4"))
+          and len(datos.log.leer(sid, item="T4", evento="feedback")) == 1)
 
     titulo("10. T4: respuestas raras (prueba de punta a punta del 19/11/2026)")
     from modulos.mail.limpieza import _limpiar_respuesta

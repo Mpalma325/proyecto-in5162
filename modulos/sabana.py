@@ -30,7 +30,7 @@ COLUMNAS = [
     "Estado", "NumPreguntas", "Pregunta", "Pauta", "SegundaOportunidad",
     "Enviado", "FechaEnvio", "MessageIdEnvio",
     "Respondio", "FechaRespuesta", "Respuesta", "LargoRespuesta",
-    "FechaEvaluacion", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad",
+    "FechaEvaluacion", "FechaFeedback", "Nota", "NotaTexto", "NotaDelModelo", "Originalidad",
     "Modelo", "Versiones", "TokensEntrada", "TokensSalida", "EvaluacionTexto", "EvaluacionHTML",
     "AjusteManual", "MotivoAjuste", "Repreguntas", "Tutorias",
 ]
@@ -50,14 +50,19 @@ def _numerar(textos: list[str]) -> str:
 
 
 def _eventos(semestre_id: str) -> dict:
-    """Por (correo, flujo, item): el último envío, evaluación y ajuste, y cuántas repreguntas."""
+    """Por (correo, flujo, item): el último envío, corrección, evaluación, ajuste
+    y feedback, y cuántas repreguntas."""
     por = {}
     for e in sorted(datos.log.leer(semestre_id), key=lambda f: datos.log._instante(f.get("Timestamp"))):
         clave = (e.get("Correo", "").strip().lower(), e.get("Flujo", ""), str(e.get("Item", "")))
         d = por.setdefault(clave, {"repreguntas": 0, "tutorias": 0})
         ev = e.get("Evento")
-        if ev in ("envio", "evaluacion", "ajuste"):
+        if ev in ("envio", "evaluacion", "ajuste", "correccion", "feedback"):
             d[ev] = e
+            # La de antes (sin Message-ID) trae la nota del modelo; la del envío
+            # después de una revisión trae la que salió.
+            if ev == "evaluacion" and not (e.get("MessageId") or "").strip():
+                d["evaluacion_modelo"] = e
         elif ev == "repregunta":
             d["repreguntas"] += 1
         elif ev == "tutoria":
@@ -94,6 +99,32 @@ def _preguntas_tareas() -> dict:
             segunda |= {((r.get("correo") or "").strip().lower(), tarea) for r in csv.DictReader(f)
                         if (r.get("message_id") or "").strip()}
     return {"filas": filas, "segunda": segunda}
+
+
+def _salio(evaluacion: dict | None) -> bool:
+    """Si una `evaluacion` de tareas fue el correo con la corrección.
+
+    Con Message-ID, sí. Las de `corregir --no-enviar` de 2026-2 solo guardaban
+    la nota del modelo, y se reconocen porque no anotan la plantilla del correo
+    en Versiones. Las anteriores a Versiones se toman como enviadas.
+    """
+    if not evaluacion:
+        return False
+    if (evaluacion.get("MessageId") or "").strip():
+        return True
+    versiones = (evaluacion.get("Versiones") or "").strip()
+    return not versiones or "correo_feedback.md@" in versiones
+
+
+def _fecha_feedback_tarea(ev: dict) -> str:
+    """Cuándo salió el correo con la corrección: la `evaluacion` que salió o,
+    en 2026-2, el `feedback` de una corrección revisada antes de mandarla."""
+    salidas = [ev["feedback"]] if ev.get("feedback") else []
+    if _salio(ev.get("evaluacion")):
+        salidas.append(ev["evaluacion"])
+    if not salidas:
+        return ""
+    return max(salidas, key=lambda e: datos.log._instante(e.get("Timestamp"))).get("Timestamp", "")
 
 
 def _estado(f: dict) -> str:
@@ -147,6 +178,19 @@ def construir(semestre_id: str | None = None) -> list[dict]:
                              "NumPreguntas": 1 if t.get("pregunta") else "", "Pregunta": t.get("pregunta", ""),
                              "Pauta": t.get("pauta", ""),
                              "SegundaOportunidad": "sí" if (p["Correo"], str(p["Item"])) in tareas["segunda"] else "no"})
+                # La propuesta del modelo vive en `correccion` (con los tokens) y la
+                # `evaluacion` es lo que salió. En 2026-2 no hay `correccion`: la
+                # nota del modelo es la de la evaluación sin Message-ID.
+                correccion = ev.get("correccion") or {}
+                del_modelo = correccion or ev.get("evaluacion_modelo") or evaluacion
+                fila.update({"FechaEvaluacion": (correccion or evaluacion).get("Timestamp", ""),
+                             "FechaFeedback": _fecha_feedback_tarea(ev),
+                             "NotaDelModelo": del_modelo.get("Nota", "")})
+                if correccion:
+                    fila.update({"Modelo": fila["Modelo"] or correccion.get("Modelo", ""),
+                                 "Versiones": evaluacion.get("Versiones") or correccion.get("Versiones", ""),
+                                 "TokensEntrada": correccion.get("TokensEntrada", ""),
+                                 "TokensSalida": correccion.get("TokensSalida", "")})
             filas.append(fila)
     return filas
 

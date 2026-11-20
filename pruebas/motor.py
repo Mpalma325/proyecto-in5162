@@ -157,6 +157,10 @@ check("mandar correcciones: modo prueba por defecto, y solo a los elegidos",
       mandar({"tarea": "T2"})[-1] == "--dry-run"
       and "--dry-run" not in mandar({"tarea": "T2", "prueba": False, "solo": ["a@x.cl"]})
       and "--solo" in mandar({"tarea": "T2", "prueba": False, "solo": ["a@x.cl"]}))
+cmd = mandar({"tarea": "T2", "prueba": False, "_pedido_por": "profe@x.cl"})
+check("mandar correcciones: quién lo pidió llega al script, para el log",
+      cmd[cmd.index("--por") + 1] == "profe@x.cl"
+      and mandar({"tarea": "T2"})[mandar({"tarea": "T2"}).index("--por") + 1] == "desconocido", cmd)
 for malo in ("T", "t1", "T123", "T1; rm", ""):
     try:
         corregir({"tarea": malo})

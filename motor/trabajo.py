@@ -235,7 +235,10 @@ FLUJOS = {
                                              *(["--no-enviar"] if a.get("no_enviar") is True
                                                and a.get("prueba") is False else [])]),
     # Manda las correcciones que se guardaron para revisarlas (corregir sin enviar).
-    "tareas.feedback": ("tareas", lambda a: ["-m", "modulos.tareas.feedback", _tarea(a), *_prueba(a), *_solo(a)]),
+    # Quién las revisó lo pone el sitio (pedido_por) y queda en el log.
+    "tareas.feedback": ("tareas", lambda a: ["-m", "modulos.tareas.feedback", _tarea(a),
+                                             "--por", a.get("_pedido_por") or "desconocido",
+                                             *_prueba(a), *_solo(a)]),
 }
 
 # Los parámetros de la página que el motor le pasa al script. config.py los toma

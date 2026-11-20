@@ -44,4 +44,35 @@ with semestre_desechable(sid="_tmp_sabana") as (sid, tmp):
     import re
     check("sin etiquetas HTML", con_eval and not any(re.search(r"</?(p|br|b|strong|div|span|hr)\b", x["EvaluacionTexto"], re.I) for x in con_eval))
 
+    titulo("5. tareas: la propuesta del modelo y cuándo salió el correo")
+    # Tres casillas de una tarea: una revisada con el flujo nuevo (correccion y
+    # después la evaluacion con Message-ID), una de 2026-2 revisada antes de
+    # mandarla (evaluacion sin el correo en Versiones, y después 'feedback') y
+    # otra de 2026-2 que quedó sin mandar.
+    de_tarea = datos.reportes.panel(sid, datos.TAREAS)
+    item = de_tarea[0]["Item"]
+    nueva, revisada, sin_mandar = [p["Correo"] for p in de_tarea if p["Item"] == item][:3]
+    datos.log.registrar("correccion", datos.TAREAS, item, nueva, sid, Modelo="gpt-x", Nota="5.0",
+                        TokensEntrada="900", TokensSalida="80", Versiones="corregir_respuesta.md@aaaa1111")
+    datos.log.registrar("evaluacion", datos.TAREAS, item, nueva, sid, Modelo="gpt-x", Nota="5.5",
+                        MessageId="<feedback-nueva@correo.test>", EvaluacionIA="Comentario revisado.",
+                        Versiones="corregir_respuesta.md@aaaa1111; correo_feedback.md@bbbb2222")
+    for correo in (revisada, sin_mandar):
+        datos.log.registrar("evaluacion", datos.TAREAS, item, correo, sid, Modelo="gpt-x", Nota="4.0",
+                            Versiones="corregir_respuesta.md@aaaa1111; escala=-0.3-0.3")
+    datos.log.registrar("feedback", datos.TAREAS, item, revisada, sid, Nota="4.0")
+    log = {(e["Correo"], e["Evento"]): e["Timestamp"] for e in datos.log.leer(sid, flujo=datos.TAREAS, item=item)}
+    filas = {x["Correo"]: x for x in sabana.construir(sid) if x["Flujo"] == datos.TAREAS and x["Item"] == item}
+    f = filas[nueva]
+    check("flujo nuevo: la nota del modelo y los tokens salen de la corrección; la fecha, de la evaluación",
+          f["NotaDelModelo"] == "5.0" and f["TokensEntrada"] == "900"
+          and f["FechaEvaluacion"] == log[(nueva, "correccion")]
+          and f["FechaFeedback"] == log[(nueva, "evaluacion")], {k: f[k] for k in ("NotaDelModelo", "TokensEntrada",
+                                                                                    "FechaEvaluacion", "FechaFeedback")})
+    check("2026-2: el 'feedback' cuenta como cuándo salió el correo",
+          filas[revisada]["FechaFeedback"] == log[(revisada, "feedback")] and filas[revisada]["NotaDelModelo"] == "4.0",
+          filas[revisada]["FechaFeedback"])
+    check("2026-2: corregida sin mandar no tiene fecha de feedback", filas[sin_mandar]["FechaFeedback"] == "")
+    check("tests no cambia: sin fecha de feedback", all(x["FechaFeedback"] == "" for x in tests))
+
 sys.exit(resultado())
