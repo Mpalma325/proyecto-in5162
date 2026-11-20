@@ -94,7 +94,8 @@ check("conRevision de una instancia que no está avisa", /no está/.test(falta),
 check("pasar a revisar no pregunta", P.textoCambioRevision("Control 2", "revisar", 4) === null);
 const aAuto = P.textoCambioRevision("Control 2", "auto", 0);
 check("pasar a automático pregunta, y sin nada esperando no habla de Revisar",
-  /Control 2 le llega al alumno por correo apenas queda lista/.test(aAuto) && !/Tests › Revisar/.test(aAuto), aAuto);
+  /próxima corrección de Control 2, el alumno recibe el feedback por correo apenas queda listo/.test(aAuto)
+  && !/Tests › Revisar/.test(aAuto), aAuto);
 const conEspera = P.textoCambioRevision("Control 2", "auto", 3);
 check("con correcciones esperando dice cuántas, y que no salen solas",
   /Quedan 3 correcciones esperando en Tests › Revisar/.test(conEspera) && /no salen solas/.test(conEspera)
