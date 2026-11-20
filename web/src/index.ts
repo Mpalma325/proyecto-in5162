@@ -417,27 +417,64 @@ async function pedirTrabajo(req: Request, env: Env, quien: string): Promise<Resp
   return json({ id: await crearTrabajo(env, p.semestre, p.flujo, args, quien) }, 201);
 }
 
-// Un trabajo programado (enviar las preguntas de una tarea a una hora, y
-// recolectar y corregir al vencer el plazo) espera en la cola del motor hasta
-// esa hora. Cloud Tasks acepta hasta 30 días; se guarda en UTC, como toISOString.
-const PROGRAMAR_HASTA_DIAS = 30;
+// Un trabajo programado (enviar las preguntas de una tarea o de un test a una
+// hora, recolectar y corregir al vencer el plazo, evaluar al cierre) espera en
+// la cola del motor hasta esa hora. Se guarda en UTC, como toISOString.
+//
+// Cloud Tasks acepta hasta 30 días. Un test se confirma al empezar el semestre
+// con su envío y su cierre a meses, así que uno más lejano que VENTANA_COLA_DIAS
+// queda "pendiente" en D1 sin avisarle al motor, marcado con EN_ESPERA en sus
+// argumentos, y el cron de cada día lo encola cuando su hora entra en la ventana
+// (encolarLosQueEsperan). Cancelarlo es lo mismo antes o después de encolarlo:
+// el motor solo corre trabajos que siguen "pendiente".
+const PROGRAMAR_HASTA_DIAS = 200;
+const VENTANA_COLA_DIAS = 29;
+const EN_ESPERA = "_en_espera";
+const DIA_MS = 86_400_000;
 
-function horaProgramada(v: unknown): string | Response {
+function horaProgramada(v: unknown, hoy = Date.now()): string | Response {
   const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
   const cuando = typeof v === "string" && iso.test(v) ? Date.parse(v) : NaN;
   if (Number.isNaN(cuando)) return error(400, "La hora programada no es una fecha con zona horaria.");
-  if (cuando < Date.now() - 60_000) return error(400, "La hora programada ya pasó.");
-  if (cuando > Date.now() + PROGRAMAR_HASTA_DIAS * 86_400_000) {
+  if (cuando < hoy - 60_000) return error(400, "La hora programada ya pasó.");
+  if (cuando > hoy + PROGRAMAR_HASTA_DIAS * DIA_MS) {
     return error(400, `Se puede programar hasta ${PROGRAMAR_HASTA_DIAS} días antes.`);
   }
   return new Date(cuando).toISOString();
 }
 
+/** Si un trabajo programado tiene que esperar en D1 porque la cola todavía no lo acepta. */
+function fueraDeLaVentana(args: Record<string, unknown>, hoy = Date.now()): boolean {
+  const cuando = typeof args.a_las === "string" ? Date.parse(args.a_las) : NaN;
+  return !Number.isNaN(cuando) && cuando > hoy + VENTANA_COLA_DIAS * DIA_MS;
+}
+
+/**
+ * De los trabajos que esperan en D1, los que ya caben en la cola: con sus
+ * argumentos como están (para tomarlos solo si nadie los cambió) y sin la marca.
+ */
+function porEncolar(filas: { id: string; argumentos: string }[], hoy = Date.now()) {
+  const salida: { id: string; antes: string; despues: string }[] = [];
+  for (const f of filas) {
+    let args: Record<string, unknown>;
+    try { args = JSON.parse(f.argumentos || "{}"); } catch { continue; }
+    if (args[EN_ESPERA] !== true || fueraDeLaVentana(args, hoy)) continue;
+    delete args[EN_ESPERA];
+    salida.push({ id: f.id, antes: f.argumentos, despues: JSON.stringify(args) });
+  }
+  return salida;
+}
+
 /** Registra el trabajo y le avisa al motor. Lo usan la página y el cron. */
 async function crearTrabajo(env: Env, semestre: string, flujo: string,
-                            args: Record<string, unknown>, quien: string): Promise<string> {
+                            args: Record<string, unknown>, quien: string,
+                            avisar = avisarAlMotor, hoy = Date.now()): Promise<string> {
   const prueba = args.prueba !== false;
   args.prueba = prueba;
+  // La marca la pone solo el Worker: si la página la mandara, se quita.
+  delete args[EN_ESPERA];
+  const espera = fueraDeLaVentana(args, hoy);
+  if (espera) args[EN_ESPERA] = true;
 
   const id = crypto.randomUUID();
   const t = ahora();
@@ -445,17 +482,46 @@ async function crearTrabajo(env: Env, semestre: string, flujo: string,
     `INSERT INTO trabajos (id, semestre, flujo, argumentos, prueba, estado, pedido_por, creado, actualizado)
      VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?)`,
   ).bind(id, semestre, flujo, JSON.stringify(args), prueba ? 1 : 0, quien, t, t).run();
+  // Muy lejos para la cola: el cron le avisa al motor cuando entre en la ventana.
+  if (espera) return id;
 
   // Se le avisa al motor, que lo pone en su cola y responde enseguida. Si no
   // contesta, el trabajo queda marcado como fallido con el motivo, en vez de
   // quedar "pendiente" para siempre.
-  const motivo = await avisarAlMotor(env, id);
+  await avisarOFallar(env, id, avisar);
+  return id;
+}
+
+async function avisarOFallar(env: Env, id: string, avisar = avisarAlMotor): Promise<void> {
+  const motivo = await avisar(env, id);
   if (motivo) {
     await env.DB.prepare(
       "UPDATE trabajos SET estado = 'fallido', salida = ?, actualizado = ? WHERE id = ?",
     ).bind(`No pude avisarle al motor: ${motivo}\n`, ahora(), id).run();
   }
-  return id;
+}
+
+/**
+ * Lo corre el cron, todos los días: le avisa al motor de los trabajos que
+ * esperaban en D1 y cuya hora ya entró en la ventana de la cola. Cada uno se
+ * toma con un UPDATE condicionado a que siga "pendiente" y con los mismos
+ * argumentos: si el cron corre dos veces, o alguien lo canceló, no se avisa
+ * dos veces ni se revive. Devuelve los ids avisados.
+ */
+async function encolarLosQueEsperan(env: Env, hoy = Date.now(), avisar = avisarAlMotor): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT id, argumentos FROM trabajos WHERE estado = 'pendiente' AND instr(argumentos, ?) > 0",
+  ).bind(`"${EN_ESPERA}":true`).all<{ id: string; argumentos: string }>();
+  const avisados: string[] = [];
+  for (const x of porEncolar(results || [], hoy)) {
+    const tomado = await env.DB.prepare(
+      "UPDATE trabajos SET argumentos = ?, actualizado = ? WHERE id = ? AND estado = 'pendiente' AND argumentos = ?",
+    ).bind(x.despues, ahora(), x.id, x.antes).run();
+    if (!tomado.meta.changes) continue;
+    await avisarOFallar(env, x.id, avisar);
+    avisados.push(x.id);
+  }
+  return avisados;
 }
 
 // Esperas antes de cada reintento. El 17/11/2026 la tutoría de las 18:00 no
@@ -498,6 +564,8 @@ async function avisarAlMotor(env: Env, id: string,
 const HORA_RESPONDER_DUDAS = 18;
 
 async function programado(env: Env, cuando: number): Promise<void> {
+  // A las dos horas del cron: encolar es idempotente, y así una caída de una no lo atrasa un día.
+  await encolarLosQueEsperan(env, cuando);
   const hora = Number(new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Santiago", hour: "numeric", hourCycle: "h23",
   }).format(new Date(cuando)));
