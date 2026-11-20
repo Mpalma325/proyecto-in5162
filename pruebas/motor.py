@@ -105,17 +105,29 @@ check("prueba=True también", "--dry-run" in armar({"semana": 4, "prueba": True}
 check("solo prueba=False lo quita", "--dry-run" not in armar({"semana": 4, "prueba": False}))
 check("un 'false' en texto NO cuenta como envío real",
       "--dry-run" in armar({"semana": 4, "prueba": "false"}))
-for malo in (0, 53, -1):
+# El id de una instancia va de 1 a 999 (semestres nuevos: `instancia`; los de
+# antes: `semana`, que es el mismo id). Ya no hay tope de 52 semanas.
+for malo in (0, 1000, -1, True, "04"):
     try:
         armar({"semana": malo})
-        check(f"semana {malo} se rechaza", False)
+        check(f"semana {malo!r} se rechaza", False)
     except ValueError:
-        check(f"semana {malo} se rechaza", True)
+        check(f"semana {malo!r} se rechaza", True)
 try:
     armar({"semana": "4; rm -rf /"})
     check("una semana con comandos se rechaza", False)
 except ValueError:
     check("una semana con comandos se rechaza", True)
+check("instancia 53 y 999 se aceptan (no son semanas)",
+      armar({"semana": 53})[-2] == "53" and armar({"instancia": 999})[-2] == "999", armar({"instancia": 999}))
+check("instancia y semana dan el mismo comando", armar({"instancia": 4}) == armar({"semana": 4}))
+try:
+    armar({"instancia": "4; rm -rf /"})
+    check("una instancia con comandos se rechaza", False)
+except ValueError:
+    check("una instancia con comandos se rechaza", True)
+check("los demás flujos de tests también leen instancia",
+      all("12" in trabajo.FLUJOS[f][1]({"instancia": 12}) for f in ("tests.enviar", "tests.resumen", "tests.chequeo")))
 check("el chequeo nunca envía: no tiene modo real", "--dry-run" not in " ".join(
     trabajo.FLUJOS["tests.chequeo"][1]({"semana": 4, "prueba": False})) and
     "enviar" not in trabajo.FLUJOS["tests.chequeo"][1]({"semana": 4})[1])
@@ -224,7 +236,7 @@ _, experimento = trabajo.FLUJOS["tests.experimento"]
 cmd = experimento({"prompt": "Evalúa {{PREGUNTAS}}", "n": 5})
 check("experimento: por defecto solo muestra la muestra (no llama al modelo)", cmd[-1] == "--dry-run", cmd[3:])
 check("experimento: el prompt va como argumento, no como código", cmd[2] == "Evalúa {{PREGUNTAS}}")
-for malo in ({"prompt": ""}, {"prompt": "x" * 30001}, {"prompt": "x", "n": 301}, {"prompt": "x", "semana": 99}):
+for malo in ({"prompt": ""}, {"prompt": "x" * 30001}, {"prompt": "x", "n": 301}, {"prompt": "x", "semana": 1000}):
     try:
         experimento(malo)
         check(f"experimento rechaza {str(malo)[:40]}", False)

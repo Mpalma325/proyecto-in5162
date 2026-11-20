@@ -421,9 +421,22 @@ export async function pedirTrabajo(semestre, flujo, argumentos) {
   return id;
 }
 
-/** "semana 4", "T2" o nada: lo que distingue a un trabajo de otro del mismo flujo. */
+/**
+ * El test de un trabajo: `instancia` en los semestres nuevos, `semana` en los
+ * de antes (preguntas.csv con columna Semana). Los dos son el Item de notas.csv.
+ */
+export const idDe = (a) => a?.instancia ?? a?.semana;
+
+// Cómo se llama cada instancia («Control 2»): el id no lo ve el docente. Lo
+// llenan las páginas que leen preguntas.csv (preguntas.js, nombrarInstancias).
+let nombresInstancias = new Map();
+export function nombrarInstancias(nombres) { nombresInstancias = new Map(nombres); }
+export const nombreInstancia = (n) => nombresInstancias.get(Number(n)) || `instancia ${n}`;
+
+/** "semana 4", "Control 2", "T2" o nada: lo que distingue a un trabajo de otro del mismo flujo. */
 export function sobreQue(a) {
   if (a.tarea) return a.tarea;
+  if (a.instancia) return nombreInstancia(a.instancia);
   if (a.semana) return `semana ${a.semana}`;
   return "";
 }
@@ -492,8 +505,8 @@ const simula = (t) => (t.flujo === "tareas.segunda" ? t.argumentos?.paso === "en
 /** Si el trabajo fue una simulación: no mandó correos ni guardó notas. */
 export const esSimulacion = (t) => Boolean(t.prueba) && simula(t);
 
-// Un trabajo y su repetición: mismo flujo, misma semana o tarea, mismo paso.
-const claveTrabajo = (t) => [t.flujo, t.argumentos?.semana ?? "", t.argumentos?.tarea ?? "", t.argumentos?.paso ?? ""]
+// Un trabajo y su repetición: mismo flujo, misma semana (o instancia) o tarea, mismo paso.
+const claveTrabajo = (t) => [t.flujo, idDe(t.argumentos) ?? "", t.argumentos?.tarea ?? "", t.argumentos?.paso ?? ""]
   .join("|");
 
 /**
@@ -844,10 +857,11 @@ const HISTORIAL_INICIAL = 30;
 const HISTORIAL_MAXIMO = 120;
 
 /** La URL de la lista de trabajos: `prefijo` ("tareas.") deja solo los de esa página. */
-export function urlTrabajos(semestre, prefijo = "", limite = HISTORIAL_INICIAL) {
+export function urlTrabajos(semestre, prefijo = "", limite = HISTORIAL_INICIAL, soloPendientes = false) {
   const q = new URLSearchParams({ semestre });
   if (prefijo) q.set("flujo", prefijo);
-  if (limite !== HISTORIAL_INICIAL) q.set("limite", String(limite));
+  if (soloPendientes) q.set("pendientes", "1");
+  else if (limite !== HISTORIAL_INICIAL) q.set("limite", String(limite));
   return `/api/trabajos?${q}`;
 }
 

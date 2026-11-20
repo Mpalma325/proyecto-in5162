@@ -121,26 +121,31 @@ def cargar_semestres(filtro: str | None) -> dict:
 
 def cargar_preguntas(semestre: str) -> dict:
     """{semana: {'control': [preguntas], 'tratamiento': [preguntas], 'tema': str}}"""
+    from .preguntas import PreguntasError, leer_archivo
     path = SEMESTRES_DIR / semestre / "tests_semanales" / "data" / "preguntas.csv"
     if not path.exists():
         return {}
     salida = {}
-    with path.open(encoding="utf-8-sig", newline="") as f:
-        for fila in csv.DictReader(f):
-            try:
-                semana = int((fila.get("Semana") or "").strip())
-            except ValueError:
-                continue
-            entrada = {"tema": (fila.get("Tema") or "").strip()}
-            for grupo, prefijo in (("control", "Control"), ("tratamiento", "Tratamiento")):
-                preguntas = [
-                    (fila.get(f"{prefijo} P{i}") or "").strip()
-                    for i in (1, 2, 3)
-                ]
-                entrada[grupo] = [p for p in preguntas if p]
-            if not entrada["tratamiento"]:
-                entrada["tratamiento"] = list(entrada["control"])
-            salida[semana] = entrada
+    # Es una herramienta de recuperación: un id inválido se avisa y la fila se
+    # salta, pero no para nada.
+    try:
+        archivo = leer_archivo(path)
+    except PreguntasError as e:
+        print(f"  ⚠ {e}")
+        return {}
+    for p in archivo.problemas:
+        print(f"  ⚠ preguntas.csv: {p}")
+    for semana, fila in archivo.filas.items():
+        entrada = {"tema": (fila.get("Tema") or "").strip()}
+        for grupo, prefijo in (("control", "Control"), ("tratamiento", "Tratamiento")):
+            preguntas = [
+                (fila.get(f"{prefijo} P{i}") or "").strip()
+                for i in (1, 2, 3)
+            ]
+            entrada[grupo] = [p for p in preguntas if p]
+        if not entrada["tratamiento"]:
+            entrada["tratamiento"] = list(entrada["control"])
+        salida[semana] = entrada
     return salida
 
 

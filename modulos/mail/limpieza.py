@@ -240,7 +240,9 @@ _LINEA_PRESENTACION = re.compile(
     r"^((hola|buen[oa]s?( (d[ií]as|tardes))?)[\s,!.]*)?"
     r"((ac[aá]|aqu[ií]) van|adjunto|env[ií]o( aqu[ií])?|les? env[ií]o|les dejo|estas son|a continuaci[oó]n)?\s*"
     r"(mis|mi|las)?\s*respuestas?"
-    r"( a (las|la|estas) preguntas?| de (esta|la) semana| son las siguientes| son| es la siguiente)*"
+    r"( a (las|la|estas) preguntas?| de (esta|la) semana| son las siguientes| son| es la siguiente"
+    # Semestres con instancias: "Mi respuesta al Control 2:", "Respuestas del test 3".
+    r"| (al|del|de la|para el|para la) (control|test|evaluaci[oó]n|instancia) \d{1,3})*"
     r"\s*[:.]?\s*(c:)?$",
     re.IGNORECASE,
 )

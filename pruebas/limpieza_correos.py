@@ -81,6 +81,9 @@ casos_saludo = {
     "saludo solo": ("Hola!\n\nEl modelo mejora.", "El modelo mejora."),
     "saludo y presentación": ("Hola! Adjunto mi respuesta c:\n\nEl modelo mejora.", "El modelo mejora."),
     "presentación sola": ("Mis respuestas son las siguientes:\n1. El modelo mejora.", "1. El modelo mejora."),
+    "presentación con el nombre de la instancia": ("Mi respuesta al Control 2:\nEl modelo mejora.", "El modelo mejora."),
+    "'respuesta al control 2, porque…' es respuesta (se queda)":
+        ("Mi respuesta al control 2 es que sí, porque mejora.", "Mi respuesta al control 2 es que sí, porque mejora."),
     "saludo formal": ("Estimado Equipo IN5162,\nEl modelo mejora.", "El modelo mejora."),
     "firma con nombre": ("El modelo mejora.\n\nSaludos cordiales,\nCamila Bravo", "El modelo mejora."),
     "despedida sola": ("El modelo mejora.\nmuchas gracias!", "El modelo mejora."),

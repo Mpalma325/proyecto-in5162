@@ -17,6 +17,10 @@ const casos = [
     ["tareas.", "tests.", "tests.experimento"].every((p) => prefijo.test(p))],
   ["el Worker rechaza comodines y comillas", !["%", "tareas.%", "x'", "Tareas."].some((p) => prefijo.test(p))],
   ["el Worker limita a 120", /LIMITE_TRABAJOS_MAX = 120;/.test(worker)],
+  ["solo pendientes: la URL lo pide y no manda límite",
+    urlTrabajos("2026-2", "tests.", undefined, true) === "/api/trabajos?semestre=2026-2&flujo=tests.&pendientes=1"],
+  ["el Worker filtra los pendientes por estado, fuera de la ventana del historial",
+    /estado = 'pendiente'/.test(worker) && /searchParams\.get\("pendientes"\) === "1"/.test(worker)],
 ];
 for (const [nombre, ok] of casos) console.log(`${ok ? "OK" : "FALLA"}\t${nombre}`);
 process.exit(casos.every(([, ok]) => ok) ? 0 : 1);

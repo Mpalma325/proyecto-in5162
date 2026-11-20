@@ -11,9 +11,17 @@ pida con --forzar; en ese caso la versión reemplazada queda en el historial.
     python -m modulos.web.subir --archivos            # todos los semestres y la plantilla
     python -m modulos.web.subir 2026-2 --simular      # dice qué haría, sin tocar nada
     python -m modulos.web.subir 2026-2 --archivos --forzar   # reemplaza también lo distinto
+    python -m modulos.web.subir --plantilla --simular  # qué cambiaría de la plantilla
+    python -m modulos.web.subir --plantilla            # sube la plantilla, también lo distinto
 
 Sin --archivos solo se sube la reportería, y solo de semestres que la nube
-todavía no tiene. **No manda correos, no llama al modelo y no modifica ningún
+todavía no tiene.
+
+--plantilla sube solo `semestres/_template` (de ahí copia el sitio cada
+semestre nuevo). Ahí sí manda lo de acá: reemplaza lo que en la nube es
+distinto, con el etag que leyó (si alguien lo cambió entretanto, falla en vez
+de pisarlo), y la versión reemplazada queda en el historial. No toca
+semestres ni reportería. Va en la lista de cada despliegue, con --simular antes. **No manda correos, no llama al modelo y no modifica ningún
 archivo de este equipo.** Para traer lo de la nube acá: `modulos.web.bajar`.
 
 Necesita en el .env: WEB_URL y WEB_TOKEN (el mismo valor que el secreto
@@ -145,6 +153,41 @@ def _informar(sid: str, r: dict[str, list[str]], simular: bool) -> None:
         print(f"    ✗ {m}")
 
 
+def subir_plantilla(token: str | None, simular: bool = False) -> dict[str, list[str]]:
+    """La plantilla de acá a la nube: lo nuevo y lo distinto, cada uno con su condición.
+
+    Sube llena con los datos del curso, como --archivos e instalar.py: el sitio
+    copia la plantilla tal cual al crear un semestre. Antes de subir nada se
+    llenan todos los archivos, así que si falta un dato (ValueError) no queda
+    una plantilla a medias en la nube.
+    """
+    valores = _semestre.datos_del_curso()
+    for p in _archivos_de("_template"):
+        _contenido("_template", p, valores)
+    return _subir_carpeta("_template", token, _en_la_nube("_template", token), forzar=True,
+                          simular=simular, valores=valores)
+
+
+def main_plantilla(simular: bool = False) -> int:
+    print(f"Sitio: {config.WEB_URL}" + ("   (simulación: no se sube nada)" if simular else ""))
+    try:
+        r = subir_plantilla(config.cargar_token_web(), simular)
+    except ValueError as e:
+        print(f"  ✗ no subí la plantilla: {e} Agrega NOMBRE_CURSO y PROFESOR al .env.")
+        return 1
+    except urllib.error.HTTPError as e:
+        print(f"  ✗ el sitio respondió {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+        return 1
+    except urllib.error.URLError as e:
+        print(f"  ✗ no pude conectarme a {config.WEB_URL} ({e.reason})")
+        return 1
+    _informar("_template", r, simular)
+    for tipo, lista in (("nuevo", r["nuevos"]), ("reemplaza", r["reemplazados"])):
+        for ruta in lista:
+            print(f"    {'subiría' if simular else 'subido'} ({tipo}): {ruta}")
+    return 1 if r["fallidos"] else 0
+
+
 def main(filtro: str | None = None, simular: bool = False, archivos: bool = False,
          forzar: bool = False) -> int:
     activo = _semestre.activo()
@@ -204,6 +247,8 @@ def main(filtro: str | None = None, simular: bool = False, archivos: bool = Fals
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if "--plantilla" in args:
+        raise SystemExit(main_plantilla("--simular" in args))
     resto = [a for a in args if not a.startswith("-")]
     raise SystemExit(main(resto[0] if resto else None, "--simular" in args,
                           "--archivos" in args, "--forzar" in args))

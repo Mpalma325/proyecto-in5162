@@ -18,6 +18,7 @@ from . import config
 from modulos.mail import buscar_respuestas_semana
 from .evaluar import _mapa_correos
 from .preguntas import cargar_semana
+from .respuestas import criterio as _criterio_respuestas
 
 
 def _anunciar_semestre() -> str:
@@ -75,7 +76,7 @@ def main(semana: int) -> int:
     # 4. el buzón (solo lectura)
     print("\n  revisando el buzón...")
     try:
-        correos = buscar_respuestas_semana(semana)
+        correos = buscar_respuestas_semana(semana, **_criterio_respuestas(info))
     except Exception as e:
         print(f"  ✗ no pude leer el buzón: {e}")
         return 1
@@ -87,7 +88,7 @@ def main(semana: int) -> int:
                     if c["remitente"] in {f["Correo"].strip().lower() for f in ya_con_nota}]
     a_evaluar = [c for c in de_alumnos if c not in ya_evaluados]
 
-    print(f"  sin leer del módulo {semana}: {len(correos)}")
+    print(f"  sin leer {f'del módulo {semana}' if info.legado else f'de {info.nombre}'}: {len(correos)}")
     print(f"     de alumnos del curso   {len(de_alumnos)}")
     print(f"     ya tienen nota         {len(ya_evaluados)}  (se les avisa, no se re-evalúan)")
     print(f"     SE VAN A EVALUAR       {len(a_evaluar)}")

@@ -66,20 +66,17 @@ def _eventos(semestre_id: str) -> dict:
 
 
 def _preguntas_tests() -> dict:
-    """{semana: SemanaInfo} de las semanas que se pueden leer."""
+    """{id: SemanaInfo} de las instancias que se pueden leer.
+
+    Si preguntas.csv no se puede leer entero (Semana e Instancia a la vez), la
+    sábana sale igual, con las columnas de preguntas vacías, y lo dice.
+    """
     from modulos.tests import preguntas
-    semanas = {}
     try:
-        with preguntas.config.PREGUNTAS_CSV.open(encoding="utf-8-sig", newline="") as f:
-            numeros = [int(s) for s in (r.get("Semana", "").strip() for r in csv.DictReader(f)) if s.isdigit()]
-    except FileNotFoundError:
+        return {str(n): info for n, info in preguntas.instancias(avisar=True).items()}
+    except preguntas.PreguntasError as e:
+        print(f"⚠ {e} La sábana sale sin las preguntas de los tests.")
         return {}
-    for n in numeros:
-        try:
-            semanas[str(n)] = preguntas.cargar_semana(n)
-        except ValueError:
-            pass
-    return semanas
 
 
 def _preguntas_tareas() -> dict:

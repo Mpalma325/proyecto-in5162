@@ -725,7 +725,145 @@ def elegir_que_evaluar():
               next((l for l in salida.getvalue().splitlines() if nombre in l), ""))
 
 
+_CABECERA_NUEVA = ("Instancia,Tipo,Numero,Estado,Envio,Cierre,Tema,Fecha de Entrega,"
+                   "Control P1,Control P2,Control P3,Control Pauta P1,Control Pauta P2,Control Pauta P3,"
+                   "Tratamiento P1,Tratamiento P2,Tratamiento P3,"
+                   "Tratamiento Pauta P1,Tratamiento Pauta P2,Tratamiento Pauta P3")
+
+
+def _fila_nueva(instancia, tipo, numero, estado, tema, pregunta):
+    """Una fila del formato nuevo, con preguntas inventadas (el repo es público)."""
+    valores = {"Instancia": instancia, "Tipo": tipo, "Numero": numero, "Estado": estado,
+               "Envio": "2026-11-23T10:15:00-03:00", "Cierre": "2026-11-30T10:15:00-03:00",
+               "Tema": tema, "Control P1": pregunta, "Control Pauta P1": "Lo esperado."}
+    return ",".join(f'"{valores.get(c, "")}"' for c in _CABECERA_NUEVA.split(","))
+
+
+def instancias_nuevas():
+    """Semestre nuevo (preguntas.csv con Instancia): nombres, borrador y respuestas por In-Reply-To.
+
+    Antes, que el formato antiguo siga dando exactamente el mismo asunto y cuerpo.
+    """
+    with semestre_desechable(sid="_tmp_instancias", vaciar=TRES_TABLAS) as (sid, tmp), sin_red():
+        from comun import mensajes
+        from modulos import datos
+        from modulos.mail import lectura
+        from modulos.tests import config as config_tests
+        from modulos.tests import enviar, evaluar, preguntas
+        from modulos.tests.respuestas import criterio
+
+        titulo("35. el formato antiguo (columna Semana) sigue igual")
+        info5 = preguntas.cargar_semana(5)
+        check("asunto de siempre", enviar._construir_asunto(info5)
+              == f"Evaluación de Progreso Individual Módulo 5: {info5.tema}", enviar._construir_asunto(info5))
+        cuerpo = enviar._construir_cuerpo("{BLOQUE_PREGUNTAS}|{SEMANA}", {"Nombre": "Ana Pérez", "Grupo": "control"},
+                                          info5)
+        check("cuerpo de siempre: «de la semana» y {SEMANA} = 5",
+              "de la semana" in cuerpo and cuerpo.endswith("|5"), cuerpo[-80:])
+        check("todas confirmadas, Tipo «Semana», número = id",
+              info5.legado and info5.tipo == "Semana" and info5.numero == 5 and info5.estado == "confirmada")
+        check("las respuestas se reconocen por «Módulo 5», como siempre", criterio(info5) == {})
+        check("el feedback responde con el asunto de siempre", evaluar._construir_asunto_respuesta(info5)
+              == f"Re: Evaluación de Progreso Individual Módulo 5: {info5.tema}")
+
+        ruta = config_tests.PREGUNTAS_CSV
+        titulo("36. archivo nuevo sin filas, y archivos que no se pueden usar")
+        ruta.write_text(_CABECERA_NUEVA + "\n", encoding="utf-8")
+        try:
+            preguntas.cargar_semana(1)
+            check("solo la cabecera: «todavía no hay tests»", False, "no levantó nada")
+        except preguntas.PreguntasError as e:
+            check("solo la cabecera: «todavía no hay tests»", "Todavía no hay tests" in str(e), str(e))
+        check("y la sábana no ve ninguna", preguntas.instancias() == {})
+        ruta.write_text("Semana," + _CABECERA_NUEVA + "\n", encoding="utf-8")
+        try:
+            preguntas.leer_archivo()
+            check("Semana e Instancia a la vez: error claro", False, "no levantó nada")
+        except preguntas.PreguntasError as e:
+            check("Semana e Instancia a la vez: error claro", "Semana" in str(e) and "Instancia" in str(e), str(e))
+        filas = [_fila_nueva(7, "Control", 2, "confirmada", "Logit anidado", "¿Qué resuelve un logit anidado?"),
+                 _fila_nueva(9, "Test", 1, "borrador", "En preparación", "¿Algo?"),
+                 _fila_nueva(10, "Control", 21, "confirmada", "Otro tema", "¿Otra cosa?"),
+                 _fila_nueva("abc", "Control", 3, "", "Id malo", "¿X?"),
+                 _fila_nueva(11, "Test", 2, "", "Repetida", "¿Una?"),
+                 _fila_nueva(11, "Test", 3, "", "Repetida", "¿Dos?")]
+        ruta.write_text(_CABECERA_NUEVA + "\n" + "\n".join(filas) + "\n", encoding="utf-8")
+        archivo = preguntas.leer_archivo()
+        check("un id que no es número se avisa y se salta; los demás se leen",
+              any("abc" in p for p in archivo.problemas) and {7, 9, 10} <= set(archivo.filas), archivo.problemas)
+        try:
+            preguntas.cargar_semana(11)
+            check("un id repetido no se usa", False, "no levantó nada")
+        except preguntas.PreguntasError as e:
+            check("un id repetido no se usa", "repetido" in str(e), str(e))
+        info7 = preguntas.cargar_semana(7)
+        check("nombre visible «Control 2» (el id 7 no se ve)", info7.nombre == "Control 2" and not info7.legado
+              and info7.estado == "confirmada", info7.nombre)
+        check("estado vacío cuenta como confirmada", preguntas.cargar_semana(10).estado == "confirmada")
+
+        titulo("37. un borrador no sale de verdad")
+        enviados.clear()
+        check("enviar de verdad un borrador termina con error y no manda nada",
+              enviar.main(9, dry_run=False) == 1 and enviados == [], enviados[:3])
+        check("simularlo sí se puede", enviar.main(9, dry_run=True) == 0 and enviados == [])
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana") as buscar:
+            evaluar.main(9, dry_run=False)
+        check("evaluar de verdad un borrador no lee el buzón", not buscar.called)
+
+        titulo("38. el envío de una instancia confirmada")
+        curso = datos.alumnos.correos(sid)
+        enviados.clear()
+        mensajes.clear()
+        check("se envía", enviar.main(7, dry_run=False) == 0 and len(enviados) == len(curso), len(enviados))
+        check("con el asunto «Control 2: tema»", {m["Subject"] for m in mensajes} == {"Control 2: Logit anidado"},
+              {m["Subject"] for m in mensajes})
+        check("notas.csv lo guarda con el id como Item",
+              sum(1 for f in datos.notas.leer(sid, datos.TESTS, "7") if f["Enviado"]) == len(curso))
+        enviar.main(10, dry_run=False)  # «Control 21», para tener envíos de otra instancia
+
+        titulo("39. las respuestas: por In-Reply-To, y el nombre entero como respaldo")
+        c = criterio(info7)
+        propio = next(iter(c["propios"]))
+        ajeno = next(iter(c["ajenos"]))
+        check("criterio: el nombre y los Message-ID de cada envío",
+              c["nombre"] == "Control 2" and len(c["propios"]) == len(curso) and len(c["ajenos"]) == len(curso),
+              (c["nombre"], len(c["propios"]), len(c["ajenos"])))
+        buzon = [
+            {"asunto": "mi respuesta (le cambié el asunto)", "in_reply_to": propio, "referencias": ""},
+            {"asunto": "Re: Control 21: Otro tema", "in_reply_to": "", "referencias": ""},
+            {"asunto": "Re: Control 2: Logit anidado", "in_reply_to": ajeno, "referencias": ""},
+            {"asunto": "RE:  control   2 :  logit", "in_reply_to": "", "referencias": ""},
+            {"asunto": "Re: Autocontrol 2", "in_reply_to": "", "referencias": ""},
+            {"asunto": "Fwd", "in_reply_to": "<otro@x>", "referencias": f"<raiz@x> {propio}"},
+        ]
+        with patch.object(lectura, "buscar_no_leidos",
+                          side_effect=lambda filtro_asunto=None, filtro=None: [m for m in buzon if filtro(m)]):
+            halladas = [m["asunto"] for m in lectura.buscar_respuestas_semana(7, **c)]
+        check("reconoce la respuesta aunque cambie el asunto (In-Reply-To)", buzon[0]["asunto"] in halladas, halladas)
+        check("«Control 21» no es «Control 2»", buzon[1]["asunto"] not in halladas, halladas)
+        check("una respuesta a otra instancia no cuenta aunque el asunto diga Control 2",
+              buzon[2]["asunto"] not in halladas, halladas)
+        check("sin cabeceras conocidas, el nombre en el asunto basta (mayúsculas y espacios aparte)",
+              buzon[3]["asunto"] in halladas, halladas)
+        check("«Autocontrol 2» no es «Control 2»", buzon[4]["asunto"] not in halladas, halladas)
+        check("también por References", buzon[5]["asunto"] in halladas, halladas)
+
+        titulo("40. evaluar una instancia: le pasa al buzón el criterio y responde con su asunto")
+        pedidos = []
+        mensajes.clear()
+        with patch("modulos.tests.evaluar.buscar_respuestas_semana",
+                   side_effect=lambda n, **k: (pedidos.append((n, k)), respuestas_falsas(curso, 7, cantidad=1))[1]), \
+             patch("modulos.tests.evaluar.evaluar_respuesta", return_value=nota_ia("6,0")):
+            evaluar.main(7, dry_run=False)
+        check("busca con el nombre y los envíos de esa instancia",
+              pedidos and pedidos[0][0] == 7 and pedidos[0][1].get("nombre") == "Control 2"
+              and propio in pedidos[0][1].get("propios", ()), pedidos[:1])
+        check("el feedback va con «Re: Control 2: tema»",
+              [m["Subject"] for m in mensajes] == ["Re: Control 2: Logit anidado"], [m["Subject"] for m in mensajes])
+
+
 ciclo_completo()
+instancias_nuevas()
 elegir_que_evaluar()
 fallos_y_recuperacion()
 tutoria_sobre_el_feedback()

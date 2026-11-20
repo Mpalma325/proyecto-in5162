@@ -3,7 +3,7 @@
 
 import {
   api, caja, chipSemestre, el, fallidosSinResolver, fechaCorta, historialTrabajos, navegacion, nombreFlujo, normalizar,
-  preciosApi, seguirTrabajo,
+  preciosApi, seguirTrabajo, sobreQue,
 } from "./comun.js";
 import { flechasCiclo, leerCiclo } from "./ciclo.js";
 import { leerCsv } from "./csv.js";
@@ -20,14 +20,20 @@ const DIA = 864e5;
 /** La semana abierta como tarjeta: su título y las flechas del ciclo. */
 function tarjetaSemana(c) {
   const p = c.proximoPaso();
+  // Formato nuevo (preguntas.csv con Instancia): sin semanas, cada una con su envío y su cierre.
+  const legado = c.legado !== false;
   if (!p?.paso) {
-    return el("p", { class: "nota-pie" }, "Todas las semanas de preguntas.csv ya se enviaron y evaluaron.");
+    return el("p", { class: "nota-pie" }, legado ? "Todas las semanas de preguntas.csv ya se enviaron y evaluaron."
+      : "Todas las instancias de preguntas.csv ya se enviaron y evaluaron.");
   }
-  return el("section", { class: "franja-semana", "aria-label": "Semana en curso" },
+  const sobre = legado ? (p.paso === "enviar" ? "Próxima semana" : "Semana en curso")
+    : p.paso === "enviar" ? "Próxima instancia"
+      : p.abiertas > 1 ? `Abierta, y ${p.abiertas - 1} más` : "Abierta";
+  return el("section", { class: "franja-semana", "aria-label": legado ? "Semana en curso" : "Instancia en curso" },
     el("div", { class: "franja-cabeza" },
       el("div", {},
-        el("div", { class: "franja-sobre" }, p.paso === "enviar" ? "Próxima semana" : "Semana en curso"),
-        el("div", { class: "franja-titulo" }, `Semana ${p.semana}`))),
+        el("div", { class: "franja-sobre" }, sobre),
+        el("div", { class: "franja-titulo" }, legado ? `Semana ${p.semana}` : c.nombre(p.semana)))),
     flechasCiclo(c, enlaceTests));
 }
 
@@ -42,7 +48,8 @@ function atencion(c, trabajos, consumo, precios) {
       el("a", { href: "/resultados#Pendientes" }, "Ver")));
   }
   for (const f of fallidosSinResolver(trabajos)) {
-    const sobre = f.argumentos?.semana ? ` de la semana ${f.argumentos.semana}` : f.argumentos?.tarea ? ` de ${f.argumentos.tarea}` : "";
+    const sobre = f.argumentos?.instancia ? ` de ${sobreQue(f.argumentos)}`
+      : f.argumentos?.semana ? ` de la semana ${f.argumentos.semana}` : f.argumentos?.tarea ? ` de ${f.argumentos.tarea}` : "";
     const veces = f.intentos > 1 ? `, ${f.intentos} intentos` : "";
     items.push(el("li", {}, `Falló ${nombreTrabajo(f)}${sobre} (${fechaCorta(new Date(f.creado))}${veces}) y no se volvió a correr. `,
       el("a", { href: "#resultado", onclick: (e) => { e.preventDefault(); verTrabajo(f); } }, "Ver")));
@@ -129,7 +136,7 @@ function verTrabajo(t) {
 }
 const historial = historialTrabajos({
   incluye: () => true,
-  columna: ["Semana o tarea", (a) => a.semana ?? a.tarea ?? ""],
+  columna: ["Semana o tarea", (a) => (a.instancia ? sobreQue(a) : a.semana ?? a.tarea ?? "")],
   alElegir: verTrabajo,
 });
 

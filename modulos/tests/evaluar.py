@@ -13,7 +13,8 @@ from modulos.mail.vista import mostrar_correo
 from modulos.datos import candidatos as _candidatos
 from modulos.ia import versiones
 from .ia_prompts import evaluar_respuesta
-from .preguntas import cargar_semana, SemanaInfo
+from .preguntas import asunto as _asunto, cargar_semana, SemanaInfo
+from .respuestas import criterio as _criterio_respuestas
 from modulos.progreso import avanzar
 
 
@@ -79,7 +80,7 @@ def _construir_cuerpo_correccion(template: str | None, evaluacion_html: str, nom
 
 
 def _construir_asunto_respuesta(info: SemanaInfo) -> str:
-    return f"Re: Evaluación de Progreso Individual Módulo {info.semana}: {info.tema}"
+    return f"Re: {_asunto(info)}"
 
 
 def _mapa_correos(filas_alumnos: list[dict]) -> dict:
@@ -173,10 +174,13 @@ def main(semana: int, dry_run: bool = False, solo: set[str] | None = None) -> No
     """`solo`: si se pasa, evalúa solo a esos correos; el resto queda sin leer."""
     _anunciar_semestre()
     info = cargar_semana(semana)
+    if info.borrador and not dry_run:
+        print(f"✗ {info.nombre} está en borrador: no se envió, no hay nada que evaluar.")
+        return
     filas = [a for a in _datos.alumnos.leer() if a.get("Correo", "").strip()]
 
-    correos = buscar_respuestas_semana(semana)
-    print(f"Módulo {semana} — {len(correos)} respuesta(s) encontrada(s)")
+    correos = buscar_respuestas_semana(semana, **_criterio_respuestas(info))
+    print(f"{f'Módulo {semana}' if info.legado else info.nombre} — {len(correos)} respuesta(s) encontrada(s)")
 
     template_duplicado = _cargar_template_duplicado()
     template_correccion = _cargar_template_correccion()

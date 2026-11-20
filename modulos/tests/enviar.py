@@ -1,5 +1,5 @@
 """
-Envío de la pregunta semanal.
+Envío de la pregunta de una instancia de test (una semana, en el formato antiguo).
 
 A cada alumno le llega la versión que le corresponde según su grupo. Quién
 falta por recibirla lo dice `datos.notas`; el envío queda registrado ahí y en
@@ -13,7 +13,7 @@ from modulos.mail import enviar_correo
 from modulos.mail.vista import mostrar_correo
 
 from . import config
-from .preguntas import SemanaInfo, cargar_semana
+from .preguntas import SemanaInfo, asunto as _asunto, cargar_semana
 from modulos.progreso import avanzar
 
 SEMILLA_GRUPOS = config.GRUPO_SEED
@@ -23,13 +23,15 @@ def _cargar_template_correo() -> str:
     return (config.PROMPTS / "correo_pregunta.md").read_text(encoding="utf-8")
 
 
-def _construir_bloque_preguntas(preguntas: list[str]) -> str:
+def _construir_bloque_preguntas(preguntas: list[str], legado: bool = True) -> str:
     estilo = ('border-left: 3px solid #ccc; margin: 10px 0; '
               'padding-left: 12px; color: #555;')
+    # «de la semana» solo en el formato antiguo: una instancia nueva no es una semana.
+    de = " de la semana" if legado else ""
     if len(preguntas) == 1:
-        return (f'<p>La pregunta de la semana es:</p>\n'
+        return (f'<p>La pregunta{de} es:</p>\n'
                 f'<blockquote style="{estilo}">\n  {preguntas[0]}\n</blockquote>')
-    bloques = ['<p>Las preguntas de la semana son:</p>']
+    bloques = [f'<p>Las preguntas{de} son:</p>']
     for i, p in enumerate(preguntas, start=1):
         bloques.append(f'<blockquote style="{estilo}">\n  {i}. {p}\n</blockquote>')
     return "\n".join(bloques)
@@ -43,13 +45,16 @@ def _construir_cuerpo(template: str, alumno: dict, info: SemanaInfo) -> str:
         .replace("{NOMBRE}", nombre_corto)
         .replace("{TEMA}", info.tema)
         .replace("{FECHA_ENTREGA}", info.fecha_entrega)
-        .replace("{BLOQUE_PREGUNTAS}", _construir_bloque_preguntas(grupo_info.preguntas))
-        .replace("{SEMANA}", str(info.semana))
+        .replace("{BLOQUE_PREGUNTAS}", _construir_bloque_preguntas(grupo_info.preguntas, info.legado))
+        # El id no se muestra: {SEMANA} es el número visible («2» en «Control 2»),
+        # que en el formato antiguo es la semana misma.
+        .replace("{SEMANA}", str(info.numero))
+        .replace("{TITULO}", info.nombre)
     )
 
 
 def _construir_asunto(info: SemanaInfo) -> str:
-    return f"Evaluación de Progreso Individual Módulo {info.semana}: {info.tema}"
+    return _asunto(info)
 
 
 def _anunciar_semestre() -> str:
@@ -64,9 +69,18 @@ def _anunciar_semestre() -> str:
     return sid
 
 
-def main(semana: int, dry_run: bool = False) -> None:
+def main(semana: int, dry_run: bool = False) -> int:
+    """Devuelve 0, o 1 si se pidió mandar de verdad una instancia en borrador."""
     _anunciar_semestre()
     info = cargar_semana(semana)
+    if info.borrador:
+        if not dry_run:
+            # El motor también lo frena aquí: un envío programado que llega a su
+            # hora después de que alguien volvió la instancia a borrador.
+            print(f"✗ {info.nombre} está en borrador: confírmala en Configuración › Preguntas "
+                  "antes de enviarla. No se mandó nada.")
+            return 1
+        print(f"({info.nombre} está en borrador: se puede simular, pero no enviar hasta confirmarla.)")
 
     if config.GRUPO_CONTROL_TRATAMIENTO:
         nuevos = datos.alumnos.asignar_grupos_faltantes(SEMILLA_GRUPOS)
@@ -80,7 +94,7 @@ def main(semana: int, dry_run: bool = False) -> None:
 
     if not pendientes:
         print("Nada por enviar.")
-        return
+        return 0
 
     template = _cargar_template_correo()
     asunto = _construir_asunto(info)
@@ -102,7 +116,7 @@ def main(semana: int, dry_run: bool = False) -> None:
         for _ in avanzar(pendientes, "correos"):
             pass
         print(f"\nSe enviaría a {len(pendientes)} alumno(s).")
-        return
+        return 0
 
     enviados = fallidos = 0
     for alumno in avanzar(pendientes, "correos"):
@@ -125,6 +139,7 @@ def main(semana: int, dry_run: bool = False) -> None:
             print(f"✗ {alumno.get('Nombre', '?'):30s} [{grupo}] → {correo}: {e}")
 
     print(f"\n{enviados} enviado(s), {fallidos} fallido(s)")
+    return 0
 
 
 def _parsear_args() -> tuple[int, bool]:
@@ -145,4 +160,4 @@ def _parsear_args() -> tuple[int, bool]:
 
 
 if __name__ == "__main__":
-    main(*_parsear_args())
+    sys.exit(main(*_parsear_args()))

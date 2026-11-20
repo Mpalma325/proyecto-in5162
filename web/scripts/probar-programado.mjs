@@ -13,8 +13,9 @@ if (desde < 0 || hasta < 0) {
 }
 const js = transformSync(fuente.slice(desde, hasta), { loader: "ts" }).code;
 
-async function correr(tutoria, cuando) {
+async function correr(tutoria, cuando, encolarFalla = false) {
   const pedidos = [];
+  const encolados = [];
   const db = {
     prepare: (sql) => ({
       bind: () => db.prepare(sql),
@@ -26,8 +27,21 @@ async function correr(tutoria, cuando) {
     }),
   };
   const crearTrabajo = async (_env, semestre, flujo, args) => { pedidos.push({ semestre, flujo, args }); };
-  const programado = new Function("crearTrabajo", `${js}\nreturn programado;`)(crearTrabajo);
-  await programado({ DB: db }, Date.parse(cuando));
+  // encolarLosQueEsperan vive fuera del tramo que se extrae; su prueba es probar-programados.mjs.
+  const encolarLosQueEsperan = async (_env, c) => {
+    encolados.push(c);
+    if (encolarFalla) throw new Error("D1 caída");
+  };
+  const programado = new Function("crearTrabajo", "encolarLosQueEsperan",
+    `${js}\nreturn programado;`)(crearTrabajo, encolarLosQueEsperan);
+  const errorOriginal = console.error;
+  console.error = () => {};
+  try {
+    await programado({ DB: db }, Date.parse(cuando));
+  } finally {
+    console.error = errorOriginal;
+  }
+  pedidos.encolados = encolados;
   return pedidos;
 }
 
@@ -46,6 +60,10 @@ p = await correr("true", A_LAS_18);
 probar("con TUTORIA_AUTOMATICA = true corre", p.length === 1 && p[0].semestre === "2099-1", JSON.stringify(p));
 p = await correr(undefined, A_LAS_19);
 probar("fuera de las 18:00 de Santiago no se pide nada", p.length === 0, JSON.stringify(p));
+probar("a las dos horas del cron se encolan los programados", p.encolados.length === 1, JSON.stringify(p.encolados));
+p = await correr(undefined, A_LAS_18, true);
+probar("si encolar falla, la tutoría de las 18:00 igual corre",
+  p.length === 1 && p[0].flujo === "tests.tutoria", JSON.stringify(p));
 
 for (const [ok, nombre, detalle] of casos) console.log(`${ok ? "OK" : "FALLA"}\t${nombre}${ok ? "" : "\t" + detalle}`);
 process.exit(casos.every(([ok]) => ok) ? 0 : 1);
