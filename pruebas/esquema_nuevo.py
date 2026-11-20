@@ -335,6 +335,7 @@ def csv_de_excel(tmp, sid):
         "punto y coma, cp1252": nomina.encode("cp1252"),
         "coma, UTF-8 sin BOM": nomina.replace(";", ",").encode("utf-8"),
         "coma, UTF-8 con BOM": nomina.replace(";", ",").encode("utf-8-sig"),
+        "punto y coma, fin de línea \\r (Excel para Mac antiguo)": nomina.replace("\r\n", "\r").encode("utf-8"),
     }
     for nombre, contenido in variantes.items():
         (tmp / "alumnos.csv").write_bytes(contenido)

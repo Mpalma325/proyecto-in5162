@@ -588,8 +588,15 @@ def acceso(ctx: Contexto, args) -> int:
         ctx.escribir("  [simular] el sitio se publica de nuevo solo si cambian ACCESO_EQUIPO o ACCESO_AUD")
     elif (ctx.env.get("ACCESO_EQUIPO"), ctx.env.get("ACCESO_AUD")) != antes:
         ctx.escribir("  Access cambió los datos con que el sitio verifica la sesión: lo publico de nuevo.")
-        dependencias_web(ctx)
-        publicar_sitio(ctx, cf)
+        try:
+            dependencias_web(ctx)
+            publicar_sitio(ctx, cf)
+        except BaseException:
+            # El .env ya tiene los datos nuevos de Access: repetir `acceso` no vería
+            # la diferencia y no publicaría. `actualizar` publica con lo del .env.
+            ctx.escribir("  ✗ Access ya cambió, pero el sitio no se publicó y sigue con los datos de antes.")
+            ctx.escribir("    Nadie va a poder entrar hasta publicarlo: corre  python3 instalar.py actualizar")
+            raise
     else:
         ctx.escribir("  ✓ el sitio no necesita publicarse de nuevo: Access mantuvo la misma aplicación")
     paso("Listo", ctx.escribir)

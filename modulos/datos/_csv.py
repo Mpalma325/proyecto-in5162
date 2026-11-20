@@ -42,8 +42,9 @@ def separador(primera_linea: str) -> str:
 def lector(p: Path) -> csv.DictReader:
     """Un DictReader sobre el archivo, con separador y codificación detectados."""
     texto = _decodificar(Path(p).read_bytes())
+    # splitlines corta también en "\r" solo (Excel para Mac antiguo).
     return csv.DictReader(io.StringIO(texto, newline=""),
-                          delimiter=separador(texto.split("\n", 1)[0]))
+                          delimiter=separador((texto.splitlines() or [""])[0]))
 
 
 def leer(nombre: str, semestre_id: str | None = None) -> list[dict]:
@@ -87,7 +88,7 @@ def cabecera(p: Path) -> list[str]:
     if not p.exists():
         return []
     with p.open("rb") as f:
-        primera = _decodificar(f.readline()).rstrip("\r\n")
+        primera = (_decodificar(f.readline()).splitlines() or [""])[0]
     return next(csv.reader([primera], delimiter=separador(primera)), [])
 
 

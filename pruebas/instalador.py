@@ -920,6 +920,24 @@ check("si Access cambió el AUD: lo guarda y vuelve a publicar el sitio con él"
       codigo == 0 and env.get("ACCESO_AUD") == "aud-2" and otro.hubo(r"npx wrangler deploy --secrets-file")
       and not otro.hubo(r"gcloud run"), (codigo, otro.llamadas, lineas[-5:]))
 
+carpeta_falla = Path(tempfile.mkdtemp())
+sin_deploy = Procesos([NODE, (r"wrangler deploy", 1, "error de wrangler")])
+
+
+def access_nuevo_sin_publicar(cmd, **kw):
+    """Access cambia el AUD, pero publicar el sitio falla."""
+    if "scripts/acceso.mjs" in map(str, cmd):
+        ruta = carpeta_falla / "wrangler.zz9999.toml"
+        ruta.write_text(ruta.read_text(encoding="utf-8").replace('ACCESO_AUD = "aud-1"', 'ACCESO_AUD = "aud-2"'),
+                        encoding="utf-8")
+    return sin_deploy(cmd, **kw)
+
+
+codigo, env, lineas, _ = correr_acceso(["profe@ejemplo.cl"], access_nuevo_sin_publicar, carpeta_falla)
+check("si Access cambió y publicar falla: termina con error y dice que corra actualizar",
+      codigo == 1 and sin_deploy.hubo(r"wrangler deploy")
+      and any("python3 instalar.py actualizar" in s for s in lineas), (codigo, lineas[-6:]))
+
 p = Procesos([NODE, (r"scripts/acceso\.mjs", 1, "")])
 codigo, env, lineas, _ = correr_acceso(["solo@ejemplo.cl"], p)
 check("si acceso.mjs falla, el .env sigue con la lista anterior",

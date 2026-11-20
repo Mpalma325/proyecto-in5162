@@ -189,7 +189,9 @@ En los dos casos, el instalador despliega el motor en el proyecto nuevo y vuelve
 
 **`python3 instalar.py estado` muestra `✗ plantilla de semestre en el sitio`.** Con `HTTP 200, 0 archivos`, la plantilla no se subió. Con `HTTP 401` o `HTTP 403`, el sitio no aceptó el token del motor. En los dos casos corre `python3 instalar.py`: sube los archivos que faltan y vuelve a publicar el sitio con sus tokens.
 
-**`Falló: node scripts/acceso.mjs ...` al correr `python3 instalar.py acceso`.** El `.env` queda con la lista anterior y Access no cambió. Lee las últimas líneas y sigue lo que dice «Access, publicación y plantilla»; después corre de nuevo `python3 instalar.py acceso`.
+**`Falló: node scripts/acceso.mjs ...` al correr `python3 instalar.py acceso`.** El `.env` queda con la lista anterior. Access puede haber quedado a medio cambiar: el script borra la regla de quién entra antes de crear la nueva, y si falla entre los dos pasos nadie puede entrar al sitio hasta que el comando termine bien. Lee las últimas líneas y sigue lo que dice «Access, publicación y plantilla»; después corre de nuevo `python3 instalar.py acceso`.
+
+**`✗ Access ya cambió, pero el sitio no se publicó y sigue con los datos de antes.`** al correr `python3 instalar.py acceso`. La lista nueva ya quedó en Access y en el `.env`, pero el sitio todavía verifica la sesión con los datos viejos y no deja entrar a nadie. Corre `python3 instalar.py actualizar`: publica el sitio con lo que hay en el `.env`. No repitas `acceso`, porque no vería nada que publicar.
 
 **`Hay archivos del repositorio cambiados en este equipo; git no puede traer la versión nueva encima:`** seguido de una lista de archivos. Alguien editó archivos del sistema en Cloud Shell. Si no fue a propósito, descarta esos cambios con `git checkout -- .` y corre de nuevo `python3 instalar.py actualizar`. Esto no toca el `.env`.
 
