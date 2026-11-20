@@ -227,4 +227,164 @@ with semestre_desechable(base="_template", sid="_tmp_tareas") as (sid, tmp), sin
           corregir_una.call_count == 1 and datos.notas.estado("hugo@x.cl", datos.TAREAS, "T3", sid)["Nota"]
           and not datos.notas.estado("gina@x.cl", datos.TAREAS, "T3", sid)["Nota"], texto)
 
+    titulo("10. T4: respuestas raras (prueba de punta a punta del 19/11/2026)")
+    from modulos.mail.limpieza import _limpiar_respuesta
+    alumnos_t4 = (("Ana Perez", "ana@x.cl"), ("Beto Soto", "beto@x.cl"), ("Carla Diaz", "carla@x.cl"),
+                  ("Dario Rojas", "dario@x.cl"), ("Eva Lagos", "eva@x.cl"), ("Fabio Nuñez", "fabio@x.cl"))
+    sembrar_preguntas(tmp, "T4", alumnos_t4)
+    mensajes.clear()
+    enviar.main("T4", dry_run=False, minutos=20)
+    cuerpos = {m["To"]: m.get_payload()[0].get_payload(decode=True).decode("utf-8") for m in mensajes}
+    filas = {f["alumno_correo"]: f for f in storage.leer_csv("T4")}
+    plazo = datetime.fromisoformat(filas["ana@x.cl"]["plazo"])
+    antes = lambda minutos: (plazo - timedelta(minutes=minutos)).isoformat()  # noqa: E731
+    despues = (plazo + timedelta(minutes=3)).isoformat()
+    # Lo que deja buscar_respuestas de un correo que trae solo la cita: la
+    # limpieza la toma por una respuesta escrita dentro de ella.
+    cita = "\n".join(f"> {l}" if l.strip() else ">" for l in cuerpos["ana@x.cl"].splitlines())
+    solo_cita = _limpiar_respuesta(f"\nEl jue, 19 nov 2026 a las 17:20, Curso <curso@x.cl> escribió:\n{cita}\n")
+    check("(el correo de prueba es el del informe: la limpieza deja nuestra pregunta como texto)",
+          "¿Por qué escalaste?" in solo_cita, solo_cita[:200])
+
+    def correo(remitente, texto, fecha, adjuntos=()):
+        return {"remitente": remitente, "texto": texto, "fecha": fecha, "adjuntos": list(adjuntos)}
+
+    entrantes = {
+        filas["ana@x.cl"]["message_id"]: [correo("ana@x.cl", solo_cita, antes(10))],
+        filas["beto@x.cl"]["message_id"]: [
+            # Desordenados a propósito: buscar_respuestas no los ordena.
+            correo("beto@x.cl", "Perdón, se me olvidó agregar: lo revisé con mi grupo.", antes(2)),
+            correo("beto@x.cl", "Escalé para que los coeficientes sean comparables.", antes(9))],
+        filas["carla@x.cl"]["message_id"]: [
+            correo("carla@x.cl", "Escalé porque las variables tienen unidades distintas.", antes(5)),
+            correo("carla@x.cl", "Una aclaración tardía.", despues)],
+        filas["dario@x.cl"]["message_id"]: [correo("dario.rojas@otro.cl", "Escalé para comparar.", antes(4))],
+        filas["eva@x.cl"]["message_id"]: [correo("eva@x.cl", "Adjunto mi respuesta.", antes(4), ["respuesta.docx"])],
+        filas["fabio@x.cl"]["message_id"]: [correo("fabio@x.cl", "", antes(4), ["respuesta.pdf"])],
+    }
+    with patch("modulos.tareas.recolectar.buscar_respuestas", return_value=entrantes):
+        texto = salida_de(recolectar.main, "T4")
+    respuestas = {e["Correo"]: e["Respuesta"]
+                  for e in datos.log.leer(sid, flujo=datos.TAREAS, item="T4", evento="respuesta")}
+    estado = lambda c: datos.notas.estado(c, datos.TAREAS, "T4", sid) or {}  # noqa: E731
+    filas = {f["alumno_correo"]: f for f in storage.leer_csv("T4")}
+
+    check("1) un correo con solo la cita no es una respuesta: el alumno sigue sin responder",
+          "ana@x.cl" not in respuestas and not estado("ana@x.cl").get("Respondio"), respuestas.get("ana@x.cl"))
+    check("1) y queda anotado", "solo la cita" in filas["ana@x.cl"]["aviso"], filas["ana@x.cl"]["aviso"])
+    beto = respuestas.get("beto@x.cl", "")
+    check("2) dos correos a tiempo se corrigen juntos, en orden y con una línea entre ellos",
+          beto.startswith("Escalé para que") and "--- correo 2 de 2," in beto and beto.endswith("con mi grupo."), beto)
+    check("2) el plazo se mide con el primero", estado("beto@x.cl").get("Respondio") == antes(9),
+          estado("beto@x.cl"))
+    check("2) y se avisa que fueron dos", "2 correos" in filas["beto@x.cl"]["aviso"], filas["beto@x.cl"]["aviso"])
+    check("2) una aclaración después del plazo no deja tarde la respuesta a tiempo ni entra en ella",
+          respuestas.get("carla@x.cl") == "Escalé porque las variables tienen unidades distintas."
+          and not storage.respondio_tarde(filas["carla@x.cl"], estado("carla@x.cl").get("Respondio")),
+          (respuestas.get("carla@x.cl"), estado("carla@x.cl")))
+    check("2) la tardía queda en el aviso", "después del plazo" in filas["carla@x.cl"]["aviso"],
+          filas["carla@x.cl"]["aviso"])
+    check("6) la respuesta desde otra dirección se acepta y se avisa",
+          respuestas.get("dario@x.cl") == "Escalé para comparar."
+          and "otra dirección (dario.rojas@otro.cl)" in filas["dario@x.cl"]["aviso"], filas["dario@x.cl"])
+    check("7) con adjunto: se corrige el texto y se avisa que el adjunto no se leyó",
+          respuestas.get("eva@x.cl") == "Adjunto mi respuesta." and "respuesta.docx" in filas["eva@x.cl"]["aviso"],
+          filas["eva@x.cl"])
+    check("7) solo un adjunto, sin texto: sin respuesta, con aviso",
+          "fabio@x.cl" not in respuestas and "respuesta.pdf" in filas["fabio@x.cl"]["aviso"], filas["fabio@x.cl"])
+    check("los avisos también salen en pantalla", "otra dirección" in texto and "solo la cita" in texto, texto[-800:])
+    with patch("modulos.tareas.recolectar.buscar_respuestas", return_value=entrantes):
+        recolectar.main("T4")
+    check("recolectar de nuevo no repite los avisos",
+          storage.leer_csv("T4")[0]["aviso"].count("solo la cita") == 1, storage.leer_csv("T4")[0]["aviso"])
+
+    with patch("modulos.tareas.corregir._corregir_una", return_value=resultado_modelo) as corregir_una:
+        salida_de(corregir.main, "T4", dry_run=False, enviar=False)
+    corregidas = {c.args[2]["alumno_correo"]: c.args[2]["respuesta"] for c in corregir_una.call_args_list}
+    check("corregir recibe las dos de Beto juntas y a Carla sin la tardía, y no a Ana ni a Fabio",
+          set(corregidas) == {"beto@x.cl", "carla@x.cl", "dario@x.cl", "eva@x.cl"}
+          and corregidas["beto@x.cl"] == beto and "tardía" not in corregidas["carla@x.cl"], corregidas)
+
+    titulo("11. buscar_respuestas trae todo el hilo, con los adjuntos")
+    from email.message import EmailMessage
+    from modulos.mail import lectura
+
+    def eml(de, texto, fecha, responde_a, adjunto=None):
+        m = EmailMessage()
+        m["From"], m["To"], m["Subject"] = de, "curso@x.cl", "Re: Pregunta"
+        m["Date"], m["In-Reply-To"], m["References"] = fecha, responde_a, responde_a
+        m["Message-ID"] = f"<{abs(hash((de, texto)))}@alumno.test>"
+        m.set_content(texto)
+        if adjunto:
+            m.add_attachment(b"PK", maintype="application", subtype="octet-stream", filename=adjunto)
+        return m.as_bytes()
+
+    buzon = [eml("Beto <beto@x.cl>", "Primera.", "Thu, 19 Nov 2026 17:30:00 -0300", "<p1@curso>"),
+             eml("beto@x.cl", "Se me olvidó agregar algo.", "Thu, 19 Nov 2026 17:35:00 -0300", "<p1@curso>"),
+             eml("eva@x.cl", "", "Thu, 19 Nov 2026 17:31:00 -0300", "<p2@curso>", adjunto="respuesta.docx"),
+             eml("otro@x.cl", "Ruido.", "Thu, 19 Nov 2026 17:32:00 -0300", "<ajeno@x>")]
+
+    class ImapFalso:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def login(self, *a): return "OK", []
+        def select(self, *a, **k): return "OK", []
+        def search(self, *a): return "OK", [b" ".join(str(i + 1).encode() for i in range(len(buzon)))]
+        def fetch(self, i, _): return "OK", [(b"", buzon[int(i) - 1])]
+
+    with patch.object(lectura.imaplib, "IMAP4_SSL", ImapFalso):
+        hallado = lectura.buscar_respuestas(["<p1@curso>", "<p2@curso>"])
+    check("las dos respuestas de Beto, no solo la última",
+          sorted(r["texto"] for r in hallado.get("<p1@curso>", [])) == ["Primera.", "Se me olvidó agregar algo."],
+          hallado.get("<p1@curso>"))
+    check("un correo sin texto pero con adjunto se informa con el nombre del archivo",
+          [r["adjuntos"] for r in hallado.get("<p2@curso>", [])] == [["respuesta.docx"]], hallado.get("<p2@curso>"))
+    check("el ruido no se asocia a nadie", set(hallado) == {"<p1@curso>", "<p2@curso>"}, set(hallado))
+
+    titulo("12. el plazo escrito a mano en la plantilla no sale callado")
+    from modulos.tareas import config as config_tareas
+    plantilla = config_tareas.PROMPTS / "correo_pregunta.md"
+    original = plantilla.read_text(encoding="utf-8")
+    sembrar_preguntas(tmp, "T5", (("Gina Toro", "gina@x.cl"),))
+    plantilla.write_text("Hola {nombre},\n\n{pregunta}\n\nPlazo de respuesta: hoy lunes 3 de agosto de 2026, "
+                         "hasta las 10:20 hrs.\n", encoding="utf-8")
+    enviados.clear()
+    texto = salida_de(enviar.main, "T5", dry_run=True)
+    check("en simulación avisa que la fecha está escrita a mano", "{plazo}" in texto and "3 de agosto" in texto
+          and enviados == [], texto[-500:])
+    texto = salida_de(enviar.main, "T5", dry_run=False)
+    check("y no envía nada de verdad", enviados == [] and "No se envía" in texto, texto[-500:])
+    check("ni marca el envío", not datos.notas.ya_enviado("gina@x.cl", datos.TAREAS, "T5", sid))
+    check("y termina en error (el trabajo de la página queda como fallido)",
+          enviar.main("T5", dry_run=False) is False)
+    plazo_envio = enviar.calcular_plazo(datetime.now().astimezone(), 20)
+    revisar = enviar.revisar_plazo_plantilla
+    check("si la fecha escrita es justo la de este envío, pasa con un aviso",
+          revisar(f"Plazo: {enviar.texto_plazo(plazo_envio)} hrs.", plazo_envio)[1] is False)
+    aviso, detener = revisar("Tienes 20 minutos para responder.", plazo_envio)
+    check("sin fecha ni hora («tienes 20 minutos»), se envía con un aviso", not detener and "{plazo}" in aviso, aviso)
+    check("con {plazo}, nada que decir", revisar("Plazo: {plazo} hrs.", plazo_envio) == ("", False))
+    for texto in ("Responde en 2-3 líneas.", "Preguntas 1-2 de la tarea.", "Ver la tabla 40/50."):
+        check(f"«{texto}» no es una fecha: no detiene el envío", revisar(texto, plazo_envio)[1] is False, texto)
+    for texto in ("Hasta el 11/09.", "Hasta el 11-09-2026.", "Hasta las 10:20."):
+        check(f"«{texto}» sí es una fecha escrita: detiene", revisar(texto, plazo_envio)[1] is True, texto)
+    plantilla.write_text(original, encoding="utf-8")
+
+    titulo("13. el saludo usa el nombre de la nómina")
+    with (tmp / "alumnos.csv").open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Nombre", "Correo", "Grupo"])
+        w.writerow(["Gina Paz Toro", "gina@x.cl", ""])
+    storage.actualizar_fila("T5", "g1.html", "Gina Toro", {"alumno_nombre": "Toro"})
+    mensajes.clear()
+    enviar.main("T5", dry_run=False)
+    cuerpo = mensajes[-1].get_payload()[0].get_payload(decode=True).decode("utf-8") if mensajes else ""
+    check("quien firmó con el apellido recibe «Hola Gina,»", cuerpo.startswith("Hola Gina,"), cuerpo[:40])
+    fila_gina = {**storage.leer_csv("T5")[0], "respuesta": "R", "comentario": "C", "nota": "0.3"}
+    check("el feedback también", corregir._construir_cuerpo_feedback("Hola {nombre}:", fila_gina) == "Hola Gina:")
+    check("si no está en la nómina, la primera palabra de la tabla",
+          corregir._construir_cuerpo_feedback("Hola {nombre}:", {**fila_gina, "alumno_correo": "nadie@x.cl"})
+          == "Hola Toro:")
+
 sys.exit(resultado())

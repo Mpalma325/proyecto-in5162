@@ -34,6 +34,7 @@ from modulos.datos import candidatos as _candidatos
 from modulos.ia import versiones
 
 from . import config, storage
+from .alumnos import nombre_de_pila
 from .escala import validar_nota
 from modulos.mail import enviar_correo
 from modulos.progreso import avanzar
@@ -115,7 +116,7 @@ def _cargar_template_feedback() -> str:
 
 def _construir_cuerpo_feedback(template: str, fila: dict) -> str:
     return template.format(
-        nombre=fila["alumno_nombre"].split()[0] if fila["alumno_nombre"] else "estudiante",
+        nombre=nombre_de_pila(fila.get("alumno_correo", ""), fila.get("alumno_nombre", "")),
         tarea=fila["tarea"],
         pregunta=fila["pregunta"],
         respuesta=fila["respuesta"],

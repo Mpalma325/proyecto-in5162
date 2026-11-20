@@ -203,10 +203,12 @@ def enviar(tarea: str) -> None:
                                              _cuerpo(tarea, alumno))
         alumno["enviado"] = datetime.now().astimezone().isoformat(timespec="seconds")
         _guardar(tarea, filas)
-        # Desde acá, recolectar y corregir trabajan con la pregunta nueva.
+        # Desde acá, recolectar y corregir trabajan con la pregunta nueva. El
+        # plazo del primer envío ya no vale (el de este va escrito en la
+        # plantilla): con él, toda respuesta a la segunda pregunta era tardía.
         storage.actualizar_fila(tarea, alumno["grupo_archivo"], alumno["alumno_nombre"], {
             "pregunta": alumno["pregunta"], "pauta": alumno["pauta"],
-            "message_id": alumno["message_id"]})
+            "message_id": alumno["message_id"], "plazo": ""})
         datos.log.registrar("envio", datos.TAREAS, tarea, alumno["correo"],
                             MessageId=alumno["message_id"], Detalle="segunda oportunidad")
         print(f"  ✓ {alumno['nombre']:28s} → {alumno['correo']}")

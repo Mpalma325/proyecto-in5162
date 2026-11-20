@@ -37,27 +37,66 @@ def _bloque_sin_roles(asignacion: dict) -> str:
     )
 
 
-def _bloque_rehacer(asignacion: dict) -> str:
+def _partes(valor) -> str:
+    """"P2", o una lista ["P1", "P3"] como "P1 o P3 (elige una)"."""
+    if isinstance(valor, (list, tuple)):
+        if len(valor) == 1:
+            return valor[0]
+        return f"{', '.join(valor[:-1])} o {valor[-1]} (elige una)"
+    return valor
+
+
+def _bloque_rehacer(asignacion: dict, evitar: list[str] | None = None) -> str:
     """Instrucciones para rehacer la pregunta de algunos integrantes, sobre la parte que ya tenían."""
-    lineas = "\n".join(f"- {nombre}: {pregunta}" for nombre, pregunta in asignacion.items())
-    return (
+    lineas = "\n".join(f"- {nombre}: {_partes(pregunta)}" for nombre, pregunta in asignacion.items())
+    bloque = (
         "=== REHACER UNA PREGUNTA ===\n"
         "Formula una pregunta nueva solo para estos integrantes, sobre la pregunta de la "
         "tarea indicada, con los mismos criterios de siempre. No marques a nadie con "
         "\"pregunta\": null.\n\n"
         "Integrantes y pregunta de la tarea:\n" + lineas
     )
+    if evitar:
+        # Sin esto, la pregunta rehecha cayó en el mismo split train/test que la
+        # de un compañero (prueba del 19/11/2026).
+        bloque += ("\n\nEstas preguntas ya se les hicieron a otros integrantes del grupo. La nueva "
+                   "tiene que ser sobre otro fragmento de código, no una variante de ellas:\n- "
+                   + "\n- ".join(evitar))
+    return bloque
+
+
+def _bloque_roles(declaradas: dict) -> str:
+    """
+    La tabla de roles ya leída: dónde declaró código cada integrante.
+
+    Va en lugar del HTML de la tabla. El modelo a veces leía la columna
+    "Transformaciones" como P1 y corría las demás; así no tiene que leerla.
+    """
+    lineas = "\n".join(f"- {nombre}: {', '.join(partes) if partes else 'ninguna'}"
+                       for nombre, partes in declaradas.items())
+    return (
+        "=== TABLA DE ROLES (ya leída) ===\n"
+        "La tabla de roles del grupo ya se leyó; no la tienes que interpretar. Abajo va, para "
+        "cada integrante, en qué preguntas de la tarea declaró código. Formula su pregunta "
+        "sobre una de ESAS preguntas y pon esa misma en \"pregunta_tarea\". Quien dice "
+        "\"ninguna\" no declaró código: \"pregunta\": null y \"pauta\": null.\n\n"
+        "Integrantes y preguntas donde declararon código:\n" + lineas
+    )
 
 
 def generar_preguntas(secciones: dict, roles_html: str,
                       asignacion: dict | None = None, nota: str = "",
-                      rehacer: bool = False) -> dict:
+                      rehacer: bool = False, declaradas: dict | None = None,
+                      evitar: list[str] | None = None) -> dict:
     """
     Llama a la API de OpenAI con el system prompt + los insumos del grupo.
     Devuelve el dict parseado con las preguntas por integrante.
 
     `asignacion` es {nombre: "P1".."P4"} y reemplaza a la tabla de roles cuando
-    el grupo no la llenó.
+    el grupo no la llenó. Al rehacer, el valor puede ser una lista de partes.
+    `declaradas` es la tabla de roles ya leída ({nombre: ["P1", "P3"]}): si
+    viene, va en lugar del HTML. `evitar` son las preguntas que ya tienen los
+    demás integrantes, para que la rehecha no se les parezca.
     """
     system_prompt = (config.PROMPTS / "generar_preguntas.md").read_text(encoding="utf-8")
 
@@ -75,9 +114,11 @@ def generar_preguntas(secciones: dict, roles_html: str,
         )
 
     if asignacion and rehacer:
-        partes_user.append(_bloque_rehacer(asignacion))
+        partes_user.append(_bloque_rehacer(asignacion, evitar))
     elif asignacion:
         partes_user.append(_bloque_sin_roles(asignacion))
+    elif declaradas:
+        partes_user.append(_bloque_roles(declaradas))
     else:
         partes_user.append(f"=== TABLA DE ROLES (HTML) ===\n{roles_html}")
     partes_user.append(f"=== PREGUNTA 1 ===\n{secciones['p1']}")

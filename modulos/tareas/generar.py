@@ -13,6 +13,7 @@ Uso:
     python -m modulos.tareas.generar T1 archivo.html   # tarea específica + archivo específico
 """
 
+import hashlib
 import html as htmlmod
 import random
 import re
@@ -26,7 +27,7 @@ from .alumnos import cargar_alumnos, resolver_interactivo
 from .limpieza_html import (limpiar_html, extraer_secciones, extraer_autores,
                             secciones_desde_rmd, revisar_entrega,
                             es_nombre_placeholder, extraer_tabla_roles,
-                            nombres_de_tabla)
+                            nombres_de_tabla, partes_declaradas)
 from .ia_prompts import generar_preguntas
 
 
@@ -69,6 +70,12 @@ def _rescatar_sin_pregunta(integrantes: list[dict], secciones: dict,
 
 _RE_CITA = re.compile(r"`([^`\n]+)`")
 _RE_IDENTIFICADOR = re.compile(r"(?<![\w.$@])[A-Za-z_.][\w.]*")
+# Fuera de comillas invertidas: cada palabra, con sus puntos (ll.sg2s, na.rm).
+# Tras '\' es un comando de LaTeX (\sum_j), tras '$' una columna, tras '@' un dominio.
+_RE_PALABRA = re.compile(r"(?<![\w.$@\\])[A-Za-z_]\w*(?:\.\w+)*")
+_RE_LATEX = re.compile(r"\\\(.*?\\\)|\\\[.*?\\\]|\$[^$\n]*[\\^{][^$\n]*\$", re.S)
+# Lo que tiene punto o guion bajo y no es código: abreviaturas y partes de la tarea.
+_NO_ES_CODIGO = re.compile(r"p\.ej|e\.g|i\.e|[pt]\d+(?:\.\w+)*", re.I)
 
 
 def _texto_entrega(path_html: Path) -> str:
@@ -81,28 +88,96 @@ def _texto_entrega(path_html: Path) -> str:
     return texto
 
 
-def codigo_ajeno(pregunta: str, texto: str) -> list[str]:
+def _nombres_de_cita(cita: str, saltar_llamadas: bool = True):
+    """Los identificadores de un trozo de código citado."""
+    for m in _RE_IDENTIFICADOR.finditer(cita):
+        nombre = m.group().rstrip(".")
+        if saltar_llamadas and cita[m.end():].lstrip().startswith("("):
+            continue
+        if len(nombre.lstrip(".")) >= 2:
+            yield nombre
+
+
+def codigo_suelto(pregunta: str) -> list[str]:
+    """
+    Los nombres con forma de código escritos fuera de comillas invertidas.
+
+    El prompt de _template pide la pregunta sin Markdown, y en la prueba del
+    19/11/2026 ninguna de 45 preguntas trajo comillas invertidas: "En la función
+    ll.sg2s, ¿qué representa myparam[3]?" pasó sin revisar. Cuenta como código
+    lo que una palabra en castellano no tiene: un guion bajo (base_limpia), un
+    punto pegado a una minúscula o un número (ll.sg2s, na.rm) o un índice
+    (myparam[3]). Una llamada, `nombre(...)`, se reconoce como código pero no se
+    revisa, igual que entre comillas: puede ser una función nombrada para
+    contrastarla con la que sí usó el grupo. Lo que va en fórmulas de LaTeX
+    (\\sum_j, n_i) y los nombres de menos de cuatro letras tampoco.
+    """
+    texto = _RE_LATEX.sub(" ", _RE_CITA.sub(" ", pregunta or ""))
+    nombres = []
+    for m in _RE_PALABRA.finditer(texto):
+        nombre = m.group().rstrip(".")
+        siguiente = texto[m.start() + len(nombre):][:1]
+        if siguiente == "(" or nombre in nombres or _NO_ES_CODIGO.fullmatch(nombre):
+            continue
+        if siguiente == "[" or (len(nombre) >= 4 and ("_" in nombre.strip("_")
+                                                      or re.search(r"\.[a-z0-9_]", nombre))):
+            nombres.append(nombre)
+    return nombres
+
+
+def _presente(nombre: str, texto: str) -> bool:
+    """¿Está el nombre en la entrega, entero? `modelo` no está en `modelo_1` ni `ll` en `ll.nbd`."""
+    antes = r"(?<!\w)" if nombre.startswith(".") else r"(?<![\w.])"
+    return re.search(rf"{antes}{re.escape(nombre)}(?!\w|\.\w)", texto) is not None
+
+
+def codigo_ajeno(pregunta: str, texto: str, citados=None) -> list[str]:
     """
     Los nombres que la pregunta cita como código y no están en la entrega.
 
     En T2 de 2026-2 una pregunta citó `ll.sg2s` y `myparam[3]`, que venían del
-    material del curso y no del código del alumno. Se miran solo las citas entre
-    comillas invertidas, que es como el modelo marca el código. Las llamadas a
-    función (`floor()`) no se revisan: una pregunta puede nombrar una función que
-    el grupo no usó para contrastarla con la que sí usó.
+    material del curso y no del código del alumno. Se miran tres fuentes:
+    - las citas entre comillas invertidas, que es como el prompt de 2026-2
+      marca el código. Las llamadas a función (`floor()`) no se revisan: una
+      pregunta puede nombrar una función que el grupo no usó para contrastarla
+      con la que sí usó;
+    - los nombres con forma de código fuera de las comillas (`codigo_suelto`);
+    - `citados`, la lista "codigo_citado" que pide el prompt de _template: los
+      nombres del código del grupo que la pregunta menciona. Ahí se revisa todo,
+      también las funciones, porque el prompt pide poner solo lo del grupo.
     """
     ajenos = []
+
+    def revisar(nombre: str) -> None:
+        if nombre not in ajenos and not _presente(nombre, texto):
+            ajenos.append(nombre)
+
     for cita in _RE_CITA.findall(pregunta or ""):
-        for m in _RE_IDENTIFICADOR.finditer(cita):
-            nombre = m.group().rstrip(".")
-            if cita[m.end():].lstrip().startswith("("):
-                continue
-            if len(nombre.lstrip(".")) < 2 or nombre in ajenos:
-                continue
-            antes = r"(?<!\w)" if nombre.startswith(".") else r"(?<![\w.])"
-            if not re.search(rf"{antes}{re.escape(nombre)}(?![\w.])", texto):
-                ajenos.append(nombre)
+        for nombre in _nombres_de_cita(cita):
+            revisar(nombre)
+    for nombre in codigo_suelto(pregunta):
+        revisar(nombre)
+    if isinstance(citados, str):
+        citados = [citados]
+    for cita in citados or []:
+        for nombre in _nombres_de_cita(str(cita), saltar_llamadas=False):
+            revisar(nombre)
     return ajenos
+
+
+def _de_los_demas(salida: list[dict], resto: list[dict]) -> list[str]:
+    """Las preguntas que ya tienen los demás integrantes: las revisadas y las que faltan por revisar."""
+    return [i["pregunta"].strip() for i in salida + resto if (i.get("pregunta") or "").strip()]
+
+
+def _sumar_aviso(integrante: dict, aviso: str) -> dict:
+    actual = (integrante.get("aviso") or "").strip()
+    return {**integrante, "aviso": f"{actual}; {aviso}" if actual else aviso}
+
+
+def _rehecha(nueva: dict) -> dict | None:
+    """La primera pregunta que trae la respuesta del modelo al rehacer, o None."""
+    return next((i for i in nueva.get("integrantes", []) if (i.get("pregunta") or "").strip()), None)
 
 
 def _revisar_citas(integrantes: list[dict], secciones: dict, path_html: Path) -> list[dict]:
@@ -114,8 +189,8 @@ def _revisar_citas(integrantes: list[dict], secciones: dict, path_html: Path) ->
     """
     texto = _texto_entrega(path_html)
     salida = []
-    for integrante in integrantes:
-        ajenos = codigo_ajeno(integrante.get("pregunta") or "", texto)
+    for n, integrante in enumerate(integrantes):
+        ajenos = codigo_ajeno(integrante.get("pregunta") or "", texto, integrante.get("codigo_citado"))
         if not ajenos:
             salida.append(integrante)
             continue
@@ -128,17 +203,63 @@ def _revisar_citas(integrantes: list[dict], secciones: dict, path_html: Path) ->
             nueva = generar_preguntas(
                 secciones, "", {nombre: parte}, rehacer=True,
                 nota=(f"Una pregunta anterior citó {', '.join(ajenos)}, que no aparece en el código "
-                      "del grupo. Pregunta solo sobre código que el grupo escribió."))
-            candidata = next((i for i in nueva.get("integrantes", [])
-                              if (i.get("pregunta") or "").strip()), None)
+                      "del grupo. Pregunta solo sobre código que el grupo escribió."),
+                evitar=_de_los_demas(salida, integrantes[n + 1:]))
+            candidata = _rehecha(nueva)
             if candidata:
                 integrante = {**integrante, "pregunta": candidata["pregunta"],
-                              "pauta": candidata.get("pauta") or integrante.get("pauta")}
-        siguen = codigo_ajeno(integrante.get("pregunta") or "", texto)
+                              "pauta": candidata.get("pauta") or integrante.get("pauta"),
+                              "codigo_citado": candidata.get("codigo_citado")}
+        siguen = codigo_ajeno(integrante.get("pregunta") or "", texto, integrante.get("codigo_citado"))
         if siguen:
             aviso = f"cita código que no está en la entrega: {', '.join(siguen)}"
             print(f"    ⚠  Sigue igual: {aviso}. Revísala antes de enviar.")
-            integrante = {**integrante, "aviso": aviso}
+            integrante = _sumar_aviso(integrante, aviso)
+        salida.append(integrante)
+    return salida
+
+
+def _partes_de(nombre: str, declaradas: dict) -> list[str] | None:
+    clave = " ".join((nombre or "").lower().split())
+    return next((p for n, p in declaradas.items() if " ".join(n.lower().split()) == clave), None)
+
+
+def _revisar_partes(integrantes: list[dict], secciones: dict, declaradas: dict | None) -> list[dict]:
+    """
+    Rehace una vez la pregunta que cae en una parte donde el integrante no declaró código.
+
+    Las partes salen de la tabla de roles leída en código (`partes_declaradas`).
+    Si la rehecha tampoco calza, queda la primera con un aviso en `aviso`.
+    Quien no declaró código en ninguna parte no se revisa: lo rescata
+    `_rescatar_sin_pregunta`, con una parte asignada.
+    """
+    if not declaradas:
+        return integrantes
+    salida = []
+    for n, integrante in enumerate(integrantes):
+        nombre = (integrante.get("nombre") or "").strip()
+        partes = _partes_de(nombre, declaradas)
+        parte = (integrante.get("pregunta_tarea") or "").strip().upper()
+        if not partes or not (integrante.get("pregunta") or "").strip() or parte in partes:
+            salida.append(integrante)
+            continue
+        print(f"    ⚠  La pregunta de {nombre} es sobre {parte or '(sin parte)'}, pero declaró código en "
+              f"{', '.join(partes)}; se rehace.")
+        nueva = generar_preguntas(
+            secciones, "", {nombre: partes}, rehacer=True,
+            nota=(f"Una pregunta anterior fue sobre {parte or 'otra parte'}, donde {nombre} no declaró "
+                  f"código. Pregunta solo sobre {' o '.join(partes)}."),
+            evitar=_de_los_demas(salida, integrantes[n + 1:]))
+        candidata = _rehecha(nueva)
+        if candidata and (candidata.get("pregunta_tarea") or "").strip().upper() in partes:
+            integrante = {**integrante, "pregunta_tarea": candidata["pregunta_tarea"].strip().upper(),
+                          "pregunta": candidata["pregunta"],
+                          "pauta": candidata.get("pauta") or integrante.get("pauta"),
+                          "codigo_citado": candidata.get("codigo_citado")}
+        else:
+            aviso = f"la pregunta es sobre {parte or '(sin parte)'}, pero declaró código en {', '.join(partes)}"
+            print(f"    ⚠  Sigue igual: {aviso}. Revísala antes de enviar.")
+            integrante = _sumar_aviso(integrante, aviso)
         salida.append(integrante)
     return salida
 
@@ -237,6 +358,13 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
 
     elegido = elegido or {}
     asignacion = None
+    declaradas = None
+    if not sin_roles:
+        # Dónde declaró código cada uno lo decide el código, no el modelo.
+        declaradas = partes_declaradas(extraer_tabla_roles(secciones.get("roles_html", "")))
+        if declaradas:
+            print("    → Código declarado: " + "; ".join(
+                f"{n} ({', '.join(p) or 'ninguna'})" for n, p in declaradas.items()))
     if sin_roles:
         asignacion = _asignacion.aplicar(
             _asignar_preguntas(nombres, path_html.name), elegido, path_html.name)
@@ -247,13 +375,14 @@ def procesar_entrega(path_html: Path, tarea: str, alumnos: list[dict],
             print(f"      (elegidas a mano: {', '.join(a_mano)})")
 
     print(f"  → Llamando a {config.MODELO}...")
-    resultado = generar_preguntas(secciones, secciones["roles_html"], asignacion)
+    resultado = generar_preguntas(secciones, secciones["roles_html"], asignacion, declaradas=declaradas)
     tokens = resultado.get("_meta", {}).get("total_tokens", "?")
     print(f"  ✓ {tokens} tokens")
 
     integrantes = resultado.get("integrantes", [])
     integrantes = _rescatar_sin_pregunta(integrantes, secciones, path_html, elegido)
-    integrantes = _revisar_citas(_uno_por_nombre(integrantes), secciones, path_html)
+    integrantes = _revisar_partes(_uno_por_nombre(integrantes), secciones, declaradas)
+    integrantes = _revisar_citas(integrantes, secciones, path_html)
 
     print(f"  → Resolviendo correos...")
     filas = []
@@ -317,10 +446,40 @@ def _sin_repetidos(tarea: str, filas: list[dict]) -> list[dict]:
     return salida
 
 
+def identicos(archivos: list[Path]) -> dict[str, str]:
+    """
+    Los HTML con el mismo contenido que otro: {repetido: el que se queda}.
+
+    El mismo HTML dos veces en un zip ("Tarea1 (1).html") o la entrega subida
+    por dos integrantes pagaban dos llamadas al modelo, y después
+    `_sin_repetidos` botaba una (prueba del 19/11/2026). Se queda el que tiene
+    .Rmd al lado, después el que no termina en "(1)", y después el de nombre más
+    corto.
+    """
+    por_contenido: dict[str, list[Path]] = {}
+    for archivo in archivos:
+        huella = hashlib.sha256(archivo.read_bytes()).hexdigest()
+        por_contenido.setdefault(huella, []).append(archivo)
+    repetidos = {}
+    for grupo in por_contenido.values():
+        if len(grupo) < 2:
+            continue
+        queda = min(grupo, key=lambda p: (not p.with_suffix(".Rmd").exists(),
+                                          bool(re.search(r"\(\d+\)$", p.stem)), len(p.name), p.name))
+        for otro in grupo:
+            if otro != queda:
+                repetidos[otro.name] = queda.name
+    return repetidos
+
+
 def main(tarea: str, archivos: list[Path], interactivo: bool = True) -> None:
     alumnos = cargar_alumnos()
     elegido = _asignacion.leer(tarea)
     correos = _asignacion.leer_correos(tarea)
+    repetidos = identicos(archivos)
+    for repetido, queda in repetidos.items():
+        print(f"⊘ {repetido} tiene el mismo contenido que {queda}: se genera una sola vez, con {queda}.")
+    archivos = [a for a in archivos if a.name not in repetidos]
     print(f"Tarea: {tarea} | {len(alumnos)} alumnos en CSV | {len(archivos)} HTMLs a procesar")
     print(_contexto.describir())
     if elegido:

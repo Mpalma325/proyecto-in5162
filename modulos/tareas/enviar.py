@@ -25,6 +25,7 @@ quedan agendadas para ese plazo. Por eso el plazo se cuenta desde la hora
 programada (--desde), y no desde que la cola lo despachó.
 """
 
+import re
 import sys
 from datetime import datetime, timedelta
 
@@ -32,6 +33,7 @@ from modulos import datos as _datos
 
 from . import asignacion as _asignacion
 from . import config, storage
+from .alumnos import nombre_de_pila
 from modulos.mail import enviar_correo
 from modulos.mail.vista import mostrar_correo
 from modulos.progreso import avanzar
@@ -79,11 +81,50 @@ def texto_plazo(plazo: datetime) -> str:
             f"hasta las {plazo:%H:%M}")
 
 
+# Una fecha u hora escrita a mano en la plantilla: "viernes 11 de septiembre",
+# "11/09", "10:20".
+_RE_FECHA_ESCRITA = re.compile(
+    r"\b\d{1,2}\s+de\s+(?:" + "|".join(_MESES) + r")\b"
+    r"|\b(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\s+\d{1,2}\b"
+    # Con barra y un mes posible (11/9, 11/09/2026), o con guion y año completo
+    # (11-09-2026). «2-3 líneas» o «Preguntas 1-2» no son fechas.
+    r"|\b(?:[0-2]?\d|3[01])/(?:0?[1-9]|1[0-2])(?:/\d{2,4})?\b"
+    r"|\b\d{1,2}-\d{1,2}-\d{4}\b"
+    r"|\b\d{1,2}:\d{2}\b",
+    re.IGNORECASE)
+
+
+def revisar_plazo_plantilla(template: str, plazo: datetime) -> tuple[str, bool]:
+    """
+    Si la plantilla dice el plazo de verdad: (aviso, si hay que detener el envío).
+
+    El plazo se calcula al enviar y entra al correo por {plazo}. La plantilla de
+    2026-2 lo traía escrito a mano ("hoy viernes 11 de septiembre de 2026, hasta
+    las 10:20"), y en la prueba del 19/11 salieron 155 correos con esa fecha
+    mientras el CSV guardaba la real. Sin {plazo}:
+    - con una fecha u hora escrita que no es el plazo de este envío, no se envía;
+    - sin fecha ni hora ("tienes 20 minutos"), se envía con un aviso.
+    """
+    if "{plazo}" in template:
+        return "", False
+    if texto_plazo(plazo) in template:
+        return ("⚠ correo_pregunta.md no usa {plazo}, pero la fecha escrita calza con la de este "
+                f"envío ({texto_plazo(plazo)}). Cámbiala por {{plazo}} para la próxima."), False
+    fecha = _RE_FECHA_ESCRITA.search(template)
+    if fecha:
+        return (f"✗ correo_pregunta.md no usa {{plazo}} y trae una fecha u hora escrita a mano "
+                f"(«{fecha.group()}») que no es el plazo de este envío ({texto_plazo(plazo)}). "
+                "No se envía nada: reemplaza esa fecha por {plazo} (y los minutos por {minutos}) "
+                "en la plantilla."), True
+    return ("⚠ correo_pregunta.md no usa {plazo}: el correo no dice hasta cuándo se puede "
+            f"responder. El plazo que cuenta para recolectar y corregir es {texto_plazo(plazo)}."), False
+
+
 def _construir_cuerpo(template: str, fila: dict, plazo: datetime | None = None,
                       minutos: int = MINUTOS_POR_DEFECTO) -> str:
     plazo = plazo or calcular_plazo(datetime.now().astimezone(), minutos)
     return template.format(
-        nombre=fila["alumno_nombre"].split()[0] if fila["alumno_nombre"] else "estudiante",
+        nombre=nombre_de_pila(fila.get("alumno_correo", ""), fila.get("alumno_nombre", "")),
         tarea=fila["tarea"],
         pregunta_tarea=fila["pregunta_tarea"] or "pregunta",
         pregunta=fila["pregunta"],
@@ -113,7 +154,8 @@ def _completar_correos(tarea: str, filas: list[dict], guardar: bool) -> None:
 
 
 def main(tarea: str, dry_run: bool = False, minutos: int = MINUTOS_POR_DEFECTO,
-         desde: str | None = None) -> None:
+         desde: str | None = None) -> bool:
+    """Devuelve False si no se envió por un problema que hay que arreglar antes."""
     filas = storage.leer_csv(tarea)
     if not filas:
         print(f"No hay CSV para tarea {tarea}. Corre primero el paso 1.")
@@ -161,6 +203,11 @@ def main(tarea: str, dry_run: bool = False, minutos: int = MINUTOS_POR_DEFECTO,
         print(f"\n{aviso}")
     plazo = calcular_plazo(inicio, minutos)
     print(f"\nPlazo para responder: {texto_plazo(plazo)} ({minutos} minutos).")
+    aviso_plantilla, detener = revisar_plazo_plantilla(template, plazo)
+    if aviso_plantilla:
+        print(f"\n{aviso_plantilla}")
+    if detener and not dry_run:
+        return False
     if dry_run:
         print("\n--- DRY RUN (no se envía nada) ---")
     else:
@@ -193,6 +240,7 @@ def main(tarea: str, dry_run: bool = False, minutos: int = MINUTOS_POR_DEFECTO,
             print(f"  ✓ {fila['alumno_nombre']:30s} → {fila['alumno_correo']}")
         except Exception as e:
             print(f"  ✗ {fila['alumno_nombre']:30s} → {fila['alumno_correo']}: {e}")
+    return True
 
 
 if __name__ == "__main__":
@@ -212,4 +260,5 @@ if __name__ == "__main__":
         elif a.upper().startswith('T') and a[1:].isdigit():
             tarea = a.upper()
 
-    main(tarea, dry_run, minutos, desde)
+    if main(tarea, dry_run, minutos, desde) is False:
+        sys.exit(1)

@@ -101,6 +101,17 @@ def _html_a_texto(html: str) -> str:
     return soup.get_text("\n", strip=True)
 
 
+def _adjuntos(msg: email.message.Message) -> list[str]:
+    """Los nombres de los archivos adjuntos. No se leen: sirven para avisar que venían."""
+    nombres = []
+    for parte in msg.walk():
+        if parte.is_multipart():
+            continue
+        if "attachment" in str(parte.get("Content-Disposition") or "").lower():
+            nombres.append(_decodificar_header(parte.get_filename() or "") or parte.get_content_type())
+    return nombres
+
+
 def _recuperar_de_la_cita(lineas: list) -> str:
     """Texto del alumno escrito DENTRO del bloque citado.
 
@@ -108,6 +119,10 @@ def _recuperar_de_la_cita(lineas: list) -> str:
     quedan con '>' delante y se descartarían como si fueran del correo
     original. Se sacan las marcas y se limpia de nuevo, que ahora corta por el
     'El ... escribió:' y deja fuera la pregunta.
+
+    Si el alumno no escribió nada, lo recuperado es el correo original entero.
+    Sin ese correo no hay cómo distinguir un caso del otro: quien lo tiene lo
+    revisa con `es_solo_eco` (Tareas, en recolectar).
     """
     import re
     sin_marcas = chr(10).join(re.sub(r'^\s*>+ ?', '', l) for l in lineas)
@@ -223,6 +238,67 @@ def _descitar(texto: str, _descitado: bool = False) -> str:
 def _limpiar_respuesta(texto: str) -> str:
     """Lo que escribió el alumno: sin la cita del correo original, el saludo ni la firma."""
     return _sin_saludo_ni_firma(_descitar(texto))
+
+
+def _normal_eco(linea: str) -> str:
+    """Una línea para comparar con el correo enviado: sin marcas de cita ni espacios de más."""
+    linea = re.sub(r"^\s*(?:>\s*)+", "", linea.replace("\xa0", " "))
+    return " ".join(linea.split()).casefold()
+
+
+def es_solo_eco(texto: str, plantilla: str, valores: dict) -> bool:
+    """
+    ¿Todo lo que queda de la respuesta venía en el correo que se le envió?
+
+    Quien responde sin escribir nada deja solo la cita, y `_descitar` la toma
+    por una respuesta escrita dentro de ella: quedaba registrada como respuesta
+    nuestra propia pregunta (prueba de Tareas del 19/11/2026, 8 de 8 casos).
+    Con el correo enviado a la vista sí se distingue: si ninguna línea es del
+    alumno, la respuesta está vacía.
+
+    `plantilla` es la del correo, con sus {campos}; los de `valores` se
+    reemplazan y los demás (los minutos, por ejemplo) calzan con cualquier
+    texto corto. Una línea es eco si es una línea entera del correo, o un trozo
+    de seis palabras o más de él, o el encabezado "El … escribió:". Hay
+    clientes que cortan las líneas largas al citar: por eso también se compara
+    cada párrafo entero (las líneas seguidas, sin una en blanco entre ellas).
+    Solo dice si TODO es eco: una respuesta con una sola línea propia se deja
+    entera, como antes.
+    """
+    parrafos = [[l for l in p.splitlines() if _normal_eco(l)]
+                for p in re.split(r"\n\s*(?:>\s*)*\n", (texto or "").replace("\r\n", "\n"))]
+    parrafos = [p for p in parrafos if p]
+    if not parrafos:
+        return False
+
+    comodin = "\x00"
+    enviado = re.sub(r"\{(\w+)\}",
+                     lambda m: str(valores[m.group(1)]) if valores.get(m.group(1)) is not None else comodin,
+                     (plantilla or "").replace("\r\n", "\n"))
+    normales = [_normal_eco(l) for l in enviado.splitlines()]
+    # Las líneas y los párrafos del correo enviado.
+    piezas = normales + [" ".join(_normal_eco(l) for l in p.splitlines()).strip()
+                         for p in re.split(r"\n\s*\n", enviado)]
+    enteras = {l for l in piezas if l and comodin not in l}
+    # Las que tienen un campo desconocido calzan como patrón, si les queda texto
+    # fijo suficiente: "Tienes {minutos} minutos…" sí, "{nombre}:" no.
+    patrones = [re.compile(".{1,80}?".join(re.escape(t) for t in l.split(comodin)))
+                for l in piezas
+                if comodin in l and len(re.sub(r"\W", "", l.replace(comodin, ""))) >= 4]
+    trozos = " ".join(normales).split(comodin)
+
+    def eco(linea: str) -> bool:
+        return (linea in enteras
+                or any(p.fullmatch(linea) for p in patrones)
+                or (len(linea.split()) >= 6 and any(linea in t for t in trozos)))
+
+    def encabezado(original: str) -> bool:
+        sin_marcas = re.sub(r"^\s*(?:>\s*)+", "", original).strip()
+        return bool(_ENCABEZADO_CITA.match(sin_marcas) or _FIN_ENCABEZADO.match(sin_marcas))
+
+    return all(eco(" ".join(_normal_eco(l) for l in p))
+               or all(eco(_normal_eco(l)) or encabezado(l) for l in p)
+               for p in parrafos)
 
 
 # Idea tomada del limpiador de Renzo (socrates): quitar saludo y firma. Pero

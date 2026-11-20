@@ -91,6 +91,8 @@ with semestre_desechable(base='_template', sid='_tmp_segunda_oportunidad') as (s
     check('la pauta no va en el correo', 'Pauta nueva' not in borrador)
 
     titulo('Enviar')
+    # El primer envío dejó su plazo; el de la segunda oportunidad va en la plantilla.
+    storage.actualizar_fila('T1', 'grupo.html', 'Beto', {'plazo': '2026-09-25T09:00-03:00'})
     with patch.object(segunda, 'enviar_correo', side_effect=['<nueva-beto@t>', '<nueva-carla@t>']) as smtp:
         segunda.enviar('T1')
         check('un correo a cada uno', smtp.call_count == 2, smtp.call_count)
@@ -101,20 +103,31 @@ with semestre_desechable(base='_template', sid='_tmp_segunda_oportunidad') as (s
           fb['Beto']['pregunta'] == NUEVA['Beto']
           and fb['Beto']['pauta'] == 'Pauta nueva de Beto'
           and fb['Beto']['message_id'] == '<nueva-beto@t>')
+    check('el plazo del primer envío se borra: con él, toda respuesta nueva sería tardía',
+          fb['Beto']['plazo'] == '', fb['Beto'])
     check('a quien ya respondió no se le toca', fb['Ana']['pregunta'] == 'Pregunta original de Ana')
     check('la original queda guardada',
           segunda.leer('T1')[0]['pregunta_original'] == 'Pregunta original de Beto')
 
     titulo('Recolectar y corregir, los de siempre')
     with patch.object(recolectar, 'buscar_respuestas',
-                      return_value={'<nueva-beto@t>': {'remitente': 'beto@example.test',
-                                                       'texto': 'Mi respuesta.',
-                                                       'fecha': '2026-09-25T10:20:00'}}) as buscar:
+                      return_value={'<nueva-beto@t>': [
+                          {'remitente': 'beto@example.test', 'texto': 'Mi respuesta.',
+                           'fecha': '2026-09-25T10:20:00-03:00', 'adjuntos': []},
+                          {'remitente': 'beto@example.test', 'texto': 'Y un agregado.',
+                           'fecha': '2026-09-25T10:22:00-03:00', 'adjuntos': []}]}) as buscar:
         recolectar.main('T1')
         ids = buscar.call_args.args[0]
         check('busca respuestas al correo nuevo, no al original',
               {'<nueva-beto@t>', '<nueva-carla@t>'} <= set(ids)
               and '<original-Beto@example.test>' not in ids, ids)
+    respuesta_beto = [e['Respuesta'] for e in datos.log.leer(flujo=datos.TAREAS, item='T1', evento='respuesta')
+                      if e['Correo'] == 'beto@example.test']
+    check('con todo el hilo: los dos correos de la segunda oportunidad, juntos y a tiempo',
+          respuesta_beto and respuesta_beto[-1].startswith('Mi respuesta.') and 'Y un agregado.' in respuesta_beto[-1]
+          and not storage.respondio_tarde(storage.leer_csv('T1')[1],
+                                          datos.notas.estado('beto@example.test', datos.TAREAS, 'T1')['Respondio']),
+          respuesta_beto)
     (config.PROMPTS / 'correo_feedback.md').write_text(
         'Hola {nombre}:\n{comentario}\nAjuste a la nota de la tarea: {ajuste} puntos',
         encoding='utf-8')

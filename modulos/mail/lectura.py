@@ -22,7 +22,7 @@ from datetime import datetime
 from email.utils import parseaddr
 
 from . import credenciales
-from .limpieza import _decodificar_header, _extraer_cuerpo, _limpiar_respuesta
+from .limpieza import _adjuntos, _decodificar_header, _extraer_cuerpo, _limpiar_respuesta
 
 
 def buscar_no_leidos(filtro_asunto=None, filtro=None) -> list[dict]:
@@ -150,12 +150,15 @@ def buscar_respuestas_semana(semana: int, nombre: str | None = None,
     return buscar_no_leidos(filtro=lambda c: es_respuesta_de_instancia(c, nombre, propios, ajenos))
 
 
-def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
+def buscar_respuestas(message_ids: list[str]) -> dict[str, list[dict]]:
     """
     Busca en el inbox mensajes cuyo header In-Reply-To apunte a alguno
     de los message_ids dados.
 
-    Devuelve {message_id_original: {'remitente': ..., 'texto': ..., 'fecha': ...}}.
+    Devuelve {message_id_original: [{'remitente', 'texto', 'fecha', 'adjuntos'}, ...]},
+    con todas las respuestas del hilo, sin orden. Qué cuenta (la primera, las que
+    llegaron a tiempo) lo decide recolectar. Se incluyen las que vienen sin
+    texto pero con adjuntos, para poder avisarlo.
     """
     if not message_ids:
         return {}
@@ -199,11 +202,6 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
             if not coincide_id:
                 continue
 
-            # Si ya encontré una respuesta para ese id, quedarme con la más reciente
-            # (al iterar en reversed, la primera que encuentro es la más reciente)
-            if coincide_id in resultado:
-                continue
-
             _, remitente = parseaddr(msg.get("From", ""))
             remitente = remitente.strip().lower()
             fecha_hdr = msg.get("Date", "")
@@ -213,17 +211,18 @@ def buscar_respuestas(message_ids: list[str]) -> dict[str, dict]:
                 fecha = datetime.now().isoformat()
 
             cuerpo = _limpiar_respuesta(_extraer_cuerpo(msg))
-            if not cuerpo.strip():
+            adjuntos = _adjuntos(msg)
+            if not cuerpo.strip() and not adjuntos:
                 continue
 
-            resultado[coincide_id] = {
+            # Todas las del hilo: quedarse con la más reciente hacía que un
+            # "se me olvidó agregar…" reemplazara la respuesta.
+            resultado.setdefault(coincide_id, []).append({
                 "remitente": remitente,
                 "texto": cuerpo,
                 "fecha": fecha,
-            }
-
-            if len(resultado) == len(message_ids):
-                break
+                "adjuntos": adjuntos,
+            })
 
     return resultado
 
