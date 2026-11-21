@@ -71,7 +71,9 @@ def activar(semestre_id: str) -> None:
 # nombre tienen una de estas marcas. Se llenan al copiar la plantilla, acá y en
 # instalar.py (que la sube al sitio), con los datos del .env.
 MARCA = re.compile(r"«([A-Z_]+)»")
-MARCAS = ("CURSO", "NOMBRE_CURSO", "PROFESOR")
+# «FIRMA» es la firma de los correos automáticos: por defecto «Equipo <CURSO>»,
+# no el nombre de una persona, porque los manda el sistema.
+MARCAS = ("CURSO", "NOMBRE_CURSO", "FIRMA")
 _CON_MARCAS = (".md", ".csv", ".txt", ".json")
 
 
@@ -100,8 +102,13 @@ def llenar_marcas(texto: str, valores: dict[str, str]) -> str:
     return MARCA.sub(poner, texto)
 
 
+def firma_por_defecto(curso: str) -> str:
+    """Cómo firman los correos si nadie lo cambió: «Equipo IN5162»."""
+    return f"Equipo {curso.strip().upper()}"
+
+
 def datos_del_curso() -> dict[str, str]:
-    """CURSO, NOMBRE_CURSO y PROFESOR, del entorno o del .env de la raíz."""
+    """CURSO, NOMBRE_CURSO y FIRMA, del entorno o del .env de la raíz."""
     valores: dict[str, str] = {}
     env = PROJECT_ROOT / ".env"
     if env.exists():
@@ -112,6 +119,7 @@ def datos_del_curso() -> dict[str, str]:
     valores.update({k: os.environ[k] for k in MARCAS if os.environ.get(k, "").strip()})
     # Como en config.py: sin CURSO, el curso es IN5162.
     valores["CURSO"] = valores.get("CURSO", "").strip() or "IN5162"
+    valores["FIRMA"] = valores.get("FIRMA", "").strip() or firma_por_defecto(valores["CURSO"])
     return valores
 
 
@@ -137,7 +145,7 @@ def crear(semestre_id: str) -> None:
                 faltan = sorted({m for m in MARCA.findall(texto) if not valores.get(m, "").strip()})
                 if faltan:
                     # Antes de copiar: un semestre a medio llenar mandaría
-                    # «PROFESOR» en la firma de los correos.
+                    # «NOMBRE_CURSO» en los prompts.
                     raise ValueError(
                         f"Falta {', '.join(faltan)} en el .env: la plantilla lo usa en "
                         f"{p.relative_to(TEMPLATE_DIR).as_posix()} (prompts y firma de los correos)."

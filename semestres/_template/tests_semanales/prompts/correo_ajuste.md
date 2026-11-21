@@ -9,5 +9,5 @@
     Si tienes dudas, responde este correo.
   </p>
 
-  <p>Saludos,<br>«PROFESOR» y el equipo docente de «CURSO»</p>
+  <p>Saludos,<br>«FIRMA»</p>
 </div>

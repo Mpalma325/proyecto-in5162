@@ -21,7 +21,7 @@ Para que no haya sorpresas, la página 2 deja dos topes: una alerta de presupues
 ## Qué decidir antes
 
 1. **El código del curso**, por ejemplo `ABC123`. Va en el asunto de los correos que reciben los alumnos y en el nombre de todo lo que se crea: el sitio queda en `https://abc123.<subdominio>.workers.dev` y el motor se llama `abc123-motor`. Admite letras, números y guiones, empieza con una letra y tiene entre 2 y 21 caracteres. Cambiarlo después equivale a instalar de nuevo.
-2. **El nombre del curso** («Taller de Datos») y **el nombre del profesor o profesora** a cargo. Van en los prompts de corrección y en la firma de los correos. No pueden llevar llaves `{ }`.
+2. **El nombre del curso** («Taller de Datos») y **la firma de los correos**. El nombre va en los prompts de corrección. Los correos los manda el sistema, así que por defecto firman con el equipo y el código, «Equipo ABC123», y no con una persona; así no hay que cambiar nada cuando el curso cambia de profesor. Si prefieres otra firma, el instalador la pregunta, y en cada semestre se puede editar en los prompts de correo. Ninguno de los dos puede llevar llaves `{ }`.
 3. **Quiénes entran al sitio**: los correos del equipo docente. Todos tienen el mismo acceso, y ese acceso incluye mandar correos a los alumnos. Entran con un código que les llega al correo, así que no necesitan crear cuentas.
 4. **Qué cuenta es dueña de todo.** Usa una sola cuenta de Gmail del curso (por ejemplo curso.abc123@gmail.com) para el correo, OpenAI, Cloudflare y Google Cloud. Hay tres motivos:
    - Las cuentas sobreviven al cambio de ayudantes o de profesor.
@@ -38,7 +38,7 @@ El instalador pide estos datos, en este orden. En la página 2 los vas a ir obte
 
 1. Código del curso (`ABC123`)
 2. Nombre del curso (`Taller de Datos`)
-3. Nombre del profesor o profesora
+3. Firma de los correos (`Equipo ABC123` si dejas la que viene)
 4. Correo del curso (`curso.abc123@gmail.com`)
 5. Contraseña de aplicación del correo (16 letras)
 6. Clave de la API de OpenAI (empieza con `sk-`)

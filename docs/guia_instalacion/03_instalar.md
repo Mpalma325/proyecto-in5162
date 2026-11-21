@@ -103,10 +103,10 @@ Nombre del curso (ej. Economía de la Empresa):
 Escribe `Taller de Datos`.
 
 ```
-Nombre del profesor o profesora a cargo:
+Firma de los correos automáticos [Equipo ABC123]:
 ```
 
-Escribe el nombre como debe aparecer en la firma de los correos.
+Enter deja la firma que aparece entre corchetes: «Equipo» y el código del curso. Si quieres otra, escríbela como debe aparecer al final de los correos.
 
 ### El correo del curso
 
@@ -287,7 +287,7 @@ Crea en Cloudflare la aplicación que cierra el sitio, con la lista de correos. 
 === Plantilla de semestre, con el nombre del curso
 ```
 
-Publica el sitio y sube la plantilla con la que se crea cada semestre: los prompts y correos, con el código, el nombre del curso y el del profesor ya escritos. Un sitio recién creado puede tardar unos minutos en responder. Mientras tanto aparece, hasta seis veces:
+Publica el sitio y sube la plantilla con la que se crea cada semestre: los prompts y correos, con el código, el nombre del curso y la firma ya escritos. Un sitio recién creado puede tardar unos minutos en responder. Mientras tanto aparece, hasta seis veces:
 
 ```
   El sitio todavía no responde (...); reintento en 20 s...

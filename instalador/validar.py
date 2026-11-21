@@ -44,9 +44,9 @@ def error_codigo(codigo: str) -> str | None:
 
 
 def error_nombre(nombre: str) -> str | None:
-    """Nombre del curso o del profesor: va en los prompts y en la firma de los correos."""
+    """Nombre del curso o firma de los correos: van en los prompts y en los correos."""
     if not (nombre or "").strip():
-        return "No puede quedar vacío: va en la firma de los correos."
+        return "No puede quedar vacío: va en los prompts y en los correos."
     if "{" in nombre or "}" in nombre:
         return "Sin llaves { }: los correos las usan para sus campos."
     return None

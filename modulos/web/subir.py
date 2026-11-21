@@ -92,7 +92,7 @@ def _archivos_de(semestre_id: str) -> list:
 
 def _contenido(semestre_id: str, p, valores: dict[str, str] | None) -> bytes:
     """Los bytes que se suben. La plantilla del repositorio tiene marcas
-    («CURSO», «PROFESOR»...) donde va el nombre del curso: sube llena, igual que
+    («CURSO», «FIRMA»...) donde va el nombre del curso: sube llena, igual que
     la sube instalar.py, porque el sitio crea los semestres copiándola tal cual.
     Un archivo sin marcas sube tal cual: así su MD5 sigue calzando con el de R2."""
     datos = p.read_bytes()
@@ -173,7 +173,7 @@ def main_plantilla(simular: bool = False) -> int:
     try:
         r = subir_plantilla(config.cargar_token_web(), simular)
     except ValueError as e:
-        print(f"  ✗ no subí la plantilla: {e} Agrega NOMBRE_CURSO y PROFESOR al .env.")
+        print(f"  ✗ no subí la plantilla: {e} Agrega NOMBRE_CURSO al .env (y FIRMA si los correos no deben firmar «Equipo <curso>»).")
         return 1
     except urllib.error.HTTPError as e:
         print(f"  ✗ el sitio respondió {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")

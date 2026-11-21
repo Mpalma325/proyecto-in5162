@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from modulos.semestre.gestion import firma_por_defecto
+
 from . import cloudflare as cfl
 from . import gcp, validar
 from .cloudflare import Cloudflare
@@ -111,8 +113,9 @@ def preguntar_curso(ctx: Contexto) -> None:
                                 revisar=validar.error_codigo, normalizar=lambda v: v.strip().upper())
     ctx.datos["nombre"] = _valor(ctx, "NOMBRE_CURSO", "Nombre del curso (ej. Economía de la Empresa)",
                                  revisar=validar.error_nombre)
-    ctx.datos["profesor"] = _valor(ctx, "PROFESOR", "Nombre del profesor o profesora a cargo",
-                                   revisar=validar.error_nombre)
+    # Los correos los manda el sistema: por defecto firma el equipo, no una persona.
+    ctx.datos["firma"] = _valor(ctx, "FIRMA", "Firma de los correos automáticos",
+                                defecto=firma_por_defecto(ctx.datos["curso"]), revisar=validar.error_nombre)
 
 
 def preguntar_correo(ctx: Contexto, de_nuevo: bool = False) -> None:
@@ -350,7 +353,7 @@ def publicar_sitio(ctx: Contexto, cf: Cloudflare) -> None:
 def subir_plantilla(ctx: Contexto) -> None:
     paso("Plantilla de semestre, con el nombre del curso", ctx.escribir)
     valores = {"CURSO": ctx.env.get("CURSO").upper(), "NOMBRE_CURSO": ctx.env.get("NOMBRE_CURSO"),
-               "PROFESOR": ctx.env.get("PROFESOR")}
+               "FIRMA": ctx.env.get("FIRMA") or firma_por_defecto(ctx.env.get("CURSO"))}
     r = cfl.subir_plantilla(ctx.ej, ctx.env.get("WEB_URL"), ctx.env.get("WEB_TOKEN"), valores,
                             espera=0 if ctx.ej.simular else 20)
     ctx.escribir(f"  ✓ {len(r['nuevos'])} archivos nuevos, {len(r['ya_estaban'])} ya estaban "
@@ -410,7 +413,7 @@ def _exigir(ctx: Contexto, claves: tuple[str, ...]) -> None:
 
 # Cada clave una vez: los tokens internos también están entre los secretos del motor.
 INSTALADO = tuple(dict.fromkeys((
-    "CURSO", "NOMBRE_CURSO", "PROFESOR", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
+    "CURSO", "NOMBRE_CURSO", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_D1_ID", "WEB_URL", "WEB_TOKEN", "TOKEN_WEB", "GCP_PROYECTO", "GCP_REGION",
     "MOTOR_URL", "ACCESO_EQUIPO", "ACCESO_AUD", *gcp.SECRETOS.values())))
 

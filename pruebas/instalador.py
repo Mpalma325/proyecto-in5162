@@ -195,7 +195,7 @@ check("id de proyecto vs nombre del proyecto",
       validar.error_proyecto("curso-motor-123") is None and validar.error_proyecto("Mi Proyecto") is not None)
 check("account id de Cloudflare: 32 hexadecimales",
       validar.error_cuenta_cf(CUENTA) is None and validar.error_cuenta_cf("abc") is not None)
-check("nombre del curso y del profesor: no vacíos y sin llaves (los correos usan str.format)",
+check("nombre del curso y firma: no vacíos y sin llaves (los correos usan str.format)",
       validar.error_nombre("Investigación & Desarrollo") is None and validar.error_nombre("  ") is not None
       and validar.error_nombre("Curso {2027}") is not None)
 
@@ -551,7 +551,9 @@ crudos = {p.relative_to(plantilla.PLANTILLA).as_posix(): p.read_text(encoding="u
           for p in plantilla.PLANTILLA.rglob("*") if p.is_file() and p.suffix in (".md", ".csv")}
 menciones = {r: PROHIBIDO.findall(t) for r, t in crudos.items() if PROHIBIDO.search(t)}
 check(f"ningún archivo de la plantilla ({len(crudos)}) nombra a IN5162 ni su contexto", not menciones, menciones)
-datos_curso = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Curso de Prueba", "PROFESOR": "Ana Prueba"}
+from modulos.semestre.gestion import firma_por_defecto as gestion_firma  # noqa: E402
+
+datos_curso = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Curso de Prueba", "FIRMA": "Equipo docente ZZ9999"}
 archivos = dict(plantilla.archivos(datos_curso))
 textos = {r: d.decode("utf-8") for r, d in archivos.items() if r.endswith((".md", ".csv"))}
 check("no queda ninguna marca «...» sin llenar", not any("«" in t for t in textos.values()),
@@ -560,9 +562,10 @@ check("los prompts de corrección y tutoría nombran al curso",
       all("ZZ9999 (Curso de Prueba)" in textos[r] for r in (
           "tests_semanales/prompts/evaluar_respuesta.md", "tests_semanales/prompts/tutoria.md",
           "tareas/prompts/corregir_respuesta.md", "tareas/prompts/generar_preguntas.md")))
-check("los correos firman con el profesor y el curso",
-      "Ana Prueba y el equipo docente de ZZ9999" in textos["tareas/prompts/correo_pregunta.md"]
-      and "Ana Prueba y el equipo docente de ZZ9999" in textos["tests_semanales/prompts/correo_pregunta.md"])
+check("los correos firman con la FIRMA del curso, no con una persona",
+      "Saludos,\nEquipo docente ZZ9999" in textos["tareas/prompts/correo_pregunta.md"]
+      and "Saludos,<br>Equipo docente ZZ9999</p>" in textos["tests_semanales/prompts/correo_pregunta.md"])
+check("sin FIRMA, el curso firma «Equipo <código>»", gestion_firma("zz9999") == "Equipo ZZ9999")
 campos = lambda t: {c for _, c, _, _ in string.Formatter().parse(t) if c}  # noqa: E731
 formato = ["tareas/prompts/correo_pregunta.md", "tareas/prompts/correo_feedback.md",
            "tareas/prompts/correo_segunda_oportunidad.md"]
@@ -594,14 +597,20 @@ del_entorno = {k: os.environ.pop(k) for k in gestion.MARCAS if k in os.environ}
 with tempfile.TemporaryDirectory() as tmp:
     gestion.PROJECT_ROOT, gestion.SEMESTRES_DIR = Path(tmp), Path(tmp) / "semestres"
     gestion.SEMESTRES_DIR.mkdir()
-    (Path(tmp) / ".env").write_text("CURSO=ZZ9999\nNOMBRE_CURSO=Curso de Prueba\n", encoding="utf-8")
+    (Path(tmp) / ".env").write_text("CURSO=ZZ9999\n", encoding="utf-8")
     try:
         gestion.crear("2099-1")
-        check("en el PC, sin PROFESOR en el .env: no crea el semestre", False)
+        check("en el PC, sin NOMBRE_CURSO en el .env: no crea el semestre", False)
     except ValueError as e:
-        check("en el PC, sin PROFESOR en el .env: no crea el semestre y dice qué falta",
-              "PROFESOR" in str(e) and not (gestion.SEMESTRES_DIR / "2099-1").exists(), str(e))
-    (Path(tmp) / ".env").write_text("CURSO=ZZ9999\nNOMBRE_CURSO=Curso de Prueba\nPROFESOR=Ana Prueba\n",
+        check("en el PC, sin NOMBRE_CURSO en el .env: no crea el semestre y dice qué falta",
+              "NOMBRE_CURSO" in str(e) and not (gestion.SEMESTRES_DIR / "2099-1").exists(), str(e))
+    (Path(tmp) / ".env").write_text("CURSO=ZZ9999\nNOMBRE_CURSO=Curso de Prueba\n", encoding="utf-8")
+    gestion.crear("2099-0")
+    sin_firma = (gestion.SEMESTRES_DIR / "2099-0" / "tareas" / "prompts" / "correo_pregunta.md").read_text(
+        encoding="utf-8")
+    check("en el PC, sin FIRMA en el .env: crea el semestre y los correos firman «Equipo ZZ9999»",
+          "Saludos,\nEquipo ZZ9999" in sin_firma and "«" not in sin_firma, sin_firma[-120:])
+    (Path(tmp) / ".env").write_text("CURSO=ZZ9999\nNOMBRE_CURSO=Curso de Prueba\nFIRMA=Equipo docente ZZ9999\n",
                                     encoding="utf-8")
     gestion.crear("2099-1")
     creado = gestion.SEMESTRES_DIR / "2099-1"
@@ -625,25 +634,26 @@ check("y los archivos de un semestre los sube tal cual",
 with tempfile.TemporaryDirectory() as tmp:
     sin_marcas, con_marcas = Path(tmp) / "resumen.md", Path(tmp) / "firma.md"
     sin_marcas.write_bytes("Resumen de la semana\r\n{RESPUESTAS}\r\n".encode("utf-8"))
-    con_marcas.write_bytes("Saludos,\r\n«PROFESOR»\r\n".encode("utf-8"))
+    con_marcas.write_bytes("Saludos,\r\n«FIRMA»\r\n".encode("utf-8"))
     check("un archivo de la plantilla sin marcas sube byte a byte (su MD5 sigue calzando con R2)",
           subir._contenido("_template", sin_marcas, datos_curso) == sin_marcas.read_bytes())
     check("uno con marcas sube lleno",
-          subir._contenido("_template", con_marcas, datos_curso) == "Saludos,\nAna Prueba\n".encode("utf-8"))
+          subir._contenido("_template", con_marcas, datos_curso)
+          == "Saludos,\nEquipo docente ZZ9999\n".encode("utf-8"))
 
 # Los correos de tests_semanales son HTML: el nombre va escapado. Los de tareas, texto.
-raro = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Investigación & Desarrollo", "PROFESOR": "Ana <Bea> & Co."}
+raro = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Investigación & Desarrollo", "FIRMA": "Ana <Bea> & Co."}
 html_ = dict(plantilla.archivos(raro))
 correo_html = html_["tests_semanales/prompts/correo_pregunta.md"].decode("utf-8")
 correo_txt = html_["tareas/prompts/correo_pregunta.md"].decode("utf-8")
 check("en un correo HTML, & < > del nombre van escapados",
-      "Ana &lt;Bea&gt; &amp; Co. y el equipo docente" in correo_html and "<Bea>" not in correo_html,
+      "<br>Ana &lt;Bea&gt; &amp; Co.</p>" in correo_html and "<Bea>" not in correo_html,
       correo_html[-200:])
 check("en los archivos de texto (correos y prompts de tareas) van tal cual",
-      "Ana <Bea> & Co. y el equipo docente" in correo_txt
+      "Saludos,\nAna <Bea> & Co." in correo_txt
       and "Investigación & Desarrollo" in html_["tareas/prompts/corregir_respuesta.md"].decode("utf-8"))
 try:
-    plantilla.renderizar("Saludos, «PROFESOR»", {**datos_curso, "PROFESOR": "Ana {x}"})
+    plantilla.renderizar("Saludos, «FIRMA»", {**datos_curso, "FIRMA": "Ana {x}"})
     check("un nombre con llaves no se mete en un correo que se llena con str.format", False)
 except ValueError:
     check("un nombre con llaves no se mete en un correo que se llena con str.format", True)
@@ -668,7 +678,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # ---------------------------------------------------------------- 12. --simular
 
 titulo("12. --simular no corre nada y muestra todo lo que haría")
-RESPUESTAS = ["zz9999", "Curso de Prueba", "Ana Prueba", "curso@ejemplo.cl", "clave-correo-falsa",
+RESPUESTAS = ["zz9999", "Curso de Prueba", "", "curso@ejemplo.cl", "clave-correo-falsa",
               "sk-falsa-de-prueba", CUENTA, "token-cf-falso", "curso-motor", "",
               "profe@ejemplo.cl, ayudante@ejemplo.cl", ""]
 with tempfile.TemporaryDirectory() as tmp:
@@ -716,7 +726,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # ---------------------------------------------------------------- 13. actualizar, estado, credenciales
 
 titulo("13. actualizar, estado y credenciales")
-COMPLETO = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Curso de Prueba", "PROFESOR": "Ana Prueba",
+COMPLETO = {"CURSO": "ZZ9999", "NOMBRE_CURSO": "Curso de Prueba", "FIRMA": "Equipo ZZ9999",
             "CLOUDFLARE_API_TOKEN": "token-cf-falso", "CLOUDFLARE_ACCOUNT_ID": CUENTA,
             "CLOUDFLARE_D1_ID": "uuid-1", "WEB_URL": "https://zz9999.miscursos.workers.dev",
             "WEB_TOKEN": "t-motor", "TOKEN_WEB": "t-web", "GCP_PROYECTO": "curso-motor",

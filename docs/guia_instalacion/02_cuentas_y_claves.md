@@ -156,4 +156,4 @@ La alerta manda un correo a la cuenta cuando el gasto se acerca al monto. No det
 
 ## Antes de pasar a la página 3
 
-Revisa que la hoja de datos tenga los 11 datos de la página 1: código, nombre del curso, profesor, correo, contraseña de aplicación, clave de OpenAI, Account ID, token de Cloudflare, ID del proyecto, región (se deja `us-central1`) y correos del equipo. Revisa también que R2 y Zero Trust estén activados en Cloudflare y que el proyecto de Google Cloud tenga la facturación vinculada: el instalador lo comprueba y se detiene si falta.
+Revisa que la hoja de datos tenga los 11 datos de la página 1: código, nombre del curso, firma, correo, contraseña de aplicación, clave de OpenAI, Account ID, token de Cloudflare, ID del proyecto, región (se deja `us-central1`) y correos del equipo. Revisa también que R2 y Zero Trust estén activados en Cloudflare y que el proyecto de Google Cloud tenga la facturación vinculada: el instalador lo comprueba y se detiene si falta.

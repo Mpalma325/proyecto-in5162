@@ -475,7 +475,7 @@ with _tempfile2.TemporaryDirectory() as tmp:
               _pedidos)
 
         # La plantilla del repositorio trae marcas: sube llena o no sube.
-        (_raiz_plantilla / "firma.md").write_text("Saludos, «PROFESOR»", encoding="utf-8")
+        (_raiz_plantilla / "firma.md").write_text("Saludos, «NOMBRE_CURSO» · «FIRMA»", encoding="utf-8")
         _semestre_mod.datos_del_curso = lambda: {"CURSO": "ABC123"}
         _pedidos.clear()
         try:
@@ -484,15 +484,15 @@ with _tempfile2.TemporaryDirectory() as tmp:
             _sin_dato = False
         except ValueError:
             _sin_dato = True
-        check("sin PROFESOR no sube nada: falla antes del primer PUT",
+        check("sin NOMBRE_CURSO no sube nada: falla antes del primer PUT",
               _sin_dato and not [p for p in _pedidos if p[0] == "PUT"], _pedidos)
-        _semestre_mod.datos_del_curso = lambda: {"CURSO": "ABC123", "NOMBRE_CURSO": "Taller", "PROFESOR": "Ana Rojas"}
+        _semestre_mod.datos_del_curso = lambda: {"CURSO": "ABC123", "NOMBRE_CURSO": "Taller", "FIRMA": "Equipo ABC123"}
         _pedidos.clear()
         _cuerpos.clear()
         with _contextlib.redirect_stdout(_io2.StringIO()):
             _subir.subir_plantilla("token-falso")
         check("con los datos, la firma sube llena",
-              _cuerpos.get("motor/archivo/_template/firma.md") == "Saludos, Ana Rojas".encode(), _cuerpos)
+              _cuerpos.get("motor/archivo/_template/firma.md") == "Saludos, Taller · Equipo ABC123".encode(), _cuerpos)
     finally:
         _subir._pedir, _semestre_mod.raiz = _pedir_real, _raiz_real
         _semestre_mod.datos_del_curso = _datos_del_curso_real

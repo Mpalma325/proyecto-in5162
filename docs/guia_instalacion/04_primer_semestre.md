@@ -91,7 +91,7 @@ Los prompts son las instrucciones que recibe el modelo. Ahí está la política 
 
 1. En «Configuración», abre la pestaña «Prompts». Arriba hay una lista «Prompt» con el nombre de cada uno y su archivo entre paréntesis.
 2. Revisa al menos los de Tests Semanales: «Cómo corrige la IA cada respuesta» (`evaluar_respuesta.md`; hoy da de 0 a 3 puntos por pregunta y la nota va de 4,0 a 7,0), «Correo con la pregunta de la semana» (`correo_pregunta.md`), «Correo con la corrección» (`correo_correccion.md`) y «Cómo responde la IA las dudas de los alumnos» (`tutoria.md`).
-3. El nombre del curso y el del profesor ya están escritos donde corresponde. Si cambias algo, haz clic en «Guardar cambios»; vale desde el próximo envío o corrección.
+3. El nombre del curso y la firma de los correos ya están escritos donde corresponde. Si cambias algo, haz clic en «Guardar cambios»; vale desde el próximo envío o corrección.
 
 Si editas `evaluar_respuesta.md`, deja las etiquetas `NOTA FINAL:` y `ORIGINALIDAD:` tal como están. El sistema lee la nota y la originalidad de la respuesta del modelo buscando esas etiquetas; sin ellas, la nota no se registra.
 

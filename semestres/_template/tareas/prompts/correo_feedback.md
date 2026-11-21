@@ -17,4 +17,4 @@ Tu nota es:
 Si quieres conversar la revisión, responde este correo.
 
 Saludos,
-«PROFESOR» y el equipo docente de «CURSO»
+«FIRMA»

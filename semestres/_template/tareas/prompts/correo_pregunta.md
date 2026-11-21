@@ -14,4 +14,4 @@ Plazo de respuesta: {plazo} hrs. Tienes {minutos} minutos para responder a este 
 
 
 Saludos,
-«PROFESOR» y el equipo docente de «CURSO»
+«FIRMA»

@@ -65,7 +65,7 @@ activo. Es a propósito: un semestre nuevo tiene que empezar sin datos de
 alumnos del anterior.
 
 Los prompts y correos de la plantilla tienen marcas donde va el curso: «CURSO»,
-«NOMBRE_CURSO» y «PROFESOR». `crear()` las llena con esas claves del `.env`
-(CURSO, si falta, es IN5162) y, si falta alguna, no crea el semestre: el error
-dice cuál agregar. `modulos.web.subir` e `instalar.py` las llenan igual al
+«NOMBRE_CURSO» y «FIRMA». `crear()` las llena con esas claves del `.env`
+(CURSO, si falta, es IN5162; FIRMA, si falta, es «Equipo» y el código) y, si
+falta NOMBRE_CURSO, no crea el semestre: el error dice qué agregar. `modulos.web.subir` e `instalar.py` las llenan igual al
 subir la plantilla al sitio.

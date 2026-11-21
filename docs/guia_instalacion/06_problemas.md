@@ -50,7 +50,7 @@ Esta página sigue el orden de la instalación. Busca el mensaje con Ctrl+F.
 
 **`IN5162 ya está instalado a mano y se actualiza con motor/desplegar.ps1 y npm run deploy. Este instalador es para cursos nuevos.`** Escribe el código de tu curso.
 
-**`No puede quedar vacío: va en la firma de los correos.`** o **`Sin llaves { }: los correos las usan para sus campos.`** Escribe el nombre sin llaves.
+**`No puede quedar vacío: va en los prompts y en los correos.`** o **`Sin llaves { }: los correos las usan para sus campos.`** Escribe el nombre del curso o la firma sin llaves.
 
 ## El correo
 

@@ -2,7 +2,7 @@
 La plantilla de semestre con los datos del curso.
 
 Los prompts y correos de semestres/_template/ no nombran a ningún curso: donde
-va el nombre tienen una marca, «CURSO», «NOMBRE_CURSO» o «PROFESOR». Se llenan
+va el nombre tienen una marca, «CURSO», «NOMBRE_CURSO» o «FIRMA». Se llenan
 al subir la plantilla al sitio, y la copia del repositorio queda intacta:
 `git pull` nunca choca con ella. Un semestre creado en el PC (la app) las llena
 al copiar la plantilla, con la misma función (modulos/semestre/gestion.py).

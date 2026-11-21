@@ -15,5 +15,5 @@
     Recuerda ser cuidadoso con el envío de tu respuesta, ya que se evaluará solamente tu primer envío. Para que podamos asociar tu respuesta correctamente, responde directamente a este correo.
   </p>
 
-  <p>Saludos,<br>«PROFESOR» y el equipo docente de «CURSO»</p>
+  <p>Saludos,<br>«FIRMA»</p>
 </div>
